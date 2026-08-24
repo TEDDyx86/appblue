@@ -32,6 +32,16 @@ import {
   CheckCheck,
   ChevronRight,
   Filter,
+  Plus,
+  X,
+  CreditCard,
+  CalendarRange,
+  ChevronDown,
+  ChevronUp,
+  Edit3,
+  ToggleLeft,
+  ToggleRight,
+  Eye,
 } from 'lucide-react'
 import { useTheme } from '@/context/ThemeContext'
 
@@ -63,19 +73,62 @@ interface AssessorItem {
   count: number
 }
 
+interface TimeInterval {
+  start: string
+  end: string
+}
+
+interface DaySchedule {
+  day: number
+  name: string
+  enabled: boolean
+  intervals: TimeInterval[]
+}
+
+interface MeetingTypeItem {
+  id: string
+  name: string
+  duration: number
+  color: string
+  description?: string
+  active?: boolean
+}
+
 interface CalendarSettingsData {
+  weekly_schedule?: Record<string, DaySchedule>
   work_days: number[]
   start_hour: string
   end_hour: string
   lunch_start: string
   lunch_end: string
   slot_duration_minutes: number
-  buffer_minutes: number
-  min_notice_hours: number
-  max_future_days: number
+  buffer_before_minutes?: number
+  buffer_after_minutes?: number
+  buffer_minutes?: number
+  slot_interval_minutes?: number
+  min_notice_hours?: number
+  max_future_days?: number
   timezone: string
-  meeting_types: any[]
+  meeting_types: MeetingTypeItem[]
 }
+
+const DEFAULT_SCHEDULE: Record<string, DaySchedule> = {
+  '0': { day: 0, name: 'Domingo', enabled: false, intervals: [] },
+  '1': { day: 1, name: 'Segunda-feira', enabled: true, intervals: [{ start: '09:00', end: '18:00' }] },
+  '2': { day: 2, name: 'Terça-feira', enabled: true, intervals: [{ start: '09:00', end: '18:00' }] },
+  '3': { day: 3, name: 'Quarta-feira', enabled: true, intervals: [{ start: '09:00', end: '18:00' }] },
+  '4': { day: 4, name: 'Quinta-feira', enabled: true, intervals: [{ start: '09:00', end: '18:00' }] },
+  '5': { day: 5, name: 'Sexta-feira', enabled: true, intervals: [{ start: '09:00', end: '18:00' }] },
+  '6': { day: 6, name: 'Sábado', enabled: false, intervals: [] },
+}
+
+const TIME_OPTIONS = [
+  '07:00', '07:30', '08:00', '08:30', '09:00', '09:30',
+  '10:00', '10:30', '11:00', '11:30', '12:00', '12:30',
+  '13:00', '13:30', '14:00', '14:30', '15:00', '15:30',
+  '16:00', '16:30', '17:00', '17:30', '18:00', '18:30',
+  '19:00', '19:30', '20:00', '20:30', '21:00', '21:30', '22:00'
+]
 
 export default function AgendaPage() {
   const router = useRouter()
@@ -102,6 +155,12 @@ export default function AgendaPage() {
   const [settingsFeedback, setSettingsFeedback] = useState('')
   const [publicUrl, setPublicUrl] = useState('')
   const [copiedLink, setCopiedLink] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(true)
+  const [previewMeetingIndex, setPreviewMeetingIndex] = useState(0)
+
+  // Modal / Form para Criar/Editar Tipo de Evento
+  const [editingMeeting, setEditingMeeting] = useState<MeetingTypeItem | null>(null)
+  const [isCreatingMeeting, setIsCreatingMeeting] = useState(false)
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -154,7 +213,12 @@ export default function AgendaPage() {
       const res = await axios.get(`${API_URL}/api/calendar/settings`, {
         headers: { Authorization: `Bearer ${token}` },
       })
-      setSettings(res.data)
+      
+      const data: CalendarSettingsData = res.data
+      if (!data.weekly_schedule || Object.keys(data.weekly_schedule).length === 0) {
+        data.weekly_schedule = DEFAULT_SCHEDULE
+      }
+      setSettings(data)
     } catch (err) {
       console.error('Erro ao carregar configurações de booking:', err)
     } finally {
@@ -173,23 +237,103 @@ export default function AgendaPage() {
   }, [activeTab, fetchSettings])
 
   // Salva configurações
-  const handleSaveSettings = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSaveSettings = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
     if (!settings) return
 
     try {
       setSavingSettings(true)
       setSettingsFeedback('')
       const token = localStorage.getItem('access_token')
-      await axios.put(`${API_URL}/api/calendar/settings`, settings, {
+      await axios.post(`${API_URL}/api/calendar/settings`, settings, {
         headers: { Authorization: `Bearer ${token}` },
       })
       setSettingsFeedback('Configurações salvas com sucesso!')
-      setTimeout(() => setSettingsFeedback(''), 3000)
+      setTimeout(() => setSettingsFeedback(''), 3500)
     } catch (err: any) {
       setSettingsFeedback('Erro ao salvar: ' + (err.response?.data?.detail || err.message))
     } finally {
       setSavingSettings(false)
+    }
+  }
+
+  // Helpers de manipulação de Horários da Semana
+  const toggleDayReservable = (dayKey: string) => {
+    if (!settings) return
+    const schedule = { ...(settings.weekly_schedule || DEFAULT_SCHEDULE) }
+    const current = schedule[dayKey]
+    if (current.enabled) {
+      schedule[dayKey] = { ...current, enabled: false, intervals: [] }
+    } else {
+      schedule[dayKey] = { ...current, enabled: true, intervals: [{ start: '09:00', end: '18:00' }] }
+    }
+    setSettings({ ...settings, weekly_schedule: schedule })
+  }
+
+  const updateInterval = (dayKey: string, index: number, field: 'start' | 'end', value: string) => {
+    if (!settings) return
+    const schedule = { ...(settings.weekly_schedule || DEFAULT_SCHEDULE) }
+    const current = schedule[dayKey]
+    const newIntervals = [...current.intervals]
+    newIntervals[index] = { ...newIntervals[index], [field]: value }
+    schedule[dayKey] = { ...current, intervals: newIntervals }
+    setSettings({ ...settings, weekly_schedule: schedule })
+  }
+
+  const addInterval = (dayKey: string) => {
+    if (!settings) return
+    const schedule = { ...(settings.weekly_schedule || DEFAULT_SCHEDULE) }
+    const current = schedule[dayKey]
+    if (!current.enabled) {
+      schedule[dayKey] = { ...current, enabled: true, intervals: [{ start: '09:00', end: '18:00' }] }
+    } else {
+      schedule[dayKey] = {
+        ...current,
+        intervals: [...current.intervals, { start: '14:00', end: '18:00' }],
+      }
+    }
+    setSettings({ ...settings, weekly_schedule: schedule })
+  }
+
+  const removeInterval = (dayKey: string, index: number) => {
+    if (!settings) return
+    const schedule = { ...(settings.weekly_schedule || DEFAULT_SCHEDULE) }
+    const current = schedule[dayKey]
+    const newIntervals = current.intervals.filter((_, i) => i !== index)
+    if (newIntervals.length === 0) {
+      schedule[dayKey] = { ...current, enabled: false, intervals: [] }
+    } else {
+      schedule[dayKey] = { ...current, intervals: newIntervals }
+    }
+    setSettings({ ...settings, weekly_schedule: schedule })
+  }
+
+  // Helpers de Tipos de Reunião / Eventos
+  const handleSaveMeetingType = (meeting: MeetingTypeItem) => {
+    if (!settings) return
+    const existing = settings.meeting_types || []
+    let updated: MeetingTypeItem[]
+    if (isCreatingMeeting) {
+      const newId = meeting.id || meeting.name.toLowerCase().replace(/[^a-z0-9]/g, '_') + '_' + Date.now()
+      updated = [...existing, { ...meeting, id: newId }]
+    } else {
+      updated = existing.map((m) => (m.id === meeting.id ? meeting : m))
+    }
+    setSettings({ ...settings, meeting_types: updated })
+    setEditingMeeting(null)
+    setIsCreatingMeeting(false)
+  }
+
+  const handleDeleteMeetingType = (id: string) => {
+    if (!settings) return
+    if ((settings.meeting_types || []).length <= 1) {
+      alert('Você deve manter ao menos 1 tipo de evento cadastrado.')
+      return
+    }
+    const updated = (settings.meeting_types || []).filter((m) => m.id !== id)
+    setSettings({ ...settings, meeting_types: updated })
+    if (previewMeetingIndex >= updated.length) {
+      setPreviewMeetingIndex(0)
     }
   }
 
@@ -212,14 +356,10 @@ export default function AgendaPage() {
   const filteredActivities = useMemo(() => {
     const seen = new Set<string>()
     const list = activities.filter((a) => {
-      // Deduplicação estrita
       if (!a.id || seen.has(a.id)) return false
       seen.add(a.id)
 
-      // Regra de integridade: Ignora atividades marcadas como feito
       if (a.done) return false
-
-      // Regra de integridade: Só exibe com Cliente (Pessoa) E Assessor (Org)
       if (!a.person_name || !a.org_name || a.org_name === 'Sem Assessor') return false
 
       if (!activitySearch.trim()) return true
@@ -270,6 +410,27 @@ export default function AgendaPage() {
     localStorage.removeItem('refresh_token')
     router.push('/login')
   }
+
+  // Lista ordenada dos dias da semana (Domingo=0 até Sábado=6)
+  const scheduleDays = useMemo(() => {
+    const raw = settings?.weekly_schedule || DEFAULT_SCHEDULE
+    return [
+      { key: '0', name: 'Domingo', data: raw['0'] || DEFAULT_SCHEDULE['0'] },
+      { key: '1', name: 'Segunda-feira', data: raw['1'] || DEFAULT_SCHEDULE['1'] },
+      { key: '2', name: 'Terça-feira', data: raw['2'] || DEFAULT_SCHEDULE['2'] },
+      { key: '3', name: 'Quarta-feira', data: raw['3'] || DEFAULT_SCHEDULE['3'] },
+      { key: '4', name: 'Quinta-feira', data: raw['4'] || DEFAULT_SCHEDULE['4'] },
+      { key: '5', name: 'Sexta-feira', data: raw['5'] || DEFAULT_SCHEDULE['5'] },
+      { key: '6', name: 'Sábado', data: raw['6'] || DEFAULT_SCHEDULE['6'] },
+    ]
+  }, [settings])
+
+  const currentPreviewMeeting = useMemo<MeetingTypeItem>(() => {
+    if (!settings?.meeting_types || settings.meeting_types.length === 0) {
+      return { id: 'r1', name: 'R1 Planejamento Sucessório', duration: 60, color: 'sky', description: '', active: true }
+    }
+    return settings.meeting_types[previewMeetingIndex] || settings.meeting_types[0]
+  }, [settings, previewMeetingIndex])
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#00061A] flex transition-colors duration-200">
@@ -348,7 +509,7 @@ export default function AgendaPage() {
                 }`}
               >
                 <Sliders className="w-4 h-4" />
-                <span>Autoagendamento & Links</span>
+                <span>Autoagendamento & Horários</span>
               </button>
             </div>
 
@@ -380,7 +541,7 @@ export default function AgendaPage() {
                       <span>Filtrar Atividades por Assessor (Organização Pipedrive)</span>
                     </h2>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                      Apenas atividades com Cliente e Assessor vinculados &bull; Selecione o assessor para gerar o template WhatsApp
+                      Apenas atividades em aberto com Cliente e Assessor definidos &bull; Selecione o assessor para gerar o template WhatsApp
                     </p>
                   </div>
 
@@ -413,7 +574,7 @@ export default function AgendaPage() {
                       <option value="all">🏢 Todos os Assessores ({filteredActivities.length})</option>
                       {assessores.map((a) => (
                         <option key={a.name} value={a.name}>
-                          {a.name} ({a.count} {a.count === 1 ? 'atendimento' : 'atendimentos'})
+                          {a.name} ({a.count} {a.count === 1 ? 'em aberto' : 'em aberto'})
                         </option>
                       ))}
                     </select>
@@ -539,8 +700,8 @@ export default function AgendaPage() {
                   ) : groupedByDate.length === 0 ? (
                     <div className="py-16 text-center bg-white dark:bg-[#000D38] rounded-2xl border border-slate-200 dark:border-[#002060] p-6">
                       <CalendarCheck className="w-10 h-10 text-slate-400 mx-auto mb-2 opacity-50" />
-                      <h3 className="text-sm font-bold text-slate-900 dark:text-white font-display">Nenhuma atividade encontrada</h3>
-                      <p className="text-xs text-slate-400 mt-1">Não há reuniões com cliente e assessor definidos para os filtros selecionados.</p>
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-white font-display">Nenhuma atividade em aberto encontrada</h3>
+                      <p className="text-xs text-slate-400 mt-1">Não há reuniões pendentes com cliente e assessor definidos para os filtros selecionados.</p>
                     </div>
                   ) : (
                     groupedByDate.map((group) => (
@@ -706,19 +867,19 @@ export default function AgendaPage() {
           )}
 
           {/* ========================================================================= */}
-          {/* TAB 2: CONFIGURAÇÕES DE AUTOAGENDAMENTO (BOOKINGS) */}
+          {/* TAB 2: CONFIGURAÇÕES DE AUTOAGENDAMENTO & HORÁRIOS DA SEMANA */}
           {/* ========================================================================= */}
           {activeTab === 'settings' && (
-            <div className="space-y-6 max-w-4xl">
+            <div className="space-y-6 max-w-5xl">
               {/* Share Public Link Card */}
-              <div className="bg-gradient-to-br from-[#0092FF]/10 via-[#000D38] to-[#00061A] border border-[#0092FF]/30 rounded-2xl p-6 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="bg-gradient-to-br from-[#0092FF]/10 via-[#000D38] to-[#00061A] border border-[#0092FF]/30 rounded-2xl p-5 sm:p-6 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                   <h3 className="text-sm font-bold text-white font-display flex items-center space-x-2">
                     <Share2 className="w-4 h-4 text-[#00FFFF]" />
                     <span>Link Público de Autoagendamento</span>
                   </h3>
                   <p className="text-xs text-slate-300 mt-1">
-                    Envie para clientes ou assessores escolherem o melhor horário disponível na sua agenda
+                    Envie para clientes ou assessores agendarem no melhor horário disponível na sua grade
                   </p>
                 </div>
 
@@ -727,7 +888,7 @@ export default function AgendaPage() {
                     type="text"
                     readOnly
                     value={publicUrl}
-                    className="px-3 py-2 bg-[#00061A] border border-[#002060] rounded-xl text-xs text-[#00FFFF] font-mono w-60 outline-none"
+                    className="px-3 py-2 bg-[#00061A] border border-[#002060] rounded-xl text-xs text-[#00FFFF] font-mono w-56 sm:w-64 outline-none"
                   />
                   <button
                     type="button"
@@ -752,106 +913,475 @@ export default function AgendaPage() {
                 </div>
               </div>
 
-              {/* Form Settings */}
+              {/* SECTION: TIPOS DE EVENTOS / REUNIÕES */}
+              <div className="bg-white dark:bg-[#000D38] rounded-2xl border border-slate-200/90 dark:border-[#002060] p-6 shadow-sm space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-slate-100 dark:border-[#002060]">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white font-display flex items-center space-x-2">
+                      <Layers className="w-4 h-4 text-[#0092FF]" />
+                      <span>Tipos de Eventos & Reuniões</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      Crie e personalize os serviços que os clientes podem selecionar no agendamento
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCreatingMeeting(true)
+                      setEditingMeeting({
+                        id: '',
+                        name: '',
+                        duration: 60,
+                        color: 'sky',
+                        description: '',
+                        active: true,
+                      })
+                    }}
+                    className="inline-flex items-center space-x-2 px-3.5 py-2 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white font-bold text-xs shadow-sm transition-all self-start sm:self-auto"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Novo Tipo de Evento</span>
+                  </button>
+                </div>
+
+                {/* Event Types Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {settings?.meeting_types?.map((meeting, index) => {
+                    const isPreview = previewMeetingIndex === index
+                    return (
+                      <div
+                        key={meeting.id || index}
+                        className={`p-4 rounded-xl border transition-all flex flex-col justify-between space-y-3 ${
+                          isPreview
+                            ? 'bg-blue-50/70 dark:bg-blue-950/30 border-[#0092FF] shadow-sm'
+                            : 'bg-slate-50/70 dark:bg-[#00061A]/80 border-slate-200 dark:border-[#002060]'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="space-y-1">
+                            <div className="flex items-center space-x-2">
+                              <span className="w-2.5 h-2.5 rounded-full bg-[#0092FF]"></span>
+                              <h4 className="text-xs font-bold text-slate-900 dark:text-white font-display">
+                                {meeting.name}
+                              </h4>
+                            </div>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2">
+                              {meeting.description || 'Sem descrição cadastrada.'}
+                            </p>
+                          </div>
+
+                          <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white dark:bg-[#000D38] border border-slate-200 dark:border-[#002060] text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                            {meeting.duration} min
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-200/60 dark:border-[#002060]/60">
+                          <button
+                            type="button"
+                            onClick={() => setPreviewMeetingIndex(index)}
+                            className={`text-[11px] font-bold flex items-center space-x-1 transition-colors ${
+                              isPreview
+                                ? 'text-[#0092FF] dark:text-[#00FFFF]'
+                                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                            }`}
+                          >
+                            <Eye className="w-3 h-3" />
+                            <span>{isPreview ? 'Visualizando no Card' : 'Pré-visualizar'}</span>
+                          </button>
+
+                          <div className="flex items-center space-x-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsCreatingMeeting(false)
+                                setEditingMeeting(meeting)
+                              }}
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-[#0092FF] hover:bg-white dark:hover:bg-[#000D38] transition-colors"
+                              title="Editar evento"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteMeetingType(meeting.id)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                              title="Excluir evento"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* MODAL DE CRIAÇÃO / EDIÇÃO DE TIPO DE EVENTO */}
+              {editingMeeting && (
+                <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+                  <div className="bg-white dark:bg-[#000D38] border border-slate-200 dark:border-[#002060] rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-scale-up">
+                    <div className="p-5 border-b border-slate-100 dark:border-[#002060] flex items-center justify-between">
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-white font-display">
+                        {isCreatingMeeting ? 'Novo Tipo de Evento' : 'Editar Tipo de Evento'}
+                      </h3>
+                      <button onClick={() => setEditingMeeting(null)} className="text-slate-400 hover:text-slate-600">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="p-5 space-y-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          Nome do Evento / Reunião
+                        </label>
+                        <input
+                          type="text"
+                          value={editingMeeting.name}
+                          onChange={(e) => setEditingMeeting({ ...editingMeeting, name: e.target.value })}
+                          placeholder="Ex: R1 Planejamento Sucessório"
+                          className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-[#0092FF]"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                            Duração (minutos)
+                          </label>
+                          <select
+                            value={editingMeeting.duration}
+                            onChange={(e) => setEditingMeeting({ ...editingMeeting, duration: Number(e.target.value) })}
+                            className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-[#0092FF]"
+                          >
+                            <option value={15}>15 minutos</option>
+                            <option value={30}>30 minutos</option>
+                            <option value={45}>45 minutos</option>
+                            <option value={60}>60 minutos (1h)</option>
+                            <option value={90}>90 minutos (1h30)</option>
+                            <option value={120}>120 minutos (2h)</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                            Cor / Destaque
+                          </label>
+                          <select
+                            value={editingMeeting.color || 'sky'}
+                            onChange={(e) => setEditingMeeting({ ...editingMeeting, color: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-[#0092FF]"
+                          >
+                            <option value="sky">Azul Blue3</option>
+                            <option value="teal">Verde Petróleo</option>
+                            <option value="indigo">Índigo</option>
+                            <option value="amber">Âmbar / Dourado</option>
+                            <option value="purple">Roxo</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          Descrição para o Cliente
+                        </label>
+                        <textarea
+                          rows={3}
+                          value={editingMeeting.description || ''}
+                          onChange={(e) => setEditingMeeting({ ...editingMeeting, description: e.target.value })}
+                          placeholder="Explique resumidamente o objetivo desta reunião..."
+                          className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-[#0092FF]"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="p-4 border-t border-slate-100 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] flex items-center justify-end space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditingMeeting(null)}
+                        className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-[#002060]"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!editingMeeting.name.trim()}
+                        onClick={() => handleSaveMeetingType(editingMeeting)}
+                        className="px-5 py-2 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white text-xs font-bold shadow-md shadow-blue-500/25 disabled:opacity-50"
+                      >
+                        Salvar Evento
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ===================================================================== */}
+              {/* SECTION: CONFIGURAÇÃO DE HORÁRIOS DA SEMANA (IGUAL À IMAGEM DO USUÁRIO) */}
+              {/* ===================================================================== */}
               {loadingSettings ? (
                 <div className="py-12 text-center text-xs text-slate-400">Carregando configurações...</div>
               ) : settings ? (
                 <form onSubmit={handleSaveSettings} className="bg-white dark:bg-[#000D38] rounded-2xl border border-slate-200/90 dark:border-[#002060] p-6 shadow-sm space-y-6">
                   {settingsFeedback && (
-                    <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800/60 text-xs text-[#0092FF] dark:text-[#00FFFF] font-bold">
+                    <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800/60 text-xs text-[#0092FF] dark:text-[#00FFFF] font-bold animate-fade-in">
                       {settingsFeedback}
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                        Horário de Início do Expediente
-                      </label>
-                      <input
-                        type="time"
-                        value={settings.start_hour}
-                        onChange={(e) => setSettings({ ...settings, start_hour: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                        Horário de Fim do Expediente
-                      </label>
-                      <input
-                        type="time"
-                        value={settings.end_hour}
-                        onChange={(e) => setSettings({ ...settings, end_hour: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                        Início do Almoço / Pausa
-                      </label>
-                      <input
-                        type="time"
-                        value={settings.lunch_start}
-                        onChange={(e) => setSettings({ ...settings, lunch_start: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                        Fim do Almoço / Pausa
-                      </label>
-                      <input
-                        type="time"
-                        value={settings.lunch_end}
-                        onChange={(e) => setSettings({ ...settings, lunch_end: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                        Duração Padrão das Reuniões
-                      </label>
-                      <select
-                        value={settings.slot_duration_minutes}
-                        onChange={(e) => setSettings({ ...settings, slot_duration_minutes: Number(e.target.value) })}
-                        className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white"
-                      >
-                        <option value={30}>30 minutos</option>
-                        <option value={45}>45 minutos</option>
-                        <option value={60}>60 minutos (1 hora)</option>
-                        <option value={90}>90 minutos (1h30)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                        Intervalo de Respiro (Buffer) entre Reuniões
-                      </label>
-                      <select
-                        value={settings.buffer_minutes}
-                        onChange={(e) => setSettings({ ...settings, buffer_minutes: Number(e.target.value) })}
-                        className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white"
-                      >
-                        <option value={0}>Sem intervalo</option>
-                        <option value={10}>10 minutos</option>
-                        <option value={15}>15 minutos</option>
-                        <option value={30}>30 minutos</option>
-                      </select>
+                  {/* Término (incluído) */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                      Término (incluído)
+                    </label>
+                    <div className="inline-flex items-center space-x-2 px-3 py-1.5 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-700 dark:text-slate-300 font-medium">
+                      <span>Nenhum</span>
+                      <CalendarIcon className="w-3.5 h-3.5 text-slate-400" />
                     </div>
                   </div>
 
+                  {/* Grade de Horários por Dia da Semana (EXATAMENTE IGUAL À IMAGEM) */}
+                  <div className="space-y-3 pt-1">
+                    {scheduleDays.map((d) => {
+                      const dayKey = d.key
+                      const isEnabled = d.data.enabled && d.data.intervals && d.data.intervals.length > 0
+
+                      return (
+                        <div
+                          key={dayKey}
+                          className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 py-1"
+                        >
+                          {/* Nome do Dia */}
+                          <div className="w-28 text-xs font-bold text-slate-800 dark:text-slate-200">
+                            {d.name}
+                          </div>
+
+                          {/* Se Não Reservável */}
+                          {!isEnabled ? (
+                            <div className="flex items-center space-x-2 flex-1">
+                              <div className="flex-1 max-w-sm py-2 px-4 border border-dashed border-slate-300 dark:border-slate-700 rounded-xl text-xs font-medium text-slate-400 dark:text-slate-500 text-center bg-slate-50/50 dark:bg-[#00061A]/50">
+                                Não reservável
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => addInterval(dayKey)}
+                                className="w-9 h-9 flex items-center justify-center rounded-xl border border-slate-200 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] hover:bg-slate-100 dark:hover:bg-[#002060] text-slate-600 dark:text-slate-300 transition-colors"
+                                title="Adicionar horário para este dia"
+                              >
+                                <Plus className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ) : (
+                            /* Se Reservável: exibe faixas de horário com botões [X] e [+] */
+                            <div className="flex flex-col gap-2 flex-1">
+                              {d.data.intervals.map((interval, idx) => (
+                                <div key={idx} className="flex items-center space-x-2 flex-wrap gap-y-2">
+                                  {/* Horário de Início */}
+                                  <select
+                                    value={interval.start}
+                                    onChange={(e) => updateInterval(dayKey, idx, 'start', e.target.value)}
+                                    className="px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 outline-none focus:ring-2 focus:ring-[#0092FF]"
+                                  >
+                                    {TIME_OPTIONS.map((t) => (
+                                      <option key={t} value={t}>
+                                        {t}
+                                      </option>
+                                    ))}
+                                  </select>
+
+                                  {/* Horário de Fim */}
+                                  <select
+                                    value={interval.end}
+                                    onChange={(e) => updateInterval(dayKey, idx, 'end', e.target.value)}
+                                    className="px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 outline-none focus:ring-2 focus:ring-[#0092FF]"
+                                  >
+                                    {TIME_OPTIONS.map((t) => (
+                                      <option key={t} value={t}>
+                                        {t}
+                                      </option>
+                                    ))}
+                                  </select>
+
+                                  {/* Botão [X] para remover faixa */}
+                                  <button
+                                    type="button"
+                                    onClick={() => removeInterval(dayKey, idx)}
+                                    className="w-9 h-9 flex items-center justify-center rounded-xl border border-slate-200 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-500 hover:text-rose-600 transition-colors"
+                                    title="Remover este horário"
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </button>
+
+                                  {/* Botão [+] para adicionar faixa extra no dia */}
+                                  {idx === d.data.intervals.length - 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => addInterval(dayKey)}
+                                      className="w-9 h-9 flex items-center justify-center rounded-xl border border-slate-200 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] hover:bg-slate-100 dark:hover:bg-[#002060] text-slate-600 dark:text-slate-300 transition-colors"
+                                      title="Adicionar intervalo extra (ex: tarde)"
+                                    >
+                                      <Plus className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Botão Alternador: Ocultar / Mostrar Opções Avançadas */}
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvanced(!showAdvanced)}
+                      className="inline-flex items-center space-x-2 px-3 py-1.5 rounded-xl border border-slate-300 dark:border-[#002060] bg-slate-100 dark:bg-[#00061A] hover:bg-slate-200 dark:hover:bg-[#002060] text-xs font-bold text-slate-700 dark:text-slate-300 transition-colors"
+                    >
+                      {showAdvanced ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      <span>{showAdvanced ? 'Ocultar opções avançadas' : 'Mostrar opções avançadas'}</span>
+                    </button>
+                  </div>
+
+                  {/* ================================================================= */}
+                  {/* OPÇÕES AVANÇADAS & CARD PREVIEW (EXATAMENTE IGUAL À IMAGEM) */}
+                  {/* ================================================================= */}
+                  {showAdvanced && (
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pt-4 border-t border-slate-100 dark:border-[#002060]/70 items-start">
+                      {/* Left: Inputs avançados */}
+                      <div className="lg:col-span-2 space-y-4">
+                        {/* Buffer Antes da Reunião */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center space-x-2">
+                            <CreditCard className="w-4 h-4 text-slate-400" />
+                            <span>Tempo de buffer antes da reunião</span>
+                          </label>
+                          <select
+                            value={settings.buffer_before_minutes ?? 0}
+                            onChange={(e) => setSettings({ ...settings, buffer_before_minutes: Number(e.target.value) })}
+                            className="w-full sm:w-48 px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-medium text-slate-800 dark:text-slate-200 outline-none focus:ring-2 focus:ring-[#0092FF]"
+                          >
+                            <option value={0}>0 minutos</option>
+                            <option value={5}>5 minutos</option>
+                            <option value={10}>10 minutos</option>
+                            <option value={15}>15 minutos</option>
+                            <option value={30}>30 minutos</option>
+                            <option value={45}>45 minutos</option>
+                            <option value={60}>60 minutos</option>
+                          </select>
+                        </div>
+
+                        {/* Buffer Depois da Reunião */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center space-x-2 pl-6">
+                            <span>Tempo de buffer depois da reunião</span>
+                          </label>
+                          <select
+                            value={settings.buffer_after_minutes ?? settings.buffer_minutes ?? 0}
+                            onChange={(e) => setSettings({ ...settings, buffer_after_minutes: Number(e.target.value), buffer_minutes: Number(e.target.value) })}
+                            className="w-full sm:w-48 px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-medium text-slate-800 dark:text-slate-200 outline-none focus:ring-2 focus:ring-[#0092FF]"
+                          >
+                            <option value={0}>0 minutos</option>
+                            <option value={5}>5 minutos</option>
+                            <option value={10}>10 minutos</option>
+                            <option value={15}>15 minutos</option>
+                            <option value={30}>30 minutos</option>
+                            <option value={45}>45 minutos</option>
+                            <option value={60}>60 minutos</option>
+                          </select>
+                        </div>
+
+                        {/* Limitar a hora de início a */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center space-x-2 pl-6">
+                            <span>Limitar a hora de início a</span>
+                          </label>
+                          <select
+                            value={settings.slot_interval_minutes ?? 30}
+                            onChange={(e) => setSettings({ ...settings, slot_interval_minutes: Number(e.target.value) })}
+                            className="w-full sm:w-48 px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-medium text-slate-800 dark:text-slate-200 outline-none focus:ring-2 focus:ring-[#0092FF]"
+                          >
+                            <option value={15}>15 minutos</option>
+                            <option value={30}>30 minutos</option>
+                            <option value={45}>45 minutos</option>
+                            <option value={60}>1 - horas de in...</option>
+                          </select>
+                        </div>
+
+                        {/* Prazo de entrega mínimo (Antecedência mínima) */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center space-x-2">
+                            <CalendarRange className="w-4 h-4 text-slate-400" />
+                            <span>Prazo de entrega mínimo</span>
+                          </label>
+                          <select
+                            value={settings.min_notice_hours ?? 12}
+                            onChange={(e) => setSettings({ ...settings, min_notice_hours: Number(e.target.value) })}
+                            className="w-full sm:w-48 px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-medium text-slate-800 dark:text-slate-200 outline-none focus:ring-2 focus:ring-[#0092FF]"
+                          >
+                            <option value={1}>1 hora</option>
+                            <option value={2}>2 horas</option>
+                            <option value={4}>4 horas</option>
+                            <option value={12}>12 horas</option>
+                            <option value={24}>24 horas</option>
+                            <option value={48}>48 horas</option>
+                          </select>
+                        </div>
+
+                        {/* Prazo de entrega máximo (Dias futuros) */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center space-x-2 pl-6">
+                            <span>Prazo de entrega máximo</span>
+                          </label>
+                          <div className="flex items-center space-x-2 w-full sm:w-48">
+                            <span className="text-xs font-medium text-slate-500">Personalizado</span>
+                            <div className="relative flex-1">
+                              <input
+                                type="number"
+                                min={1}
+                                max={180}
+                                value={settings.max_future_days ?? 21}
+                                onChange={(e) => setSettings({ ...settings, max_future_days: Number(e.target.value) })}
+                                className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 outline-none focus:ring-2 focus:ring-[#0092FF]"
+                              />
+                              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">dias</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Preview Card do Evento (EXATAMENTE COMO NA IMAGEM) */}
+                      <div className="lg:col-span-1">
+                        <div className="p-4 rounded-2xl bg-slate-900 border border-slate-700 dark:border-[#002060] text-white shadow-xl space-y-3">
+                          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                            Pré-visualização do Evento
+                          </p>
+
+                          <div className="p-4 rounded-xl bg-gradient-to-r from-[#001D99] to-[#000D38] border border-[#0092FF]/50 shadow-inner flex items-center justify-between">
+                            <span className="text-xs font-bold text-white font-display">
+                              {currentPreviewMeeting.name} &bull; {currentPreviewMeeting.duration} minutos
+                            </span>
+                          </div>
+
+                          <p className="text-[11px] text-slate-400 leading-relaxed">
+                            {currentPreviewMeeting.description || 'Configuração ativa para reserva de clientes.'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Submit Action Button */}
                   <div className="pt-4 border-t border-slate-100 dark:border-[#002060] flex items-center justify-end">
                     <button
                       type="submit"
                       disabled={savingSettings}
                       className="px-6 py-2.5 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white font-bold text-xs shadow-md shadow-blue-500/25 transition-all disabled:opacity-50"
                     >
-                      {savingSettings ? 'Salvando...' : 'Salvar Alterações'}
+                      {savingSettings ? 'Salvando...' : 'Salvar Todas as Configurações'}
                     </button>
                   </div>
                 </form>
