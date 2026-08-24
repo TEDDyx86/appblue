@@ -89,8 +89,9 @@ export default function AgendaPage() {
   const [whatsappConsolidated, setWhatsappConsolidated] = useState('')
   const [loadingActivities, setLoadingActivities] = useState(true)
   const [selectedAssessor, setSelectedAssessor] = useState<string>('all')
+  const [periodFilter, setPeriodFilter] = useState<'next_30_days' | 'this_week' | 'next_week' | 'this_month' | 'all'>('all')
   const [activitySearch, setActivitySearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'done'>('pending')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'done'>('all')
   const [copiedSingleId, setCopiedSingleId] = useState<string | null>(null)
   const [copiedConsolidated, setCopiedConsolidated] = useState(false)
 
@@ -120,7 +121,7 @@ export default function AgendaPage() {
         return
       }
 
-      const params: any = { limit: 100 }
+      const params: any = { period: periodFilter }
       if (selectedAssessor !== 'all') {
         params.assessor_name = selectedAssessor
       }
@@ -146,7 +147,7 @@ export default function AgendaPage() {
     } finally {
       setLoadingActivities(false)
     }
-  }, [API_URL, router, selectedAssessor, statusFilter])
+  }, [API_URL, router, selectedAssessor, statusFilter, periodFilter])
 
   // Carrega configurações de booking
   const fetchSettings = useCallback(async () => {
@@ -234,7 +235,7 @@ export default function AgendaPage() {
       if (!groups[key]) {
         const dayLabel = act.day_of_week
           ? `${act.day_of_week.charAt(0).toUpperCase() + act.day_of_week.slice(1)} (${act.date_display})`
-          : 'Data a Definir'
+          : (act.due_date || 'Data a Definir')
         groups[key] = { label: dayLabel, dateStr: key, items: [] }
       }
       groups[key].items.push(act)
@@ -374,6 +375,31 @@ export default function AgendaPage() {
                   )}
                 </div>
 
+                {/* Period Selector Tabs */}
+                <div className="flex items-center gap-1.5 pb-1 overflow-x-auto text-xs">
+                  <span className="text-slate-400 font-bold mr-1 text-[11px]">Período:</span>
+                  {[
+                    { key: 'all', label: 'Todas as Atividades' },
+                    { key: 'this_week', label: 'Esta Semana' },
+                    { key: 'next_week', label: 'Próxima Semana' },
+                    { key: 'this_month', label: 'Este Mês' },
+                    { key: 'next_30_days', label: 'Próximos 30 Dias' },
+                  ].map((p) => (
+                    <button
+                      key={p.key}
+                      type="button"
+                      onClick={() => setPeriodFilter(p.key as any)}
+                      className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition-all ${
+                        periodFilter === p.key
+                          ? 'bg-[#002060] dark:bg-[#0092FF] text-white shadow-xs'
+                          : 'bg-slate-100 dark:bg-[#00061A] text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-[#002060] hover:bg-slate-200 dark:hover:bg-[#002060]'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+
                 {/* Assessores Pills Bar */}
                 <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-1">
                   <button
@@ -440,9 +466,9 @@ export default function AgendaPage() {
 
                   <div className="flex items-center space-x-1.5 w-full sm:w-auto">
                     {[
+                      { key: 'all', label: 'Todas' },
                       { key: 'pending', label: 'Pendentes' },
                       { key: 'done', label: 'Concluídas' },
-                      { key: 'all', label: 'Todas' },
                     ].map((s) => (
                       <button
                         key={s.key}

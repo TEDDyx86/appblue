@@ -1037,42 +1037,107 @@ async def list_pipedrive_assessores(user: dict = Depends(require_admin)):
 async def list_pipedrive_activities(
     assessor_name: Optional[str] = None,
     assessor_id: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    period: Optional[str] = None,
     done: Optional[bool] = None,
-    limit: int = 100,
     user: dict = Depends(require_admin)
 ):
     """
-    Lista atividades do Pipedrive com mapeamento de Assessor (Organização),
-    Cliente (Pessoa), Deal, Horário formatado e templates prontos para WhatsApp.
+    Lista atividades do Pipedrive com suporte a paginação completa,
+    filtros por período (esta semana, este mês, etc.), assessor e geração de template WhatsApp.
     """
-    params = {
-        "api_token": PIPEDRIVE_API_TOKEN,
-        "limit": limit,
-        "user_id": 0  # Todas as atividades do Robson / equipe
-    }
-    if done is not None:
-        params["done"] = 1 if done else 0
+    now = datetime.now()
+    
+    # Define range de datas
+    computed_start = start_date
+    computed_end = end_date
+    
+    if period == "this_week":
+        # Segunda-feira da semana atual até Domingo
+        monday = now - timedelta(days=now.weekday())
+        sunday = monday + timedelta(days=6)
+        computed_start = monday.strftime("%Y-%m-%d")
+        computed_end = sunday.strftime("%Y-%m-%d")
+    elif period == "next_week":
+        next_monday = now - timedelta(days=now.weekday()) + timedelta(days=7)
+        next_sunday = next_monday + timedelta(days=6)
+        computed_start = next_monday.strftime("%Y-%m-%d")
+        computed_end = next_sunday.strftime("%Y-%m-%d")
+    elif period == "this_month":
+        first_day = now.replace(day=1)
+        # Próximo mês dia 1 - 1 dia
+        if now.month == 12:
+            last_day = now.replace(year=now.year + 1, month=1, day=1) - timedelta(days=1)
+        else:
+            last_day = now.replace(month=now.month + 1, day=1) - timedelta(days=1)
+        computed_start = first_day.strftime("%Y-%m-%d")
+        computed_end = last_day.strftime("%Y-%m-%d")
+    elif period == "next_30_days":
+        computed_start = now.strftime("%Y-%m-%d")
+        computed_end = (now + timedelta(days=30)).strftime("%Y-%m-%d")
+    elif not computed_start and not computed_end and period != "all":
+        # Janela padrão: 30 dias atrás até 90 dias no futuro
+        computed_start = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+        computed_end = (now + timedelta(days=90)).strftime("%Y-%m-%d")
 
+    # Busca organizações (Assessores) cadastradas
     async with httpx.AsyncClient() as client:
-        res = await client.get("https://api.pipedrive.com/v1/activities", params=params)
-        if res.status_code != 200:
-            return {"activities": [], "assessores": [], "total": 0, "whatsapp_consolidated": ""}
+        orgs_res = await client.get(
+            "https://api.pipedrive.com/v1/organizations",
+            params={"api_token": PIPEDRIVE_API_TOKEN, "limit": 100}
+        )
+        all_orgs = (orgs_res.json().get("data") or []) if orgs_res.status_code == 200 else []
+        assessores_map = {o["id"]: o["name"] for o in all_orgs if o.get("name")}
         
-        raw_data = res.json().get("data") or []
+        # Paginação sobre as atividades no Pipedrive (até 500 registros)
+        all_raw_activities = []
+        start_offset = 0
         
-        formatted_activities = []
-        assessores_count: Dict[str, Dict[str, Any]] = {}
-        
-        for a in raw_data:
-            org_name = a.get("org_name") or "Sem Assessor"
-            org_id = a.get("org_id")
+        for _ in range(5):
+            query_params = {
+                "api_token": PIPEDRIVE_API_TOKEN,
+                "limit": 100,
+                "start": start_offset,
+                "user_id": 0
+            }
+            if computed_start:
+                query_params["start_date"] = computed_start
+            if computed_end:
+                query_params["end_date"] = computed_end
+            if done is not None:
+                query_params["done"] = 1 if done else 0
+                
+            res = await client.get("https://api.pipedrive.com/v1/activities", params=query_params)
+            if res.status_code != 200:
+                break
+                
+            data = res.json().get("data") or []
+            if not data:
+                break
+                
+            all_raw_activities.extend(data)
             
-            # Contagem de assessores
+            pagination = res.json().get("additional_data", {}).get("pagination", {})
+            if not pagination.get("more_items_in_collection"):
+                break
+            start_offset = pagination.get("next_start", start_offset + 100)
+            
+        formatted_activities = []
+        assessores_count: Dict[str, Dict[str, Any]] = {
+            name: {"id": org_id, "name": name, "count": 0} for org_id, name in assessores_map.items()
+        }
+        
+        for a in all_raw_activities:
+            org_id = a.get("org_id")
+            org_name = a.get("org_name") or assessores_map.get(org_id) or "Sem Assessor"
+            
+            # Contabiliza nas opções de assessores
             if org_name not in assessores_count:
                 assessores_count[org_name] = {"id": org_id, "name": org_name, "count": 0}
             assessores_count[org_name]["count"] += 1
             
-            # Filtro por assessor se informado
+            # Filtro por assessor
             if assessor_name and assessor_name != "all" and org_name != assessor_name:
                 continue
             if assessor_id and org_id != assessor_id:
@@ -1140,7 +1205,7 @@ async def list_pipedrive_activities(
                 "whatsapp_template": wa_template
             })
             
-        # Ordena por data e horário
+        # Ordena cronologicamente
         formatted_activities.sort(key=lambda x: (x["due_date"], x["due_time"] or "99:99"))
         
         # Gera template consolidado para WhatsApp se filtrado por assessor
@@ -1162,10 +1227,21 @@ async def list_pipedrive_activities(
             lines.append("Qualquer dúvida ou ajuste de horário, estou à disposição! 🚀")
             whatsapp_consolidated = "\n".join(lines).strip()
             
+        # Retorna assessores ordenados por contagem (maiores primeiro)
+        assessores_list = sorted(
+            [a for a in assessores_count.values() if a["name"] != "Sem Assessor" or a["count"] > 0],
+            key=lambda x: -x["count"]
+        )
+        
         return {
             "activities": formatted_activities,
-            "assessores": sorted(list(assessores_count.values()), key=lambda x: -x["count"]),
+            "assessores": assessores_list,
             "whatsapp_consolidated": whatsapp_consolidated,
+            "period": {
+                "start_date": computed_start,
+                "end_date": computed_end,
+                "period_filter": period or "default_window"
+            },
             "total": len(formatted_activities)
         }
 
