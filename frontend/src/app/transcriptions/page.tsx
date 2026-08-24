@@ -889,32 +889,25 @@ export default function TranscriptionsPage() {
                 </div>
               )}
 
-              {/* Automation Checkboxes */}
-              <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-[#002060] text-xs">
-                <label className="flex items-center space-x-2.5 cursor-pointer text-slate-700 dark:text-slate-300 font-medium">
+              {/* Automation Note Info */}
+              <div className="pt-2 border-t border-slate-100 dark:border-[#002060] text-xs">
+                <label className="flex items-center space-x-2.5 text-slate-700 dark:text-slate-300 font-medium">
                   <input
                     type="checkbox"
                     checked={createNote}
                     onChange={(e) => setCreateNote(e.target.checked)}
                     className="w-4 h-4 rounded text-[#0092FF] focus:ring-[#0092FF]"
                   />
-                  <span>Criar Nota rica com o Briefing e Tópicos no Pipedrive</span>
+                  <span>Criar Anotação Rica com o Briefing e Tópicos na Timeline do Pipedrive</span>
                 </label>
-
-                <label className="flex items-center space-x-2.5 cursor-pointer text-slate-700 dark:text-slate-300 font-medium">
-                  <input
-                    type="checkbox"
-                    checked={createActivity}
-                    onChange={(e) => setCreateActivity(e.target.checked)}
-                    className="w-4 h-4 rounded text-[#0092FF] focus:ring-[#0092FF]"
-                  />
-                  <span>Criar Tarefa de Follow-up / Próxima Ação no CRM</span>
-                </label>
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1 pl-6.5">
+                  A anotação será adicionada diretamente ao contato e negócio no CRM com os tópicos da reunião e interesse do cliente.
+                </p>
               </div>
 
               {assignSuccess && (
                 <div className="p-3 rounded-xl bg-emerald-100 text-emerald-800 font-bold text-xs text-center animate-fade-in">
-                  ✅ Transcrição vinculada e sincronizada com sucesso no Pipedrive!
+                  ✅ Transcrição vinculada e anotação sincronizada com sucesso no Pipedrive!
                 </div>
               )}
             </div>

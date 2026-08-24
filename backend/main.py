@@ -776,38 +776,26 @@ async def process_new_transcription(user_id: str):
                         briefing_json["pipedrive"]["deal_id"] = deal_id
                         briefing_json["pipedrive"]["deal_url"] = f"https://investimentosblue.pipedrive.com/deal/{deal_id}"
                     
-                    # Se tiver alta confiança, cria Activity
+                    # Se tiver alta confiança, cria apenas a Anotação Rica no Pipedrive
                     if matching_confidence >= 0.70:
-                        activity = await create_pipedrive_activity(
-                            person_id=person_id,
-                            deal_id=deal_id,
-                            subject=briefing_json["proxima_acao"]["descricao"],
-                            due_date=briefing_json["proxima_acao"]["prazo_sugerido"],
-                            note=f"Origem: Tactiq Auto (Reunião: {meeting_title})\nCliente: {cliente_nome}\nInteresse: {briefing_json['dados_cliente']['demonstrou_interesse']}",
-                            activity_type="meeting"
+                        topicos_html = "".join([f"<li>{topico}</li>" for topico in briefing_json.get("principais_topicos", [])])
+                        note_html = (
+                            f"<h3>📋 Briefing da Reunião (Origem: Tactiq / Google Drive)</h3>"
+                            f"<p><strong>Reunião:</strong> {meeting_title}</p>"
+                            f"<p><strong>Cliente:</strong> {cliente_nome}</p>"
+                            f"<p><strong>Interesse:</strong> {briefing_json.get('dados_cliente', {}).get('demonstrou_interesse', 'Não informado')}</p>"
+                            f"<h4>Principais Tópicos Abordados:</h4>"
+                            f"<ul>{topicos_html or '<li>Discussão patrimonial e sucessória.</li>'}</ul>"
+                            f"<h4>🎯 Próxima Ação Sugerida:</h4>"
+                            f"<p>{briefing_json.get('proxima_acao', {}).get('descricao', 'Dar continuidade aos alinhamentos')}</p>"
+                            f"<hr/>"
+                            f"<p><small>⚡ Sincronizado pelo Sistema Robson Tavernard (Investimentos Blue)</small></p>"
                         )
-                        
-                        if activity:
-                            activity_id = str(activity.get("id"))
-                            briefing_json["pipedrive"]["activity_id"] = activity_id
-                            
-                            # Salva em pipeline_activities
-                            supabase.table("pipeline_activities").insert({
-                                "transcription_id": transcription_id,
-                                "cliente_nome": cliente_nome,
-                                "cliente_email": cliente_email,
-                                "pipedrive_person_id": person_id,
-                                "pipedrive_deal_id": deal_id,
-                                "pipedrive_activity_id": activity_id,
-                                "proxima_acao_descricao": briefing_json["proxima_acao"]["descricao"],
-                                "proxima_acao_prazo": briefing_json["proxima_acao"]["prazo_sugerido"],
-                                "proxima_acao_prioridade": briefing_json["proxima_acao"].get("prioridade", "média"),
-                                "status_teams": "pendente",
-                                "matching_confidence": matching_confidence,
-                                "created_by": user_id
-                            }).execute()
-                            
-                            logger.info(f"Activity Pipedrive criada com sucesso: {activity_id} para {cliente_nome}")
+                        note_res = await create_pipedrive_note(content=note_html, deal_id=deal_id, person_id=person_id)
+                        if note_res:
+                            note_id = str(note_res.get("id"))
+                            briefing_json["pipedrive"]["note_id"] = note_id
+                            logger.info(f"Nota Pipedrive criada com sucesso: {note_id} para {cliente_nome}")
             
             # Atualiza transcrição para completed com o briefing real
             supabase.table("transcriptions").update({
@@ -1605,47 +1593,13 @@ async def assign_transcription_to_crm(
             note_id = str(note_res.get("id"))
             briefing_json["pipedrive"]["note_id"] = note_id
             
-    # 6. Cria Activity no Pipedrive
-    activity_id = None
-    if req.create_activity:
-        proxima = briefing_json.get("proxima_acao", {})
-        act_subject = proxima.get("descricao") or f"Follow-up: {meeting_title}"
-        act_due = proxima.get("prazo_sugerido")
-        act = await create_pipedrive_activity(
-            person_id=person_id,
-            deal_id=deal_id,
-            subject=act_subject,
-            due_date=act_due,
-            note=f"Origem: Briefing Tactiq ({meeting_title})\nCliente: {client_name}",
-            activity_type="meeting"
-        )
-        if act:
-            activity_id = str(act.get("id"))
-            briefing_json["pipedrive"]["activity_id"] = activity_id
-            
-            # Salva / atualiza em pipeline_activities
-            supabase.table("pipeline_activities").insert({
-                "transcription_id": transcription_id,
-                "cliente_nome": client_name,
-                "cliente_email": briefing_json.get("dados_cliente", {}).get("email"),
-                "pipedrive_person_id": person_id,
-                "pipedrive_deal_id": deal_id,
-                "pipedrive_activity_id": activity_id,
-                "proxima_acao_descricao": act_subject,
-                "proxima_acao_prazo": act_due,
-                "proxima_acao_prioridade": proxima.get("prioridade", "média"),
-                "status_teams": "pendente",
-                "matching_confidence": 1.0,
-                "created_by": user.get("id", user.get("sub"))
-            }).execute()
-            
-    # 7. Atualiza registro da Transcrição
+    # 6. Atualiza registro da Transcrição
     supabase.table("transcriptions").update({
         "processing_status": "completed",
         "briefing_json": briefing_json
     }).eq("id", transcription_id).execute()
     
-    # 8. Registra no Log de Auditoria
+    # 7. Registra no Log de Auditoria
     log_audit_event(
         action="DRIVE_DOC_LINKED",
         resource_type="transcription",
@@ -1656,14 +1610,13 @@ async def assign_transcription_to_crm(
             "cliente_nome": client_name,
             "pipedrive_person_id": person_id,
             "pipedrive_deal_id": deal_id,
-            "pipedrive_activity_id": activity_id,
             "pipedrive_note_id": note_id,
             "deal_url": briefing_json["pipedrive"].get("deal_url"),
             "person_url": briefing_json["pipedrive"].get("person_url"),
             "proxima_acao": briefing_json.get("proxima_acao", {}).get("descricao"),
             "is_linked_to_crm": True,
             "assigned_manually": True,
-            "summary": f"Transcrição '{meeting_title}' vinculada com sucesso ao cliente '{client_name}'" + (f" (Deal #{deal_id})" if deal_id else "") + " no Pipedrive por Robson com briefing e notas sincronizados."
+            "summary": f"Transcrição '{meeting_title}' vinculada com sucesso ao cliente '{client_name}'" + (f" (Deal #{deal_id})" if deal_id else "") + " no Pipedrive por Robson com anotação sincronizada."
         }
     )
     
