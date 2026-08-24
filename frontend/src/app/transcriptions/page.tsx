@@ -80,6 +80,7 @@ export default function TranscriptionsPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [crmFilter, setCrmFilter] = useState<'all' | 'linked' | 'unlinked' | 'ignored'>('all')
   const [searchTerm, setSearchTerm] = useState('')
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'client_az' | 'linked_first'>('newest')
   const [syncFeedback, setSyncFeedback] = useState('')
 
   // Assign Modal state
@@ -141,12 +142,11 @@ export default function TranscriptionsPage() {
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       )
-      setSyncFeedback('Varredura no Google Drive iniciada com sucesso!')
+      setSyncFeedback('Varredura do Google Drive iniciada em segundo plano!')
       setTimeout(() => {
         fetchTranscriptions()
-        setSyncFeedback('')
       }, 3000)
-    } catch (err) {
+    } catch (err: any) {
       setSyncFeedback('Erro ao disparar sincronização.')
     } finally {
       setIsSyncing(false)
@@ -259,21 +259,43 @@ export default function TranscriptionsPage() {
       const clientNameToAssign = selectedPerson?.name || selectedDeal?.person_name || undefined
 
       const res = await axios.post(
-        `${API_URL}/api/transcriptions/${assignItem.id}/assign`,
+        `${API_URL}/api/transcriptions/${assignItem.id}/assign-pipedrive`,
         {
-          person_id: personIdToAssign,
-          deal_id: dealIdToAssign,
-          custom_client_name: clientNameToAssign,
+          person_id: personIdToAssign ? String(personIdToAssign) : undefined,
+          deal_id: dealIdToAssign ? String(dealIdToAssign) : undefined,
+          cliente_nome: clientNameToAssign,
           create_note: createNote,
           create_activity: createActivity,
         },
-        { headers: { Authorization: `Bearer ${token}` } }
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
       )
 
       setAssignSuccess(true)
       setTranscriptions((prev) =>
-        prev.map((t) => (t.id === assignItem.id ? { ...t, briefing_json: res.data.briefing_json } : t))
+        prev.map((t) =>
+          t.id === assignItem.id
+            ? {
+                ...t,
+                briefing_json: res.data.briefing_json,
+                cliente_nome: clientNameToAssign || t.cliente_nome,
+              }
+            : t
+        )
       )
+
+      if (selectedItem?.id === assignItem.id) {
+        setSelectedItem((prev) =>
+          prev
+            ? {
+                ...prev,
+                briefing_json: res.data.briefing_json,
+                cliente_nome: clientNameToAssign || prev.cliente_nome,
+              }
+            : null
+        )
+      }
 
       setTimeout(() => {
         setAssignItem(null)
@@ -287,10 +309,10 @@ export default function TranscriptionsPage() {
   }
 
   const filteredTranscriptions = useMemo(() => {
-    return transcriptions.filter((t) => {
+    const list = transcriptions.filter((t) => {
       if (statusFilter !== 'all' && t.processing_status !== statusFilter) return false
-      
-      const isIgnored = Boolean(t.briefing_json?.is_ignored)
+
+      const isIgnored = t.briefing_json?.observacoes?.includes('[IGNORADA')
       const isLinked = Boolean(
         t.briefing_json?.pipedrive?.deal_id || t.briefing_json?.pipedrive?.person_id
       )
@@ -309,7 +331,31 @@ export default function TranscriptionsPage() {
       }
       return true
     })
-  }, [transcriptions, statusFilter, crmFilter, searchTerm])
+
+    return list.sort((a, b) => {
+      if (sortBy === 'newest') {
+        const dateA = new Date(a.meeting_date || a.created_at).getTime()
+        const dateB = new Date(b.meeting_date || b.created_at).getTime()
+        return dateB - dateA
+      }
+      if (sortBy === 'oldest') {
+        const dateA = new Date(a.meeting_date || a.created_at).getTime()
+        const dateB = new Date(b.meeting_date || b.created_at).getTime()
+        return dateA - dateB
+      }
+      if (sortBy === 'client_az') {
+        const nameA = a.briefing_json?.dados_cliente?.nome || a.cliente_nome || a.meeting_title || ''
+        const nameB = b.briefing_json?.dados_cliente?.nome || b.cliente_nome || b.meeting_title || ''
+        return nameA.localeCompare(nameB)
+      }
+      if (sortBy === 'linked_first') {
+        const isLinkedA = Boolean(a.briefing_json?.pipedrive?.deal_id || a.briefing_json?.pipedrive?.person_id) ? 1 : 0
+        const isLinkedB = Boolean(b.briefing_json?.pipedrive?.deal_id || b.briefing_json?.pipedrive?.person_id) ? 1 : 0
+        return isLinkedB - isLinkedA
+      }
+      return 0
+    })
+  }, [transcriptions, statusFilter, crmFilter, searchTerm, sortBy])
 
   const formatDate = (dateStr?: string | null) => {
     if (!dateStr) return 'Recente'
@@ -389,17 +435,32 @@ export default function TranscriptionsPage() {
           )}
 
           {/* Search and Filters Bar */}
-          <div className="bg-white dark:bg-[#000D38] p-4 rounded-2xl border border-slate-200/90 dark:border-[#002060] shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4 transition-colors">
-            {/* Search Input */}
-            <div className="relative flex-1 sm:max-w-md">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Buscar por cliente, tópicos, título ou Deal..."
-                className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:bg-white dark:focus:bg-[#00061A] focus:ring-2 focus:ring-[#0092FF] focus:border-[#0092FF] outline-none transition-all"
-              />
+          <div className="bg-white dark:bg-[#000D38] p-4 rounded-2xl border border-slate-200/90 dark:border-[#002060] shadow-sm flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 transition-colors">
+            {/* Search Input & Sort Select */}
+            <div className="flex flex-col sm:flex-row items-center gap-3 flex-1">
+              <div className="relative flex-1 w-full">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Buscar por cliente, tópicos, título ou Deal..."
+                  className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:bg-white dark:focus:bg-[#00061A] focus:ring-2 focus:ring-[#0092FF] focus:border-[#0092FF] outline-none transition-all"
+                />
+              </div>
+
+              {/* Ordenação por Data / Mais Recente */}
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="w-full sm:w-56 px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-medium text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-[#0092FF] outline-none"
+                title="Ordenar transcrições"
+              >
+                <option value="newest">📅 Mais Recentes (Data ↓)</option>
+                <option value="oldest">⏳ Mais Antigas (Data ↑)</option>
+                <option value="client_az">👤 Nome do Cliente (A-Z)</option>
+                <option value="linked_first">🎯 Vinculadas no CRM Primeiro</option>
+              </select>
             </div>
 
             {/* Filter Pills */}

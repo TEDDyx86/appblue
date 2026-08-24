@@ -92,6 +92,7 @@ export default function AgendaPage() {
   const [periodFilter, setPeriodFilter] = useState<'next_30_days' | 'this_week' | 'next_week' | 'this_month' | 'all'>('all')
   const [activitySearch, setActivitySearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'done'>('all')
+  const [activitySortBy, setActivitySortBy] = useState<'date_asc' | 'date_desc' | 'assessor_az' | 'client_az'>('date_asc')
   const [copiedSingleId, setCopiedSingleId] = useState<string | null>(null)
   const [copiedConsolidated, setCopiedConsolidated] = useState(false)
 
@@ -213,9 +214,9 @@ export default function AgendaPage() {
     setTimeout(() => setCopiedConsolidated(false), 2500)
   }
 
-  // Filtra atividades por busca de texto
+  // Filtra e ordena atividades
   const filteredActivities = useMemo(() => {
-    return activities.filter((a) => {
+    const list = activities.filter((a) => {
       if (!activitySearch.trim()) return true
       const q = activitySearch.toLowerCase().trim()
       return (
@@ -225,7 +226,23 @@ export default function AgendaPage() {
         (a.deal_title || '').toLowerCase().includes(q)
       )
     })
-  }, [activities, activitySearch])
+
+    return list.sort((a, b) => {
+      if (activitySortBy === 'date_asc') {
+        return (a.due_date || '9999').localeCompare(b.due_date || '9999') || (a.due_time || '99:99').localeCompare(b.due_time || '99:99')
+      }
+      if (activitySortBy === 'date_desc') {
+        return (b.due_date || '0000').localeCompare(a.due_date || '0000') || (b.due_time || '00:00').localeCompare(a.due_time || '00:00')
+      }
+      if (activitySortBy === 'assessor_az') {
+        return (a.org_name || '').localeCompare(b.org_name || '')
+      }
+      if (activitySortBy === 'client_az') {
+        return (a.person_name || '').localeCompare(b.person_name || '')
+      }
+      return 0
+    })
+  }, [activities, activitySearch, activitySortBy])
 
   // Agrupa atividades por data para o calendário
   const groupedByDate = useMemo(() => {
@@ -444,7 +461,7 @@ export default function AgendaPage() {
                 </div>
 
                 {/* Secondary Search & Status Filter */}
-                <div className="flex flex-col sm:flex-row items-center gap-3 pt-3 border-t border-slate-100 dark:border-[#002060]/70">
+                <div className="flex flex-col lg:flex-row items-center gap-3 pt-3 border-t border-slate-100 dark:border-[#002060]/70">
                   <div className="relative flex-1 w-full">
                     <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
                     <input
@@ -463,6 +480,19 @@ export default function AgendaPage() {
                       </button>
                     )}
                   </div>
+
+                  {/* Ordenação por Data / Mais Próximos */}
+                  <select
+                    value={activitySortBy}
+                    onChange={(e) => setActivitySortBy(e.target.value as any)}
+                    className="w-full sm:w-56 px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-medium text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-[#0092FF] outline-none"
+                    title="Ordenar atendimentos"
+                  >
+                    <option value="date_asc">📅 Mais Próximos (Cronológico ↑)</option>
+                    <option value="date_desc">⏳ Mais Distantes (Data ↓)</option>
+                    <option value="assessor_az">🏢 Por Assessor (A-Z)</option>
+                    <option value="client_az">👤 Por Cliente (A-Z)</option>
+                  </select>
 
                   <div className="flex items-center space-x-1.5 w-full sm:w-auto">
                     {[

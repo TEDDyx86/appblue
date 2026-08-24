@@ -77,6 +77,7 @@ export default function DashboardPage() {
   const [isDealsModalOpen, setIsDealsModalOpen] = useState(false)
   const [dealsSearch, setDealsSearch] = useState('')
   const [selectedStageFilter, setSelectedStageFilter] = useState('all')
+  const [dealsSortBy, setDealsSortBy] = useState<'recent_update' | 'oldest_update' | 'highest_value' | 'stagnant_days' | 'title_az'>('recent_update')
 
   const [stats, setStats] = useState<Stats>({
     total_alerts: 0,
@@ -203,7 +204,7 @@ export default function DashboardPage() {
 
   const filteredDeals = useMemo(() => {
     if (!pipelineSummary?.deals) return []
-    return pipelineSummary.deals.filter((d) => {
+    const list = pipelineSummary.deals.filter((d) => {
       if (selectedStageFilter !== 'all' && d.stage_name !== selectedStageFilter) return false
       if (dealsSearch.trim()) {
         const q = dealsSearch.toLowerCase().trim()
@@ -214,7 +215,26 @@ export default function DashboardPage() {
       }
       return true
     })
-  }, [pipelineSummary?.deals, selectedStageFilter, dealsSearch])
+
+    return list.sort((a, b) => {
+      if (dealsSortBy === 'recent_update') {
+        return new Date(b.update_time || 0).getTime() - new Date(a.update_time || 0).getTime()
+      }
+      if (dealsSortBy === 'oldest_update') {
+        return new Date(a.update_time || 0).getTime() - new Date(b.update_time || 0).getTime()
+      }
+      if (dealsSortBy === 'stagnant_days') {
+        return (b.days_inactive || 0) - (a.days_inactive || 0)
+      }
+      if (dealsSortBy === 'highest_value') {
+        return (b.value || 0) - (a.value || 0)
+      }
+      if (dealsSortBy === 'title_az') {
+        return (a.title || '').localeCompare(b.title || '')
+      }
+      return 0
+    })
+  }, [pipelineSummary?.deals, selectedStageFilter, dealsSearch, dealsSortBy])
 
   const handleLogout = () => {
     localStorage.removeItem('access_token')
@@ -498,10 +518,24 @@ export default function DashboardPage() {
                 )}
               </div>
 
+              {/* Ordenação por Data / Atualização */}
+              <select
+                value={dealsSortBy}
+                onChange={(e) => setDealsSortBy(e.target.value as any)}
+                className="w-full sm:w-52 px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-medium text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-[#0092FF] outline-none"
+                title="Ordenar negócios"
+              >
+                <option value="recent_update">📅 Mais Recentes (Update ↓)</option>
+                <option value="oldest_update">⏳ Mais Antigos (Update ↑)</option>
+                <option value="stagnant_days">⚠️ Mais Dias Parado</option>
+                <option value="highest_value">💰 Maior Valor (R$)</option>
+                <option value="title_az">🔤 Nome do Negócio (A-Z)</option>
+              </select>
+
               <select
                 value={selectedStageFilter}
                 onChange={(e) => setSelectedStageFilter(e.target.value)}
-                className="w-full sm:w-56 px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-medium text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-[#0092FF] outline-none"
+                className="w-full sm:w-48 px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-medium text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-[#0092FF] outline-none"
               >
                 <option value="all">Todas as Etapas</option>
                 {pipelineSummary?.stages_breakdown &&

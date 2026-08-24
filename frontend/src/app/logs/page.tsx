@@ -126,6 +126,7 @@ export default function LogsPage() {
   const [loading, setLoading] = useState(true)
   const [actionFilter, setActionFilter] = useState<string>('all')
   const [searchTerm, setSearchTerm] = useState('')
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'action_type'>('newest')
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
@@ -175,10 +176,9 @@ export default function LogsPage() {
   }, [fetchLogs])
 
   const filteredLogs = useMemo(() => {
-    if (!searchTerm.trim()) return logs
-
-    const q = searchTerm.toLowerCase()
-    return logs.filter((log) => {
+    const list = logs.filter((log) => {
+      if (!searchTerm.trim()) return true
+      const q = searchTerm.toLowerCase()
       const details = log.details || {}
       const client = (details.cliente_nome || details.client_name || '').toLowerCase()
       const doc = (details.doc_title || '').toLowerCase()
@@ -186,7 +186,20 @@ export default function LogsPage() {
       const deal = (details.pipedrive_deal_id || '').toLowerCase()
       return client.includes(q) || doc.includes(q) || summary.includes(q) || deal.includes(q)
     })
-  }, [logs, searchTerm])
+
+    return list.sort((a, b) => {
+      if (sortBy === 'newest') {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      }
+      if (sortBy === 'oldest') {
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      }
+      if (sortBy === 'action_type') {
+        return a.action.localeCompare(b.action)
+      }
+      return 0
+    })
+  }, [logs, searchTerm, sortBy])
 
   const formatDate = (dateStr: string) => {
     try {
@@ -350,17 +363,31 @@ export default function LogsPage() {
           </div>
 
           {/* Filter & Search Bar */}
-          <div className="bg-white dark:bg-[#000D38] p-4 rounded-2xl border border-slate-200/80 dark:border-[#002060] shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 transition-colors">
-            {/* Search Input */}
-            <div className="relative flex-1 sm:max-w-md">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Buscar por cliente, documento do Drive, ID do Deal..."
-                className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:bg-white dark:focus:bg-[#00061A] focus:ring-2 focus:ring-[#0092FF] focus:border-[#0092FF] outline-none transition-all"
-              />
+          <div className="bg-white dark:bg-[#000D38] p-4 rounded-2xl border border-slate-200/80 dark:border-[#002060] shadow-sm flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 transition-colors">
+            {/* Search Input & Sort Dropdown */}
+            <div className="flex flex-col sm:flex-row items-center gap-3 flex-1">
+              <div className="relative flex-1 w-full">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Buscar por cliente, documento do Drive, ID do Deal..."
+                  className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:bg-white dark:focus:bg-[#00061A] focus:ring-2 focus:ring-[#0092FF] focus:border-[#0092FF] outline-none transition-all"
+                />
+              </div>
+
+              {/* Ordenação por Data / Mais Recente */}
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="w-full sm:w-48 px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-medium text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-[#0092FF] outline-none"
+                title="Ordenar logs"
+              >
+                <option value="newest">📅 Mais Recentes (Data ↓)</option>
+                <option value="oldest">⏳ Mais Antigos (Data ↑)</option>
+                <option value="action_type">⚙️ Por Tipo de Evento</option>
+              </select>
             </div>
 
             {/* Action Filter Pills */}

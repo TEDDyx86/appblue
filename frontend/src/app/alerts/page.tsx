@@ -75,6 +75,7 @@ export default function AlertsPage() {
   const [activeTab, setActiveTab] = useState<'pending' | 'resolved'>('pending')
   const [typeFilter, setTypeFilter] = useState<string>('all')
   const [severityFilter, setSeverityFilter] = useState<string>('all')
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'severity' | 'client_az'>('newest')
   const [searchTerm, setSearchTerm] = useState('')
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -128,7 +129,7 @@ export default function AlertsPage() {
   }
 
   const filteredAlerts = useMemo(() => {
-    return alerts.filter((alert) => {
+    const list = alerts.filter((alert) => {
       if (typeFilter !== 'all' && alert.alert_type !== typeFilter) return false
       if (severityFilter !== 'all' && alert.severity !== severityFilter) return false
       if (searchTerm.trim()) {
@@ -139,7 +140,24 @@ export default function AlertsPage() {
       }
       return true
     })
-  }, [alerts, typeFilter, severityFilter, searchTerm])
+
+    return list.sort((a, b) => {
+      if (sortBy === 'newest') {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      }
+      if (sortBy === 'oldest') {
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      }
+      if (sortBy === 'severity') {
+        const weight: Record<string, number> = { high: 3, medium: 2, low: 1 }
+        return (weight[b.severity] || 0) - (weight[a.severity] || 0)
+      }
+      if (sortBy === 'client_az') {
+        return (a.cliente_nome || '').localeCompare(b.cliente_nome || '')
+      }
+      return 0
+    })
+  }, [alerts, typeFilter, severityFilter, searchTerm, sortBy])
 
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleDateString('pt-BR', {
@@ -253,7 +271,20 @@ export default function AlertsPage() {
               />
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Ordenação por Data / Mais Recente */}
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-medium text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-[#0092FF] outline-none"
+                title="Ordenar alertas"
+              >
+                <option value="newest">📅 Mais Recentes (Data ↓)</option>
+                <option value="oldest">⏳ Mais Antigos (Data ↑)</option>
+                <option value="severity">🚨 Maior Prioridade</option>
+                <option value="client_az">👤 Nome do Cliente (A-Z)</option>
+              </select>
+
               <select
                 value={severityFilter}
                 onChange={(e) => setSeverityFilter(e.target.value)}

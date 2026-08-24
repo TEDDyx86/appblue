@@ -17,6 +17,7 @@ import {
   Sparkles,
   DollarSign,
   Layers,
+  ArrowUpDown,
 } from 'lucide-react'
 
 export interface Alert {
@@ -81,11 +82,12 @@ export default function AlertsPanel({
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [searchTerm, setSearchTerm] = useState('')
   const [severityFilter, setSeverityFilter] = useState<string>('all')
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'severity' | 'value_desc'>('newest')
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [resolvingId, setResolvingId] = useState<string | null>(null)
 
   const filteredAlerts = useMemo(() => {
-    return alerts.filter((alert) => {
+    const list = alerts.filter((alert) => {
       if (selectedTypeFilter !== 'all' && alert.alert_type !== selectedTypeFilter) return false
       if (severityFilter !== 'all' && alert.severity !== severityFilter) return false
       if (searchTerm.trim()) {
@@ -96,7 +98,26 @@ export default function AlertsPanel({
       }
       return true
     })
-  }, [alerts, selectedTypeFilter, severityFilter, searchTerm])
+
+    return list.sort((a, b) => {
+      if (sortBy === 'newest') {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      }
+      if (sortBy === 'oldest') {
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      }
+      if (sortBy === 'severity') {
+        const weight: Record<string, number> = { high: 3, medium: 2, low: 1 }
+        return (weight[b.severity] || 0) - (weight[a.severity] || 0)
+      }
+      if (sortBy === 'value_desc') {
+        const vA = a.details?.value || 0
+        const vB = b.details?.value || 0
+        return vB - vA
+      }
+      return 0
+    })
+  }, [alerts, selectedTypeFilter, severityFilter, searchTerm, sortBy])
 
   const getSeverityBadge = (severity: string) => {
     switch (severity) {
@@ -168,8 +189,8 @@ export default function AlertsPanel({
           </div>
 
           {/* Quick Filters */}
-          <div className="flex items-center space-x-2">
-            <div className="relative flex-1 sm:w-56">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 sm:w-48">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
@@ -186,6 +207,21 @@ export default function AlertsPanel({
                   &times;
                 </button>
               )}
+            </div>
+
+            {/* Ordenação por Data / Mais Recente */}
+            <div className="flex items-center space-x-1">
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="px-2.5 py-1.5 bg-white dark:bg-[#00061A] border border-slate-300 dark:border-[#002060] rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-[#0092FF] outline-none"
+                title="Ordenar alertas"
+              >
+                <option value="newest">📅 Mais Recentes (Data ↓)</option>
+                <option value="oldest">⏳ Mais Antigos (Data ↑)</option>
+                <option value="severity">🚨 Maior Prioridade</option>
+                <option value="value_desc">💰 Maior Valor (R$)</option>
+              </select>
             </div>
 
             <select
