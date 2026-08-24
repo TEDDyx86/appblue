@@ -49,11 +49,10 @@ GOOGLE_DRIVE_FOLDER_NAME = "Briefing - Tactiq"
 # FastAPI app
 app = FastAPI(title="Automação Tactiq-Pipedrive", version="1.0.0")
 
-# CORS
+# CORS - Permite Vercel, Render, localhost e qualquer origem
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
