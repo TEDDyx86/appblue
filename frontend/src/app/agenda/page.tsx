@@ -236,16 +236,17 @@ export default function AgendaPage() {
     }
   }, [activeTab, fetchSettings])
 
-  // Salva configurações
-  const handleSaveSettings = async (e?: React.FormEvent) => {
+  // Salva configurações no Supabase
+  const handleSaveSettings = async (e?: React.FormEvent, customSettings?: CalendarSettingsData) => {
     if (e) e.preventDefault()
-    if (!settings) return
+    const target = customSettings || settings
+    if (!target) return
 
     try {
       setSavingSettings(true)
       setSettingsFeedback('')
       const token = localStorage.getItem('access_token')
-      await axios.post(`${API_URL}/api/calendar/settings`, settings, {
+      await axios.post(`${API_URL}/api/calendar/settings`, target, {
         headers: { Authorization: `Bearer ${token}` },
       })
       setSettingsFeedback('Configurações salvas com sucesso!')
@@ -267,7 +268,8 @@ export default function AgendaPage() {
     } else {
       schedule[dayKey] = { ...current, enabled: true, intervals: [{ start: '09:00', end: '18:00' }] }
     }
-    setSettings({ ...settings, weekly_schedule: schedule })
+    const updated = { ...settings, weekly_schedule: schedule }
+    setSettings(updated)
   }
 
   const updateInterval = (dayKey: string, index: number, field: 'start' | 'end', value: string) => {
@@ -277,7 +279,8 @@ export default function AgendaPage() {
     const newIntervals = [...current.intervals]
     newIntervals[index] = { ...newIntervals[index], [field]: value }
     schedule[dayKey] = { ...current, intervals: newIntervals }
-    setSettings({ ...settings, weekly_schedule: schedule })
+    const updated = { ...settings, weekly_schedule: schedule }
+    setSettings(updated)
   }
 
   const addInterval = (dayKey: string) => {
@@ -292,7 +295,8 @@ export default function AgendaPage() {
         intervals: [...current.intervals, { start: '14:00', end: '18:00' }],
       }
     }
-    setSettings({ ...settings, weekly_schedule: schedule })
+    const updated = { ...settings, weekly_schedule: schedule }
+    setSettings(updated)
   }
 
   const removeInterval = (dayKey: string, index: number) => {
@@ -305,23 +309,26 @@ export default function AgendaPage() {
     } else {
       schedule[dayKey] = { ...current, intervals: newIntervals }
     }
-    setSettings({ ...settings, weekly_schedule: schedule })
+    const updated = { ...settings, weekly_schedule: schedule }
+    setSettings(updated)
   }
 
-  // Helpers de Tipos de Reunião / Eventos
+  // Helpers de Tipos de Reunião / Eventos (com persistência imediata)
   const handleSaveMeetingType = (meeting: MeetingTypeItem) => {
     if (!settings) return
     const existing = settings.meeting_types || []
-    let updated: MeetingTypeItem[]
+    let updatedTypes: MeetingTypeItem[]
     if (isCreatingMeeting) {
       const newId = meeting.id || meeting.name.toLowerCase().replace(/[^a-z0-9]/g, '_') + '_' + Date.now()
-      updated = [...existing, { ...meeting, id: newId }]
+      updatedTypes = [...existing, { ...meeting, id: newId }]
     } else {
-      updated = existing.map((m) => (m.id === meeting.id ? meeting : m))
+      updatedTypes = existing.map((m) => (m.id === meeting.id ? meeting : m))
     }
-    setSettings({ ...settings, meeting_types: updated })
+    const newSettings = { ...settings, meeting_types: updatedTypes }
+    setSettings(newSettings)
     setEditingMeeting(null)
     setIsCreatingMeeting(false)
+    handleSaveSettings(undefined, newSettings)
   }
 
   const handleDeleteMeetingType = (id: string) => {
@@ -330,11 +337,13 @@ export default function AgendaPage() {
       alert('Você deve manter ao menos 1 tipo de evento cadastrado.')
       return
     }
-    const updated = (settings.meeting_types || []).filter((m) => m.id !== id)
-    setSettings({ ...settings, meeting_types: updated })
-    if (previewMeetingIndex >= updated.length) {
+    const updatedTypes = (settings.meeting_types || []).filter((m) => m.id !== id)
+    const newSettings = { ...settings, meeting_types: updatedTypes }
+    setSettings(newSettings)
+    if (previewMeetingIndex >= updatedTypes.length) {
       setPreviewMeetingIndex(0)
     }
+    handleSaveSettings(undefined, newSettings)
   }
 
   // Copia mensagem de template único (WhatsApp)
