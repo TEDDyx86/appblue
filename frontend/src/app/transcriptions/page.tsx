@@ -149,17 +149,18 @@ export default function TranscriptionsPage() {
       setIsSyncing(true)
       setSyncFeedback('')
       const token = localStorage.getItem('access_token')
-      await axios.post(
+      const res = await axios.post(
         `${API_URL}/api/webhooks/trigger-sync`,
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       )
-      setSyncFeedback('Varredura do Google Drive iniciada em segundo plano!')
+      setSyncFeedback(res.data?.message || 'Sincronização com o Google Drive concluída!')
+      await fetchTranscriptions()
       setTimeout(() => {
-        fetchTranscriptions()
-      }, 3000)
+        setSyncFeedback('')
+      }, 6000)
     } catch (err: any) {
-      setSyncFeedback('Erro ao disparar sincronização.')
+      setSyncFeedback('Erro ao disparar sincronização: ' + (err.response?.data?.detail || err.message))
     } finally {
       setIsSyncing(false)
     }

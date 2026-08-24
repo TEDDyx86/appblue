@@ -699,9 +699,26 @@ async def get_person_deals(person_id: str) -> Optional[List[Dict]]:
 # PROCESSAMENTO DE TRANSCRIÇÃO
 # ============================================================================
 
-async def process_new_transcription(user_id: str):
+async def process_new_transcription(user_id: Optional[str] = None) -> Dict[str, Any]:
     """Background task: processa novas transcrições do Drive com parser real"""
+    stats = {"total_files": 0, "processed_new": 0, "already_existing": 0, "errors": 0}
     
+    clean_user_id = None
+    if user_id:
+        try:
+            uuid.UUID(str(user_id))
+            clean_user_id = str(user_id)
+        except (ValueError, AttributeError):
+            clean_user_id = None
+            
+    if not clean_user_id:
+        try:
+            admin_res = supabase.table("users").select("id").limit(1).execute()
+            if admin_res.data:
+                clean_user_id = admin_res.data[0]["id"]
+        except Exception as e:
+            logger.warning(f"Não foi possível obter fallback de user_id: {e}")
+            
     try:
         folder_id = find_google_drive_folder()
         service = get_google_drive_service()
@@ -713,10 +730,11 @@ async def process_new_transcription(user_id: str):
             spaces="drive",
             fields="files(id, name, createdTime, mimeType)",
             orderBy="createdTime desc",
-            pageSize=50
+            pageSize=100
         ).execute()
         
         files = results.get("files", [])
+        stats["total_files"] = len(files)
         logger.info(f"Encontrados {len(files)} arquivos na pasta do Google Drive")
         
         for file in files:
@@ -733,6 +751,7 @@ async def process_new_transcription(user_id: str):
             ).execute()
             
             if existing.data:
+                stats["already_existing"] += 1
                 continue
                 
             logger.info(f"Processando arquivo real do Drive: {meeting_title}")
@@ -742,17 +761,21 @@ async def process_new_transcription(user_id: str):
                 transcription_text = read_google_doc_as_text(google_doc_id)
             except Exception as e:
                 logger.error(f"Erro ao ler Google Doc {google_doc_id}: {e}")
+                stats["errors"] += 1
                 continue
             
             # Cria registro de transcrição (processing)
-            transcription_record = supabase.table("transcriptions").insert({
+            insert_data = {
                 "google_doc_id": google_doc_id,
                 "meeting_title": meeting_title,
                 "meeting_date": created_time,
                 "transcription_text": transcription_text,
-                "processing_status": "processing",
-                "created_by": user_id
-            }).execute()
+                "processing_status": "processing"
+            }
+            if clean_user_id:
+                insert_data["created_by"] = clean_user_id
+                
+            transcription_record = supabase.table("transcriptions").insert(insert_data).execute()
             
             transcription_id = transcription_record.data[0]["id"]
             
@@ -816,6 +839,8 @@ async def process_new_transcription(user_id: str):
                 "briefing_json": briefing_json
             }).eq("id", transcription_id).execute()
             
+            stats["processed_new"] += 1
+            
             # Registra no log de auditoria
             is_linked = bool(deal_id or person_id)
             if is_linked:
@@ -832,7 +857,7 @@ async def process_new_transcription(user_id: str):
                 action=action_type,
                 resource_type="transcription",
                 resource_id=transcription_id,
-                user_id=user_id,
+                user_id=clean_user_id,
                 details={
                     "doc_title": meeting_title,
                     "google_doc_id": google_doc_id,
@@ -851,9 +876,12 @@ async def process_new_transcription(user_id: str):
             )
             
             logger.info(f"Transcrição concluída e auditada ({action_type}): {meeting_title}")
-    
+            
     except Exception as e:
         logger.error(f"Erro no processamento de transcrições: {e}")
+        stats["errors"] += 1
+        
+    return stats
 
 # ============================================================================
 # PIPEDRIVE ENDPOINTS
@@ -1940,21 +1968,18 @@ def generate_daily_alerts():
 scheduler.add_job(generate_daily_alerts, "cron", hour=7, minute=0, timezone="America/Sao_Paulo")
 
 # ============================================================================
-# HEALTH CHECK
+# HEALTH CHECK & SYSTEM STATUS
 # ============================================================================
 
 @app.get("/health")
 async def health_check():
-    """Health check"""
+    """Health check básico"""
     return {"status": "ok"}
 
-# ============================================================================
-# SYSTEM STATUS & CONFIGURATION
-# ============================================================================
-
+@app.get("/api/health")
 @app.get("/api/system/status")
-async def get_system_status(user: dict = Depends(require_admin)):
-    """Verifica status das conexões (Supabase, Drive, Pipedrive)"""
+async def get_system_status(user: Optional[dict] = Depends(get_current_user_optional)):
+    """Verifica status detalhado das conexões (Supabase, Drive, Pipedrive, Scheduler)"""
     status_report = {
         "supabase": {"connected": False, "detail": ""},
         "google_drive": {"connected": False, "detail": ""},
@@ -1980,18 +2005,40 @@ async def get_system_status(user: dict = Depends(require_admin)):
         
     # 3. Pipedrive
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             res = await client.get("https://api.pipedrive.com/v1/users/me", params={"api_token": PIPEDRIVE_API_TOKEN})
             if res.status_code == 200:
                 user_info = res.json().get("data", {})
                 status_report["pipedrive"]["connected"] = True
-                status_report["pipedrive"]["detail"] = f"{user_info.get('name')} ({user_info.get('company_name')})"
+                status_report["pipedrive"]["detail"] = f"{user_info.get('name')} ({user_info.get('company_name', 'Investimentos Blue')})"
             else:
                 status_report["pipedrive"]["detail"] = f"Status {res.status_code}"
     except Exception as e:
         status_report["pipedrive"]["detail"] = str(e)
         
     return status_report
+
+@app.post("/api/webhooks/trigger-sync")
+@app.post("/api/transcriptions/sync")
+@app.post("/api/system/test-connections")
+async def trigger_drive_sync(
+    user: dict = Depends(require_admin)
+):
+    """Dispara sincronização manual de novos arquivos no Google Drive e teste de conexões"""
+    user_id = user.get("id", user.get("sub", ""))
+    try:
+        folder_id = find_google_drive_folder()
+    except Exception as e:
+        logger.error(f"Erro ao localizar pasta do Google Drive: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao acessar pasta do Google Drive: {str(e)}")
+        
+    stats = await process_new_transcription(user_id)
+    return {
+        "status": "success",
+        "message": f"Sincronização concluída! {stats.get('processed_new', 0)} novos arquivos processados ({stats.get('already_existing', 0)} já sincronizados).",
+        "stats": stats,
+        "folder_id": folder_id
+    }
 
 @app.get("/api/system/config")
 async def get_system_config(user: dict = Depends(require_admin)):
