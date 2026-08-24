@@ -95,10 +95,44 @@ function getAlertActivityInfo(alert: Alert): { dateLabel: string; timestamp: num
     }
   }
 
-  // 3. Fallback: created_at da detecção
+  // 3. Negócio parado com days_inactive nos details
+  if (alert.details?.days_inactive !== undefined && alert.details?.days_inactive !== null) {
+    const days = Number(alert.details.days_inactive)
+    const dt = new Date(Date.now() - days * 86400000)
+    return {
+      dateLabel: `Parado há ${days}d (desde ${dt.toLocaleDateString('pt-BR')})`,
+      timestamp: dt.getTime(),
+    }
+  }
+
+  // 4. Regex para "Venceu em YYYY-MM-DD" no texto
+  const desc = alert.description || ''
+  const matchVenceu = desc.match(/Venceu em (\d{4}-\d{2}-\d{2})/)
+  if (matchVenceu && matchVenceu[1]) {
+    const dt = new Date(`${matchVenceu[1]}T00:00:00`)
+    if (!isNaN(dt.getTime())) {
+      return {
+        dateLabel: `Venceu em ${dt.toLocaleDateString('pt-BR')}`,
+        timestamp: dt.getTime(),
+      }
+    }
+  }
+
+  // 5. Regex para "parado há X dias" no texto
+  const matchParado = desc.match(/parado há (\d+) dias/)
+  if (matchParado && matchParado[1]) {
+    const days = Number(matchParado[1])
+    const dt = new Date(Date.now() - days * 86400000)
+    return {
+      dateLabel: `Parado há ${days}d (desde ${dt.toLocaleDateString('pt-BR')})`,
+      timestamp: dt.getTime(),
+    }
+  }
+
+  // 6. Fallback: created_at
   const dt = new Date(alert.created_at)
   return {
-    dateLabel: isNaN(dt.getTime()) ? '' : dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+    dateLabel: isNaN(dt.getTime()) ? '' : dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }),
     timestamp: isNaN(dt.getTime()) ? 0 : dt.getTime(),
   }
 }
