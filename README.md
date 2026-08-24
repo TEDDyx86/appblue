@@ -1,185 +1,124 @@
-# Automação Tactiq → Google Drive → Pipedrive
+# Blue3 Advisory Hub 🚀
 
-Sistema de automação pós-reunião que processa transcrições do Tactiq, extrai insights com IA e cria Activities no Pipedrive.
+> **Plataforma de Gestão Operacional, Inteligência de Atendimentos e Integração de CRM**  
+> Desenvolvida para apoiar o planejamento financeiro e sucessório, unificando inteligência artificial, automação de transcrições e gestão de relacionamento.
 
-## 🎯 Visão Geral
+---
 
-Este sistema automatiza o fluxo pós-reunião de um planejador financeiro especializado em seguro de vida e planejamento sucessório.
+## 📌 Visão Geral
 
-**Fluxo:**
+O **Blue3 Advisory Hub** centraliza e automatiza a rotina operacional de atendimentos patrimoniais. A plataforma conecta reuniões realizadas com clientes e assessores, processa briefings através de Inteligência Artificial e sincroniza registros estratégicos diretamente no **Pipedrive CRM**, garantindo controle de funil e follow-up contínuo.
+
+---
+
+## 🎯 Principais Funcionalidades
+
+### 📊 1. Painel Operacional & Gestão do Funil Comercial
+* Acompanhamento em tempo real dos negócios ativos no Funil Comercial do CRM.
+* Monitoramento de estagnação e alertas proativos para oportunidades sem contato recente.
+* Métricas consolidadas de volume financeiro sob assessoria e negócios em andamento.
+
+### 🎙️ 2. Inteligência de Reuniões & Transcrições
+* Leitura e processamento automatizado de atas e transcrições de reuniões do Google Drive.
+* Extração estruturada de dados via IA: perfil do cliente, interesse demonstrado, principais tópicos abordados e próxima ação recomendada.
+* Vinculação direta ao Pipedrive com geração de anotações ricas na linha do tempo do contato e do negócio.
+
+### 📅 3. Agenda de Atendimentos & Coordenação com Assessores
+* Calendário cronológico das atividades em aberto no CRM, agrupadas por assessor e data.
+* Filtros por período (*Esta Semana, Próxima Semana, Este Mês, etc.*) e seletores rápidos por assessor.
+* Geração em 1-clique de resumos formatados para alinhamento rápido via WhatsApp.
+
+### ⏱️ 4. Portal de Autoagendamento
+* Página pública para clientes e parceiros agendarem reuniões nos horários disponíveis.
+* Regras configuráveis de jornada de trabalho, intervalo de respiro (*buffer*) e antecedência mínima.
+
+### 🛡️ 5. Trilha de Auditoria & Governança
+* Registro cronológico e detalhado de todas as sincronizações, vínculos e atualizações realizadas.
+* Autenticação segura baseada em JWT com controle de acesso para administradores.
+
+---
+
+## 🛠️ Tecnologias Utilizadas
+
+* **Frontend:** [Next.js](https://nextjs.org/) (App Router), [React](https://react.dev/), [Tailwind CSS](https://tailwindcss.com/), [Lucide React](https://lucide.dev/)
+* **Backend:** [FastAPI](https://fastapi.tiangolo.com/), [Python](https://www.python.org/), [Pydantic](https://docs.pydantic.dev/), [HTTPX](https://www.python-httpx.org/)
+* **Banco de Dados & Auth:** [Supabase](https://supabase.com/) (PostgreSQL com RLS & JWT)
+* **Inteligência Artificial:** [Google Gemini](https://ai.google.dev/)
+* **Integrações Externas:** [Pipedrive CRM API](https://developers.pipedrive.com/), [Google Workspace API](https://developers.google.com/drive)
+
+---
+
+## 📂 Estrutura da Aplicação
+
 ```
-Reunião Google Meet → Tactiq transcreve → Google Drive → Webhook → 
-FastAPI processa → Matching no Pipedrive → Activity criada → Alertas no Dashboard
-```
-
-## 📁 Estrutura do Projeto
-
-```
-Projeto Robson/
+appblue/
 ├── backend/
-│   ├── main.py              # FastAPI app
+│   ├── main.py              # API FastAPI, rotas de integração e regras de negócio
 │   ├── requirements.txt     # Dependências Python
-│   └── .env.example         # Variáveis de ambiente
+│   └── .env.example         # Exemplo de configuração de ambiente
 ├── frontend/
 │   ├── src/
-│   │   ├── app/
-│   │   │   ├── dashboard/   # Página principal
-│   │   │   ├── login/       # Autenticação
-│   │   ├── components/      # Componentes React
-│   ├── package.json
-│   └── .env.example
-├── schema.sql               # Schema Supabase + RLS
-├── ARQUITETURA-TACITQ-PIPEDRIVE.md
-└── PRD-automacao-tactiq-pipedrive.md
+│   │   ├── app/             # Rotas e páginas da aplicação (Next.js App Router)
+│   │   │   ├── agenda/      # Gestão de atividades e calendário por assessor
+│   │   │   ├── agendar/     # Portal público de autoagendamento
+│   │   │   ├── alerts/      # Gestão e resolução de alertas operacionais
+│   │   │   ├── dashboard/   # Visão geral de métricas e negócios do funil
+│   │   │   ├── logs/        # Histórico de auditoria e sincronização
+│   │   │   └── transcriptions/ # Processamento de reuniões e briefings
+│   │   ├── components/      # Componentes compartilhados e navegação
+│   │   └── context/         # Gerenciamento de estado global e temas
+│   ├── package.json         # Dependências do frontend
+│   └── tailwind.config.ts   # Configuração de design system e tokens de cores
+└── schema.sql               # Estrutura das tabelas relacionais e políticas RLS
 ```
 
-## 🚀 Setup Rápido
+---
 
-### 1. Supabase
+## 🚀 Execução em Ambiente Local
 
-1. Crie um projeto em [supabase.com](https://supabase.com)
-2. Vá em **SQL Editor** e execute o arquivo `schema.sql`
-3. Copie as credenciais:
-   - Settings → API → URL (`SUPABASE_URL`)
-   - Settings → API → service_role (`SUPABASE_SERVICE_ROLE_KEY`)
-   - Settings → API → anon (`SUPABASE_ANON_KEY`)
+### Pré-requisitos
+* Node.js 18+ e npm
+* Python 3.10+
+* Projeto configurado no Supabase
 
-**Configurações adicionais no Supabase:**
-- Authentication → Providers → Email: Desabilitar "Email Confirmations" (opcional)
-- Authentication → JWT: Expiration = 3600 seg
-- Database → Extensions: Habilitar `pg_cron` (para jobs agendados)
-
-### 2. Google Drive
-
-1. Crie uma conta de serviço no Google Cloud Console
-2. Baixe o JSON de credenciais
-3. Salve em local seguro
-4. Compartilhe a pasta "Tactiq Transcription" com o email da conta de serviço
-
-### 3. Pipedrive
-
-1. Vá em Settings → API → Copie o token
-2. Configure Custom Fields em Activities:
-   - `origem_pipeline` (texto): valor "tactiq-auto"
-
-### 4. Backend (FastAPI)
-
+### 1. Configurando o Backend
 ```bash
 cd backend
-
-# Criar venv
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# ou
-.\venv\Scripts\activate   # Windows
 
-# Instalar dependências
+# Windows
+.\venv\Scripts\activate
+# Linux / macOS
+source venv/bin/activate
+
 pip install -r requirements.txt
-
-# Configurar ambiente
 cp .env.example .env
-# Edite .env com suas credenciais
+# Preencha o .env com as credenciais do Supabase, Pipedrive e Google
 
-# Rodar
 uvicorn main:app --reload --port 8000
 ```
 
-### 5. Frontend (Next.js)
-
+### 2. Configurando o Frontend
 ```bash
 cd frontend
-
-# Instalar dependências
 npm install
-
-# Configurar ambiente
 cp .env.example .env.local
-# Edite .env.local com a URL do backend
+# Defina NEXT_PUBLIC_API_URL=http://localhost:8000
 
-# Rodar
 npm run dev
 ```
+Acesse a aplicação no navegador em `http://localhost:3000`.
 
-Acesse: http://localhost:3000
+---
 
-## 🔐 Segurança
+## 🔒 Segurança e Privacidade
 
-### RLS (Row Level Security)
+* Todas as operações de dados respeitam políticas de **Row Level Security (RLS)** no PostgreSQL.
+* Tokens de autenticação assinados com expiração configurável.
+* Credenciais de serviços externos armazenadas exclusivamente em variáveis de ambiente protegidas.
 
-O schema Supabase inclui RLS policies que:
-- ✅ Usuários veem apenas seus próprios dados
-- ✅ Admins têm acesso total
-- ✅ Tokens JWT com expiração
-- ✅ Senhas com bcrypt hash
+---
 
-### Variáveis Sensíveis
-
-**NUNCA** commite:
-- `.env` files
-- `service-account.json` do Google
-- Tokens de API
-
-## 📊 Dashboard
-
-O dashboard exibe 3 tipos de alertas:
-
-| Alerta | Descrição | Cor |
-|--------|-----------|-----|
-| **Negócio Parado** | Deal sem atualização > 15 dias | Vermelho |
-| **Follow-up Atrasado** | Activity vencida sem conclusão | Amarelo |
-| **Teams Pendente** | Activity sem link Teams configurado | Azul |
-
-## 🔧 Endpoints API
-
-### Autenticação
-- `POST /api/auth/signup` - Criar usuário
-- `POST /api/auth/login` - Login
-- `POST /api/auth/refresh` - Refresh token
-- `GET /api/auth/me` - Dados do usuário
-
-### Webhooks
-- `POST /api/webhooks/google-drive` - Recebe notificação do Drive
-
-### Alertas
-- `GET /api/alerts` - Lista alertas
-- `PATCH /api/alerts/{id}` - Resolver alerta
-
-### Transcrições
-- `GET /api/transcriptions` - Lista histórico
-
-## 🧪 Testes
-
-```bash
-# Backend
-cd backend
-pytest
-
-# Frontend
-cd frontend
-npm test
-```
-
-## 📝 Próximos Passos
-
-- [ ] Implementar prompt Tactiq para extração de dados
-- [ ] Configurar webhook Google Drive Watch
-- [ ] Job diário para consolidação de alertas
-- [ ] Integrar com Microsoft Teams API (futuro)
-- [ ] Dashboard mobile responsivo
-
-## 📚 Documentação
-
-- [PRD Completo](./PRD-automacao-tactiq-pipedrive.md)
-- [Arquitetura Detalhada](./ARQUITETURA-TACITQ-PIPEDRIVE.md)
-
-## 🤝 Contribuição
-
-1. Fork o projeto
-2. Crie uma branch (`git checkout -b feature/nova-funcionalidade`)
-3. Commit (`git commit -m 'Add nova funcionalidade'`)
-4. Push (`git push origin feature/nova-funcionalidade`)
-5. Abra um Pull Request
-
-## 📄 Licença
-
-Projeto interno - Blue3 Investimentos
+<p align="center">
+  <sub>Blue3 Investimentos &bull; Plataforma de Uso Interno</sub>
+</p>
