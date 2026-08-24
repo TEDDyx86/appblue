@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import axios from 'axios'
 import Sidebar from '@/components/Sidebar'
@@ -23,6 +23,10 @@ import {
   AlertTriangle,
   ExternalLink,
   Zap,
+  Search,
+  X,
+  Clock,
+  Eye,
 } from 'lucide-react'
 import { useTheme } from '@/context/ThemeContext'
 
@@ -33,6 +37,21 @@ interface UserProfile {
   role: string
 }
 
+interface DealItem {
+  id: string
+  title: string
+  person_name: string
+  stage_id: number
+  stage_name: string
+  value: number
+  update_time: string
+  days_inactive: number
+  next_activity_date: string | null
+  is_stagnant: boolean
+  is_overdue: boolean
+  deal_url: string
+}
+
 interface PipelineSummary {
   pipeline_id: number
   pipeline_name: string
@@ -41,6 +60,7 @@ interface PipelineSummary {
   stages_breakdown: Record<string, number>
   stagnant_count: number
   overdue_count: number
+  deals?: DealItem[]
 }
 
 export default function DashboardPage() {
@@ -52,6 +72,12 @@ export default function DashboardPage() {
   const [pipelineSummary, setPipelineSummary] = useState<PipelineSummary | null>(null)
   const [isSyncingPipeline, setIsSyncingPipeline] = useState(false)
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null)
+
+  // Deals Modal state
+  const [isDealsModalOpen, setIsDealsModalOpen] = useState(false)
+  const [dealsSearch, setDealsSearch] = useState('')
+  const [selectedStageFilter, setSelectedStageFilter] = useState('all')
+
   const [stats, setStats] = useState<Stats>({
     total_alerts: 0,
     negocio_parado: 0,
@@ -174,6 +200,21 @@ export default function DashboardPage() {
       console.error('Erro ao resolver alerta:', err)
     }
   }
+
+  const filteredDeals = useMemo(() => {
+    if (!pipelineSummary?.deals) return []
+    return pipelineSummary.deals.filter((d) => {
+      if (selectedStageFilter !== 'all' && d.stage_name !== selectedStageFilter) return false
+      if (dealsSearch.trim()) {
+        const q = dealsSearch.toLowerCase().trim()
+        const title = (d.title || '').toLowerCase()
+        const person = (d.person_name || '').toLowerCase()
+        const idStr = String(d.id)
+        if (!title.includes(q) && !person.includes(q) && !idStr.includes(q)) return false
+      }
+      return true
+    })
+  }, [pipelineSummary?.deals, selectedStageFilter, dealsSearch])
 
   const handleLogout = () => {
     localStorage.removeItem('access_token')
@@ -316,7 +357,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {/* Pipeline KPI Pills */}
+                {/* Pipeline KPI Pills & Direct Actions */}
                 <div className="flex flex-wrap items-center gap-3">
                   <div className="px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060]">
                     <span className="text-[10px] uppercase font-bold text-slate-400 block">Negócios Abertos</span>
@@ -335,21 +376,20 @@ export default function DashboardPage() {
                   <button
                     onClick={handleSyncPipeline}
                     disabled={isSyncingPipeline}
-                    className="inline-flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white font-bold text-xs shadow-md shadow-blue-500/25 transition-all disabled:opacity-50"
+                    className="inline-flex items-center space-x-2 px-3.5 py-2 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white font-bold text-xs shadow-md shadow-blue-500/25 transition-all disabled:opacity-50"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isSyncingPipeline ? 'animate-spin' : ''}`} />
-                    <span>{isSyncingPipeline ? 'Varrendo CRM...' : 'Sincronizar Funil'}</span>
+                    <span>{isSyncingPipeline ? 'Varrendo CRM...' : 'Sincronizar CRM'}</span>
                   </button>
 
-                  <a
-                    href="https://investimentosblue.pipedrive.com/pipeline/1"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="p-2.5 rounded-xl border border-slate-200 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] hover:bg-slate-100 dark:hover:bg-[#002060] text-slate-600 dark:text-slate-300 transition-colors"
-                    title="Abrir Funil Comercial no Pipedrive"
+                  <button
+                    type="button"
+                    onClick={() => setIsDealsModalOpen(true)}
+                    className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] hover:bg-slate-100 dark:hover:bg-[#002060] text-slate-700 dark:text-slate-200 font-bold text-xs transition-colors shadow-xs"
                   >
-                    <ExternalLink className="w-4 h-4" />
-                  </a>
+                    <Eye className="w-3.5 h-3.5 text-[#0092FF] dark:text-[#00FFFF]" />
+                    <span>Ver Negócios (Deals)</span>
+                  </button>
                 </div>
               </div>
 
@@ -366,17 +406,23 @@ export default function DashboardPage() {
                 <div className="mt-4 pt-3.5 border-t border-slate-100 dark:border-[#002060]/70">
                   <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-2 flex items-center space-x-1.5">
                     <Layers className="w-3.5 h-3.5 text-[#0092FF]" />
-                    <span>Distribuição de Negócios por Etapa:</span>
+                    <span>Distribuição de Negócios por Etapa (Clique para filtrar):</span>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(pipelineSummary.stages_breakdown).map(([stageName, count]) => (
-                      <div
+                      <button
                         key={stageName}
-                        className="px-2.5 py-1 rounded-lg bg-slate-100/80 dark:bg-[#00061A] border border-slate-200/80 dark:border-[#002060] text-[11px] flex items-center space-x-1.5"
+                        type="button"
+                        onClick={() => {
+                          setSelectedStageFilter(stageName)
+                          setIsDealsModalOpen(true)
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-slate-100/80 hover:bg-blue-50 dark:bg-[#00061A] dark:hover:bg-[#002060] border border-slate-200/80 dark:border-[#002060] text-[11px] flex items-center space-x-1.5 transition-colors group cursor-pointer"
+                        title={`Ver ${count} negócios em ${stageName}`}
                       >
-                        <span className="text-slate-600 dark:text-slate-300">{stageName}:</span>
+                        <span className="text-slate-600 dark:text-slate-300 group-hover:text-[#0092FF]">{stageName}:</span>
                         <span className="font-bold text-slate-900 dark:text-[#00FFFF]">{count}</span>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -403,6 +449,150 @@ export default function DashboardPage() {
           </div>
         </main>
       </div>
+
+      {/* MODAL DE NEGÓCIOS ESPECÍFICOS DO FUNIL COMERCIAL */}
+      {isDealsModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white dark:bg-[#000D38] rounded-3xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-slate-200/90 dark:border-[#002060] overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-200 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 bg-blue-50 dark:bg-blue-950/50 text-[#0092FF] dark:text-[#00FFFF] rounded-xl border border-blue-200 dark:border-blue-800/60">
+                  <Briefcase className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white font-display">
+                    Negócios do Funil Comercial
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {filteredDeals.length} de {pipelineSummary?.total_deals || 0} negócios exibidos &bull; Clique para abrir o Deal diretamente no Pipedrive
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsDealsModalOpen(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-[#002060] transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Filter & Search Bar */}
+            <div className="p-4 border-b border-slate-200 dark:border-[#002060] bg-white dark:bg-[#000D38] flex flex-col sm:flex-row items-center gap-3">
+              <div className="relative flex-1 w-full">
+                <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={dealsSearch}
+                  onChange={(e) => setDealsSearch(e.target.value)}
+                  placeholder="Filtrar por cliente, título ou ID do deal..."
+                  className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:bg-white focus:ring-2 focus:ring-[#0092FF] outline-none transition-all"
+                />
+                {dealsSearch && (
+                  <button
+                    onClick={() => setDealsSearch('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                  >
+                    &times;
+                  </button>
+                )}
+              </div>
+
+              <select
+                value={selectedStageFilter}
+                onChange={(e) => setSelectedStageFilter(e.target.value)}
+                className="w-full sm:w-56 px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-medium text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-[#0092FF] outline-none"
+              >
+                <option value="all">Todas as Etapas</option>
+                {pipelineSummary?.stages_breakdown &&
+                  Object.keys(pipelineSummary.stages_breakdown).map((s) => (
+                    <option key={s} value={s}>
+                      {s} ({pipelineSummary.stages_breakdown[s]})
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            {/* Deals List */}
+            <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-[#002060] p-2">
+              {filteredDeals.length === 0 ? (
+                <div className="py-12 text-center text-xs text-slate-400">
+                  Nenhum negócio encontrado com os filtros aplicados.
+                </div>
+              ) : (
+                filteredDeals.map((deal) => (
+                  <div
+                    key={deal.id}
+                    className="p-3.5 sm:p-4 rounded-xl flex items-center justify-between gap-3 hover:bg-slate-50 dark:hover:bg-[#00061A]/60 transition-colors"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-[#0092FF] dark:text-[#00FFFF] border border-blue-200 dark:border-blue-800/60 font-mono">
+                          Deal #{deal.id}
+                        </span>
+
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-100 dark:bg-[#00061A] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#002060]">
+                          {deal.stage_name}
+                        </span>
+
+                        {deal.value > 0 && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60">
+                            {deal.value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                          </span>
+                        )}
+
+                        {deal.is_stagnant && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60">
+                            Parado há {deal.days_inactive}d
+                          </span>
+                        )}
+                      </div>
+
+                      <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate font-display">
+                        {deal.title}
+                      </h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                        Cliente: <span className="font-semibold text-slate-700 dark:text-slate-300">{deal.person_name}</span>
+                        {deal.next_activity_date && (
+                          <span className="ml-2 inline-flex items-center text-slate-400">
+                            &bull; Próx. Atividade: {deal.next_activity_date}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+
+                    {/* Direct Button to Specific Deal */}
+                    <a
+                      href={deal.deal_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white font-bold text-xs shadow-sm shadow-blue-500/20 transition-all flex-shrink-0"
+                      title={`Abrir Deal #${deal.id} diretamente no Pipedrive`}
+                    >
+                      <span>Abrir Deal</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-200 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] flex items-center justify-between">
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                Pipedrive Blue3 &bull; Funil Comercial
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsDealsModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-[#002060] transition-colors"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

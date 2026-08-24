@@ -245,7 +245,7 @@ export default function AlertsPanel({
             const isExpanded = expandedIds.has(alert.id)
             const isResolving = resolvingId === alert.id
             const dealId = alert.pipedrive_deal_id || alert.details?.deal_id
-            const dealUrl = alert.details?.deal_url || (dealId ? `https://investimentosblue.pipedrive.com/deal/${dealId}` : 'https://investimentosblue.pipedrive.com')
+            const dealUrl = alert.details?.deal_url || (dealId ? `https://investimentosblue.pipedrive.com/deal/${dealId}` : undefined)
             const dealValue = alert.details?.value
             const stageName = alert.details?.stage
             const daysInactive = alert.details?.days_inactive
@@ -271,10 +271,17 @@ export default function AlertsPanel({
                         </span>
                         {getSeverityBadge(alert.severity)}
                         
-                        {dealId && (
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/50 text-[#0092FF] dark:text-[#00FFFF] border border-blue-200 dark:border-blue-800/60 font-mono">
-                            Deal #{dealId}
-                          </span>
+                        {dealId && dealUrl && (
+                          <a
+                            href={dealUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900/80 text-[#0092FF] dark:text-[#00FFFF] border border-blue-200 dark:border-blue-800/60 font-mono inline-flex items-center space-x-1 transition-colors"
+                            title={`Abrir Deal #${dealId} no Pipedrive`}
+                          >
+                            <span>Deal #{dealId}</span>
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
                         )}
 
                         {dealValue !== undefined && dealValue > 0 && (
@@ -289,7 +296,19 @@ export default function AlertsPanel({
                       </div>
 
                       <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate font-display">
-                        {alert.cliente_nome || 'Cliente não informado'}
+                        {dealUrl ? (
+                          <a
+                            href={dealUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="hover:text-[#0092FF] dark:hover:text-[#00FFFF] transition-colors inline-flex items-center space-x-1.5"
+                          >
+                            <span>{alert.cliente_nome || 'Cliente não informado'}</span>
+                            <ExternalLink className="w-3 h-3 opacity-60" />
+                          </a>
+                        ) : (
+                          alert.cliente_nome || 'Cliente não informado'
+                        )}
                       </h4>
 
                       <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">
@@ -299,16 +318,17 @@ export default function AlertsPanel({
                   </div>
 
                   {/* Actions */}
-                  <div className="flex items-center space-x-1.5 flex-shrink-0">
+                  <div className="flex items-center space-x-2 flex-shrink-0">
                     {dealUrl && (
                       <a
                         href={dealUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-[#0092FF] hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors"
-                        title="Abrir Deal no Pipedrive"
+                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0092FF]/10 hover:bg-[#0092FF]/20 text-[#0092FF] dark:text-[#00FFFF] border border-[#0092FF]/30 transition-colors shadow-xs"
+                        title={`Abrir Deal #${dealId} no Pipedrive`}
                       >
-                        <ExternalLink className="w-4 h-4" />
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Abrir Deal</span>
                       </a>
                     )}
 
@@ -380,7 +400,7 @@ export default function AlertsPanel({
                           rel="noreferrer"
                           className="inline-flex items-center space-x-1 text-[#0092FF] dark:text-[#00FFFF] font-bold hover:underline"
                         >
-                          <span>Abrir Negócio no Pipedrive</span>
+                          <span>Abrir Negócio #{dealId} no Pipedrive</span>
                           <ExternalLink className="w-3 h-3" />
                         </a>
                       )}
