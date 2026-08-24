@@ -29,6 +29,9 @@ import {
   ArrowUpRight,
   EyeOff,
   Eye,
+  Unlink,
+  Trash2,
+  Edit3,
 } from 'lucide-react'
 import { useTheme } from '@/context/ThemeContext'
 
@@ -38,23 +41,30 @@ interface BriefingData {
     nome?: string
     idade?: string
     estado_civil?: string
+    filhos?: string
+    profissao?: string
+    patrimonio_estimado?: string
+    renda_mensal?: string
+    objetivos_principais?: string[]
+    principais_dores?: string[]
     demonstrou_interesse?: string
-    email?: string
   }
   proxima_acao?: {
     descricao?: string
+    responsavel?: string
     prazo_sugerido?: string
-    prioridade?: string
+    canal?: string
   }
+  pontos_atencao?: string[]
   observacoes?: string
   tactiq_link?: string
   is_ignored?: boolean
   pipedrive?: {
-    person_id?: string
-    deal_id?: string
-    activity_id?: string
-    person_url?: string
-    deal_url?: string
+    person_id?: string | null
+    deal_id?: string | null
+    person_url?: string | null
+    deal_url?: string | null
+    note_id?: string | null
   }
 }
 
@@ -63,9 +73,9 @@ interface Transcription {
   google_doc_id: string
   meeting_title: string | null
   meeting_date: string | null
+  cliente_nome?: string | null
   processing_status: 'pending' | 'processing' | 'completed' | 'failed'
-  briefing_json?: BriefingData | null
-  cliente_nome?: string
+  briefing_json: BriefingData | null
   created_at: string
 }
 
@@ -97,8 +107,10 @@ export default function TranscriptionsPage() {
   const [selectedDeal, setSelectedDeal] = useState<any | null>(null)
 
   const [createNote, setCreateNote] = useState(true)
+  const [deleteOldNote, setDeleteOldNote] = useState(true)
   const [createActivity, setCreateActivity] = useState(true)
   const [submittingAssign, setSubmittingAssign] = useState(false)
+  const [unlinkingId, setUnlinkingId] = useState<string | null>(null)
   const [assignSuccess, setAssignSuccess] = useState(false)
   const [togglingIgnoreId, setTogglingIgnoreId] = useState<string | null>(null)
 
@@ -241,6 +253,7 @@ export default function TranscriptionsPage() {
     setSearchPersonTerm(item.briefing_json?.dados_cliente?.nome || '')
     setSearchDealTerm('')
     setAssignMode('person')
+    setDeleteOldNote(true)
     setAssignSuccess(false)
   }
 
@@ -265,6 +278,7 @@ export default function TranscriptionsPage() {
           deal_id: dealIdToAssign ? String(dealIdToAssign) : undefined,
           cliente_nome: clientNameToAssign,
           create_note: createNote,
+          delete_old_note: deleteOldNote,
           create_activity: createActivity,
         },
         {
@@ -305,6 +319,53 @@ export default function TranscriptionsPage() {
       alert('Erro ao vincular ao Pipedrive: ' + (err.response?.data?.detail || err.message))
     } finally {
       setSubmittingAssign(false)
+    }
+  }
+
+  const handleUnlinkTranscription = async (item: Transcription) => {
+    const hasNote = Boolean(item.briefing_json?.pipedrive?.note_id)
+    const confirmMsg = hasNote
+      ? `Deseja desvincular a transcrição "${item.meeting_title || 'Reunião'}" do Pipedrive?\n\nA anotação associada no CRM será removida automaticamente.`
+      : `Deseja desvincular a transcrição "${item.meeting_title || 'Reunião'}" do Pipedrive?`
+
+    if (!window.confirm(confirmMsg)) return
+
+    try {
+      setUnlinkingId(item.id)
+      const token = localStorage.getItem('access_token')
+      const res = await axios.delete(
+        `${API_URL}/api/transcriptions/${item.id}/unlink`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          params: { delete_note: true },
+        }
+      )
+
+      setTranscriptions((prev) =>
+        prev.map((t) =>
+          t.id === item.id
+            ? {
+                ...t,
+                briefing_json: res.data.briefing_json,
+              }
+            : t
+        )
+      )
+
+      if (selectedItem?.id === item.id) {
+        setSelectedItem((prev) =>
+          prev
+            ? {
+                ...prev,
+                briefing_json: res.data.briefing_json,
+              }
+            : null
+        )
+      }
+    } catch (err: any) {
+      alert('Erro ao desvincular do Pipedrive: ' + (err.response?.data?.detail || err.message))
+    } finally {
+      setUnlinkingId(null)
     }
   }
 
@@ -597,34 +658,57 @@ export default function TranscriptionsPage() {
                             </button>
                           </div>
                         ) : isLinked ? (
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {personUrl && (
-                              <a
-                                href={personUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 text-[#0092FF] dark:text-[#00FFFF] font-bold text-[11px] hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors"
-                                title="Abrir Pessoa no Pipedrive"
-                              >
-                                <span>👤 Pessoa #{personId}</span>
-                                <ArrowUpRight className="w-3 h-3" />
-                              </a>
-                            )}
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {personUrl && (
+                                <a
+                                  href={personUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 text-[#0092FF] dark:text-[#00FFFF] font-bold text-[11px] hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors"
+                                  title="Abrir Pessoa no Pipedrive"
+                                >
+                                  <span>👤 Pessoa #{personId}</span>
+                                  <ArrowUpRight className="w-3 h-3" />
+                                </a>
+                              )}
 
-                            {dealUrl && (
-                              <a
-                                href={dealUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-[#002060] text-white font-semibold text-[11px] hover:bg-[#001D99] transition-colors"
-                                title="Abrir Negócio (Deal) no Pipedrive"
+                              {dealUrl && (
+                                <a
+                                  href={dealUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-[#002060] text-white font-semibold text-[11px] hover:bg-[#001D99] transition-colors"
+                                  title="Abrir Negócio (Deal) no Pipedrive"
+                                >
+                                  <span>💼 Deal #{dealId}</span>
+                                  <ArrowUpRight className="w-3 h-3" />
+                                </a>
+                              )}
+                            </div>
+
+                            <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 dark:border-[#002060]/60">
+                              <button
+                                onClick={() => handleOpenAssignModal(item)}
+                                className="text-[10px] font-bold text-[#0092FF] dark:text-[#00FFFF] hover:underline flex items-center space-x-1"
+                                title="Reatribuir para outro Cliente ou Negócio"
                               >
-                                <span>💼 Deal #{dealId}</span>
-                                <ArrowUpRight className="w-3 h-3" />
-                              </a>
-                            )}
+                                <Edit3 className="w-3 h-3" />
+                                <span>Alterar Vínculo</span>
+                              </button>
+
+                              <button
+                                onClick={() => handleUnlinkTranscription(item)}
+                                disabled={unlinkingId === item.id}
+                                className="text-[10px] font-bold text-rose-500 hover:text-rose-700 dark:hover:text-rose-400 flex items-center space-x-1 transition-colors"
+                                title="Desvincular do Pipedrive e apagar nota"
+                              >
+                                <Unlink className={`w-3 h-3 ${unlinkingId === item.id ? 'animate-spin' : ''}`} />
+                                <span>{unlinkingId === item.id ? 'Desvinculando...' : 'Desvincular'}</span>
+                              </button>
+                            </div>
                           </div>
                         ) : (
                           <div className="flex items-center justify-between gap-2">
@@ -877,7 +961,7 @@ export default function TranscriptionsPage() {
                 <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 text-xs flex items-center justify-between animate-fade-in">
                   <div>
                     <span className="text-[10px] uppercase font-bold text-emerald-700 dark:text-emerald-400 block">
-                      Vínculo Selecionado:
+                      Novo Vínculo Selecionado:
                     </span>
                     <p className="font-bold text-slate-900 dark:text-white mt-0.5">
                       {selectedPerson ? `👤 ${selectedPerson.name} (#${selectedPerson.id})` : `💼 ${selectedDeal.title} (#${selectedDeal.id})`}
@@ -889,8 +973,23 @@ export default function TranscriptionsPage() {
                 </div>
               )}
 
+              {/* Reassign Warning Banner */}
+              {Boolean(assignItem.briefing_json?.pipedrive?.person_id || assignItem.briefing_json?.pipedrive?.deal_id) && (
+                <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 text-xs flex items-start space-x-2.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold text-amber-900 dark:text-amber-300">
+                      Reatribuindo Transcrição já Vinculada
+                    </p>
+                    <p className="text-amber-700 dark:text-amber-400 text-[11px] mt-0.5">
+                      Esta transcrição já possui vínculo anterior no Pipedrive. Ao confirmar a nova atribuição, a nota anterior será excluída do CRM e transferida para o novo contato/deal selecionado.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Automation Note Info */}
-              <div className="pt-2 border-t border-slate-100 dark:border-[#002060] text-xs">
+              <div className="pt-2 border-t border-slate-100 dark:border-[#002060] text-xs space-y-2.5">
                 <label className="flex items-center space-x-2.5 text-slate-700 dark:text-slate-300 font-medium">
                   <input
                     type="checkbox"
@@ -900,8 +999,21 @@ export default function TranscriptionsPage() {
                   />
                   <span>Criar Anotação Rica com o Briefing e Tópicos na Timeline do Pipedrive</span>
                 </label>
-                <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1 pl-6.5">
-                  A anotação será adicionada diretamente ao contato e negócio no CRM com os tópicos da reunião e interesse do cliente.
+
+                {Boolean(assignItem.briefing_json?.pipedrive?.note_id) && (
+                  <label className="flex items-center space-x-2.5 text-rose-700 dark:text-rose-400 font-bold">
+                    <input
+                      type="checkbox"
+                      checked={deleteOldNote}
+                      onChange={(e) => setDeleteOldNote(e.target.checked)}
+                      className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500"
+                    />
+                    <span>Excluir anotação anterior no Pipedrive (Nota #{assignItem.briefing_json?.pipedrive?.note_id})</span>
+                  </label>
+                )}
+                
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 pl-6.5">
+                  A nova anotação será adicionada diretamente ao contato e negócio no CRM com os tópicos da reunião e interesse do cliente.
                 </p>
               </div>
 
@@ -1024,6 +1136,69 @@ export default function TranscriptionsPage() {
                         Prazo: {selectedItem.briefing_json.proxima_acao.prazo_sugerido}
                       </span>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {/* Vínculo Pipedrive CRM */}
+              {(selectedItem.briefing_json?.pipedrive?.deal_id || selectedItem.briefing_json?.pipedrive?.person_id) && (
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 font-display">
+                    Vínculo no Pipedrive CRM
+                  </h4>
+                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-[#00061A]/80 border border-slate-200 dark:border-[#002060] text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {selectedItem.briefing_json?.pipedrive?.person_id && (
+                        <a
+                          href={selectedItem.briefing_json.pipedrive.person_url || `https://investimentosblue.pipedrive.com/person/${selectedItem.briefing_json.pipedrive.person_id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 text-[#0092FF] dark:text-[#00FFFF] font-bold text-xs hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors"
+                        >
+                          <span>👤 Pessoa #{selectedItem.briefing_json.pipedrive.person_id}</span>
+                          <ArrowUpRight className="w-3.5 h-3.5" />
+                        </a>
+                      )}
+                      {selectedItem.briefing_json?.pipedrive?.deal_id && (
+                        <a
+                          href={selectedItem.briefing_json.pipedrive.deal_url || `https://investimentosblue.pipedrive.com/deal/${selectedItem.briefing_json.pipedrive.deal_id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-[#002060] text-white font-semibold text-xs hover:bg-[#001D99] transition-colors"
+                        >
+                          <span>💼 Deal #{selectedItem.briefing_json.pipedrive.deal_id}</span>
+                          <ArrowUpRight className="w-3.5 h-3.5" />
+                        </a>
+                      )}
+                      {selectedItem.briefing_json?.pipedrive?.note_id && (
+                        <span className="text-[11px] text-slate-400 font-mono">
+                          (Nota #{selectedItem.briefing_json.pipedrive.note_id})
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => {
+                          const it = selectedItem
+                          setSelectedItem(null)
+                          handleOpenAssignModal(it)
+                        }}
+                        className="inline-flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 text-[#0092FF] dark:text-[#00FFFF] font-bold text-xs hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors"
+                      >
+                        <Edit3 className="w-3 h-3" />
+                        <span>Alterar Vínculo</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleUnlinkTranscription(selectedItem)}
+                        disabled={unlinkingId === selectedItem.id}
+                        className="inline-flex items-center space-x-1 px-3 py-1.5 rounded-lg border border-rose-200 dark:border-rose-800/60 text-rose-600 dark:text-rose-400 font-bold text-xs hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                      >
+                        <Unlink className={`w-3 h-3 ${unlinkingId === selectedItem.id ? 'animate-spin' : ''}`} />
+                        <span>{unlinkingId === selectedItem.id ? 'Desvinculando...' : 'Desvincular'}</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
