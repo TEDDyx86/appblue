@@ -1472,6 +1472,7 @@ class AssignTranscriptionRequest(BaseModel):
     person_id: Optional[str] = None
     deal_id: Optional[str] = None
     custom_client_name: Optional[str] = None
+    cliente_nome: Optional[str] = None
     create_note: bool = True
     create_activity: bool = True
 
@@ -1504,6 +1505,7 @@ async def get_transcriptions(
     ]
 
 @app.post("/api/transcriptions/{transcription_id}/assign")
+@app.post("/api/transcriptions/{transcription_id}/assign-pipedrive")
 async def assign_transcription_to_crm(
     transcription_id: str,
     req: AssignTranscriptionRequest,
@@ -1522,7 +1524,7 @@ async def assign_transcription_to_crm(
     
     person_id = req.person_id
     deal_id = req.deal_id
-    client_name = req.custom_client_name
+    client_name = req.custom_client_name or req.cliente_nome
     
     # 2. Se informou deal_id mas não person_id, busca person_id no Deal
     if deal_id and not person_id:
