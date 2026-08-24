@@ -491,6 +491,7 @@ async def create_pipedrive_activity(
     
     if person_id:
         p_id = int(person_id) if str(person_id).isdigit() else person_id
+        payload["person_id"] = p_id
         payload["participants"] = [{"person_id": p_id, "primary": True}]
     if deal_id:
         payload["deal_id"] = int(deal_id) if str(deal_id).isdigit() else deal_id
