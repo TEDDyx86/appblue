@@ -1124,20 +1124,31 @@ async def list_pipedrive_activities(
             start_offset = pagination.get("next_start", start_offset + 100)
             
         formatted_activities = []
-        assessores_count: Dict[str, Dict[str, Any]] = {
-            name: {"id": org_id, "name": name, "count": 0} for org_id, name in assessores_map.items()
-        }
+        assessores_count: Dict[str, Dict[str, Any]] = {}
+        seen_activity_ids = set()
         
         for a in all_raw_activities:
-            org_id = a.get("org_id")
-            org_name = a.get("org_name") or assessores_map.get(org_id) or "Sem Assessor"
+            act_id = str(a.get("id"))
+            if act_id in seen_activity_ids:
+                continue
+            seen_activity_ids.add(act_id)
             
-            # Contabiliza nas opções de assessores
+            org_id = a.get("org_id")
+            org_name = a.get("org_name") or assessores_map.get(org_id)
+            person_name = a.get("person_name")
+            
+            # REGRA ESTRITA: Só exibe atividades que têm Pessoa (Cliente) E Organização (Assessor) definidos
+            if not person_name or not str(person_name).strip():
+                continue
+            if not org_name or not str(org_name).strip() or org_name == "Sem Assessor":
+                continue
+            
+            # Contabiliza nas opções de assessores ativos
             if org_name not in assessores_count:
                 assessores_count[org_name] = {"id": org_id, "name": org_name, "count": 0}
             assessores_count[org_name]["count"] += 1
             
-            # Filtro por assessor
+            # Filtro por assessor selecionado
             if assessor_name and assessor_name != "all" and org_name != assessor_name:
                 continue
             if assessor_id and org_id != assessor_id:
@@ -1173,7 +1184,6 @@ async def list_pipedrive_activities(
                 except Exception:
                     time_slot = due_time_str
                     
-            person_name = a.get("person_name") or "Cliente"
             person_id = a.get("person_id")
             deal_title = a.get("deal_title")
             deal_id = a.get("deal_id")
@@ -1229,7 +1239,7 @@ async def list_pipedrive_activities(
             
         # Retorna assessores ordenados por contagem (maiores primeiro)
         assessores_list = sorted(
-            [a for a in assessores_count.values() if a["name"] != "Sem Assessor" or a["count"] > 0],
+            [a for a in assessores_count.values() if a["count"] > 0],
             key=lambda x: -x["count"]
         )
         

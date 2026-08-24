@@ -214,9 +214,17 @@ export default function AgendaPage() {
     setTimeout(() => setCopiedConsolidated(false), 2500)
   }
 
-  // Filtra e ordena atividades
+  // Filtra, deduplica e ordena atividades
   const filteredActivities = useMemo(() => {
+    const seen = new Set<string>()
     const list = activities.filter((a) => {
+      // Deduplicação estrita
+      if (!a.id || seen.has(a.id)) return false
+      seen.add(a.id)
+
+      // Regra de integridade: Só exibe com Cliente (Pessoa) E Assessor (Org)
+      if (!a.person_name || !a.org_name || a.org_name === 'Sem Assessor') return false
+
       if (!activitySearch.trim()) return true
       const q = activitySearch.toLowerCase().trim()
       return (
@@ -375,7 +383,7 @@ export default function AgendaPage() {
                       <span>Filtrar Atividades por Assessor (Organização Pipedrive)</span>
                     </h2>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                      Selecione um assessor para visualizar os atendimentos da semana e gerar o template para WhatsApp
+                      Apenas atividades com Cliente e Assessor vinculados &bull; Selecione o assessor para gerar o template WhatsApp
                     </p>
                   </div>
 
@@ -392,56 +400,77 @@ export default function AgendaPage() {
                   )}
                 </div>
 
-                {/* Period Selector Tabs */}
-                <div className="flex items-center gap-1.5 pb-1 overflow-x-auto text-xs">
-                  <span className="text-slate-400 font-bold mr-1 text-[11px]">Período:</span>
-                  {[
-                    { key: 'all', label: 'Todas as Atividades' },
-                    { key: 'this_week', label: 'Esta Semana' },
-                    { key: 'next_week', label: 'Próxima Semana' },
-                    { key: 'this_month', label: 'Este Mês' },
-                    { key: 'next_30_days', label: 'Próximos 30 Dias' },
-                  ].map((p) => (
-                    <button
-                      key={p.key}
-                      type="button"
-                      onClick={() => setPeriodFilter(p.key as any)}
-                      className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition-all ${
-                        periodFilter === p.key
-                          ? 'bg-[#002060] dark:bg-[#0092FF] text-white shadow-xs'
-                          : 'bg-slate-100 dark:bg-[#00061A] text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-[#002060] hover:bg-slate-200 dark:hover:bg-[#002060]'
-                      }`}
+                {/* Período e Seletor Principal de Assessor */}
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-1">
+                  {/* Seletor Dropdown de Assessor (Elimina scroll horizontal) */}
+                  <div className="flex items-center space-x-2 flex-1">
+                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap flex items-center space-x-1.5">
+                      <Building2 className="w-3.5 h-3.5 text-[#0092FF]" />
+                      <span>Assessor:</span>
+                    </span>
+                    <select
+                      value={selectedAssessor}
+                      onChange={(e) => setSelectedAssessor(e.target.value)}
+                      className="w-full sm:max-w-xs px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-[#0092FF] outline-none transition-all"
                     >
-                      {p.label}
-                    </button>
-                  ))}
+                      <option value="all">🏢 Todos os Assessores ({filteredActivities.length})</option>
+                      {assessores.map((a) => (
+                        <option key={a.name} value={a.name}>
+                          {a.name} ({a.count} {a.count === 1 ? 'atendimento' : 'atendimentos'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Period Selector Tabs */}
+                  <div className="flex items-center gap-1 overflow-x-auto text-xs">
+                    <span className="text-slate-400 font-bold mr-1 text-[11px]">Período:</span>
+                    {[
+                      { key: 'all', label: 'Todas' },
+                      { key: 'this_week', label: 'Esta Semana' },
+                      { key: 'next_week', label: 'Próx. Semana' },
+                      { key: 'this_month', label: 'Este Mês' },
+                      { key: 'next_30_days', label: '30 Dias' },
+                    ].map((p) => (
+                      <button
+                        key={p.key}
+                        type="button"
+                        onClick={() => setPeriodFilter(p.key as any)}
+                        className={`px-2.5 py-1.5 rounded-xl font-bold whitespace-nowrap transition-all ${
+                          periodFilter === p.key
+                            ? 'bg-[#002060] dark:bg-[#0092FF] text-white shadow-xs'
+                            : 'bg-slate-100 dark:bg-[#00061A] text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-[#002060] hover:bg-slate-200 dark:hover:bg-[#002060]'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
-                {/* Assessores Pills Bar */}
-                <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-1">
+                {/* Top Assessores em Grade Envolvente (Wrap Pills) */}
+                <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100 dark:border-[#002060]/70">
+                  <span className="text-[11px] font-bold text-slate-400 mr-1">Atalhos:</span>
                   <button
                     type="button"
                     onClick={() => setSelectedAssessor('all')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center space-x-1.5 ${
+                    className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 ${
                       selectedAssessor === 'all'
                         ? 'bg-[#0092FF] text-white shadow-xs'
                         : 'bg-slate-100 dark:bg-[#00061A] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#002060] hover:bg-slate-200 dark:hover:bg-[#002060]'
                     }`}
                   >
-                    <span>Todos os Assessores</span>
-                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-white/20">
-                      {activities.length}
-                    </span>
+                    <span>Todos</span>
                   </button>
 
-                  {assessores.map((assessor) => {
+                  {assessores.slice(0, 7).map((assessor) => {
                     const isSelected = selectedAssessor === assessor.name
                     return (
                       <button
                         key={assessor.name}
                         type="button"
                         onClick={() => setSelectedAssessor(assessor.name)}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center space-x-1.5 ${
+                        className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 ${
                           isSelected
                             ? 'bg-[#0092FF] text-white shadow-xs'
                             : 'bg-slate-100 dark:bg-[#00061A] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#002060] hover:bg-slate-200 dark:hover:bg-[#002060]'
@@ -530,7 +559,7 @@ export default function AgendaPage() {
                     <div className="py-16 text-center bg-white dark:bg-[#000D38] rounded-2xl border border-slate-200 dark:border-[#002060] p-6">
                       <CalendarCheck className="w-10 h-10 text-slate-400 mx-auto mb-2 opacity-50" />
                       <h3 className="text-sm font-bold text-slate-900 dark:text-white font-display">Nenhuma atividade encontrada</h3>
-                      <p className="text-xs text-slate-400 mt-1">Não há reuniões ou tarefas cadastradas para os filtros selecionados.</p>
+                      <p className="text-xs text-slate-400 mt-1">Não há reuniões com cliente e assessor definidos para os filtros selecionados.</p>
                     </div>
                   ) : (
                     groupedByDate.map((group) => (
