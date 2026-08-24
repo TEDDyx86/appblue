@@ -2512,8 +2512,8 @@ async def get_calendar_meeting_types(user: Optional[dict] = Depends(get_current_
         "planner_name": "Robson Vieira Tavernard",
         "planner_role": "Planejamento Financeiro e Sucessório",
         "company": "Blue3 Investimentos",
-        "meeting_types": CalendarSettings().meeting_types,
-        "timezone": "America/Sao_Paulo"
+        "meeting_types": settings_dict.get("meeting_types", []),
+        "timezone": settings_dict.get("timezone", "America/Sao_Paulo")
     }
 
 # ============================================================================
