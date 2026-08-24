@@ -1899,45 +1899,63 @@ async def get_system_config(user: dict = Depends(require_admin)):
 # CALENDAR & BOOKING SYSTEM (CALENDLY / MS BOOKINGS STYLE)
 # ============================================================================
 
+DEFAULT_WEEKLY_SCHEDULE = {
+    "0": {"day": 0, "name": "Domingo", "enabled": False, "intervals": []},
+    "1": {"day": 1, "name": "Segunda-feira", "enabled": True, "intervals": [{"start": "09:00", "end": "18:00"}]},
+    "2": {"day": 2, "name": "Terça-feira", "enabled": True, "intervals": [{"start": "09:00", "end": "18:00"}]},
+    "3": {"day": 3, "name": "Quarta-feira", "enabled": True, "intervals": [{"start": "09:00", "end": "18:00"}]},
+    "4": {"day": 4, "name": "Quinta-feira", "enabled": True, "intervals": [{"start": "09:00", "end": "18:00"}]},
+    "5": {"day": 5, "name": "Sexta-feira", "enabled": True, "intervals": [{"start": "09:00", "end": "18:00"}]},
+    "6": {"day": 6, "name": "Sábado", "enabled": False, "intervals": []},
+}
+
 class CalendarSettings(BaseModel):
+    weekly_schedule: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_WEEKLY_SCHEDULE)
     work_days: List[int] = [1, 2, 3, 4, 5]  # 1=Seg, 2=Ter, 3=Qua, 4=Qui, 5=Sex, 6=Sab, 7=Dom
-    start_hour: str = "08:30"
+    start_hour: str = "09:00"
     end_hour: str = "18:00"
     lunch_start: str = "12:00"
-    lunch_end: str = "13:30"
-    slot_duration_minutes: int = 45
-    buffer_minutes: int = 15
-    min_notice_hours: int = 2
-    max_future_days: int = 30
+    lunch_end: str = "13:00"
+    slot_duration_minutes: int = 60
+    buffer_before_minutes: int = 0
+    buffer_after_minutes: int = 0
+    buffer_minutes: int = 0
+    slot_interval_minutes: int = 30  # Limitar a hora de início a (15, 30, 60 min)
+    min_notice_hours: int = 12        # Prazo de entrega mínimo (12 horas)
+    max_future_days: int = 21         # Prazo de entrega máximo (21 dias)
     timezone: str = "America/Sao_Paulo"
     meeting_types: List[Dict[str, Any]] = [
         {
             "id": "r1",
-            "name": "R1 - Diagnóstico e Planejamento Sucessório",
+            "name": "R1 Planejamento Sucessório",
             "duration": 60,
-            "color": "teal",
-            "description": "Primeira reunião de levantamento patrimonial e objetivos familiares."
+            "color": "sky",
+            "description": "Primeira reunião de levantamento patrimonial e objetivos familiares.",
+            "active": True
         },
         {
             "id": "r2",
-            "name": "R2 - Gestão Patrimonial & Devolutiva",
+            "name": "R2 Gestão Patrimonial",
             "duration": 45,
-            "color": "sky",
-            "description": "Apresentação da estratégia personalizada e estruturação."
+            "color": "teal",
+            "description": "Apresentação da estratégia personalizada e estruturação.",
+            "active": True
         },
         {
             "id": "revisao",
             "name": "Revisão de Carteira & Apólices",
             "duration": 30,
             "color": "amber",
-            "description": "Acompanhamento periódico de coberturas e ativos."
+            "description": "Acompanhamento periódico de coberturas e ativos.",
+            "active": True
         },
         {
             "id": "follow_up",
             "name": "Follow-up & Alinhamento Rápido",
             "duration": 30,
             "color": "indigo",
-            "description": "Tira-dúvidas e próximos passos contratuais."
+            "description": "Tira-dúvidas e próximos passos contratuais.",
+            "active": True
         }
     ]
 
@@ -1962,9 +1980,17 @@ async def get_calendar_settings(user: dict = Depends(require_admin)):
         res = supabase.table("configuration").select("value").eq("key", "calendar_settings").execute()
         if res.data and len(res.data) > 0:
             val = res.data[0]["value"]
-            if isinstance(val, str):
-                return json.loads(val)
-            return val
+            data = json.loads(val) if isinstance(val, str) else val
+            # Garante campos padrão caso ausentes
+            if "weekly_schedule" not in data:
+                data["weekly_schedule"] = DEFAULT_WEEKLY_SCHEDULE
+            if "buffer_before_minutes" not in data:
+                data["buffer_before_minutes"] = 0
+            if "buffer_after_minutes" not in data:
+                data["buffer_after_minutes"] = 0
+            if "slot_interval_minutes" not in data:
+                data["slot_interval_minutes"] = 30
+            return data
     except Exception as e:
         logger.error(f"Erro ao buscar calendar_settings: {e}")
         
@@ -1982,6 +2008,7 @@ async def get_calendar_settings(user: dict = Depends(require_admin)):
     return default_settings
 
 @app.post("/api/calendar/settings")
+@app.put("/api/calendar/settings")
 async def save_calendar_settings(settings: CalendarSettings, user: dict = Depends(require_admin)):
     """Salva configurações de disponibilidade da agenda"""
     try:
@@ -1990,7 +2017,7 @@ async def save_calendar_settings(settings: CalendarSettings, user: dict = Depend
         if res.data:
             supabase.table("configuration").update({
                 "value": json.dumps(settings_dict),
-                "updated_by": user["sub"],
+                "updated_by": user.get("id", user.get("sub")),
                 "updated_at": datetime.utcnow().isoformat()
             }).eq("key", "calendar_settings").execute()
         else:
@@ -1999,7 +2026,7 @@ async def save_calendar_settings(settings: CalendarSettings, user: dict = Depend
                 "value": json.dumps(settings_dict),
                 "value_type": "json",
                 "description": "Configurações de horários e regras da agenda",
-                "updated_by": user["sub"]
+                "updated_by": user.get("id", user.get("sub"))
             }).execute()
         return {"status": "ok", "settings": settings_dict}
     except Exception as e:
@@ -2029,7 +2056,7 @@ async def fetch_pipedrive_busy_activities(start_date: str, end_date: str) -> Lis
 
 @app.get("/api/calendar/available-slots")
 async def get_available_slots(
-    duration: int = 45,
+    duration: int = 60,
     start_date: Optional[str] = None,
     days_count: int = 30,
     user: dict = Depends(require_admin)
@@ -2037,13 +2064,20 @@ async def get_available_slots(
     """Calcula slots livres estilo Calendly baseando-se nas regras e conflitos"""
     # 1. Carrega configurações
     settings_res = await get_calendar_settings(user)
+    weekly_schedule = settings_res.get("weekly_schedule")
     work_days = settings_res.get("work_days", [1, 2, 3, 4, 5])
-    start_hour_str = settings_res.get("start_hour", "08:30")
+    start_hour_str = settings_res.get("start_hour", "09:00")
     end_hour_str = settings_res.get("end_hour", "18:00")
     lunch_start_str = settings_res.get("lunch_start", "12:00")
-    lunch_end_str = settings_res.get("lunch_end", "13:30")
-    buffer_mins = settings_res.get("buffer_minutes", 15)
-    min_notice_hrs = settings_res.get("min_notice_hours", 2)
+    lunch_end_str = settings_res.get("lunch_end", "13:00")
+    
+    buffer_before = settings_res.get("buffer_before_minutes", 0)
+    buffer_after = settings_res.get("buffer_after_minutes", settings_res.get("buffer_minutes", 0))
+    slot_step = settings_res.get("slot_interval_minutes", 30)
+    min_notice_hrs = settings_res.get("min_notice_hours", 12)
+    max_future_days = settings_res.get("max_future_days", 21)
+    
+    actual_days_count = min(days_count, max_future_days)
     
     # 2. Período de cálculo
     now_utc = datetime.utcnow()
@@ -2058,7 +2092,7 @@ async def get_available_slots(
     else:
         curr_date = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
         
-    end_calc_date = curr_date + timedelta(days=days_count)
+    end_calc_date = curr_date + timedelta(days=actual_days_count)
     
     # 3. Busca conflitos do Pipedrive
     busy_activities = await fetch_pipedrive_busy_activities(
@@ -2070,8 +2104,8 @@ async def get_available_slots(
     busy_by_date: Dict[str, List[tuple]] = {}
     for act in busy_activities:
         act_date = act.get("due_date")
-        act_time = act.get("due_time") # "HH:MM"
-        act_dur = act.get("duration") # "HH:MM"
+        act_time = act.get("due_time")  # "HH:MM"
+        act_dur = act.get("duration")   # "HH:MM"
         if act_date and act_time:
             try:
                 th, tm = map(int, act_time.split(":")[:2])
@@ -2097,64 +2131,82 @@ async def get_available_slots(
         m = mins % 60
         return f"{h:02d}:{m:02d}"
         
-    start_work_m = to_minutes(start_hour_str)
-    end_work_m = to_minutes(end_hour_str)
-    lunch_s_m = to_minutes(lunch_start_str)
-    lunch_e_m = to_minutes(lunch_end_str)
-    
     weekday_names = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
     
     result_days = []
     
-    for day_offset in range(days_count):
+    for day_offset in range(actual_days_count):
         day_date = curr_date + timedelta(days=day_offset)
         date_str = day_date.strftime("%Y-%m-%d")
         
-        # Python weekday: 0=Segunda ... 6=Domingo -> ISO: 1=Segunda ... 7=Domingo
-        iso_weekday = day_date.weekday() + 1
+        # Mapeamento do dia da semana para weekly_schedule:
+        # Python weekday(): 0=Seg, 1=Ter, 2=Qua, 3=Qui, 4=Sex, 5=Sab, 6=Dom
+        # Chave weekly_schedule: "0"=Dom, "1"=Seg, "2"=Ter, "3"=Qua, "4"=Qui, "5"=Sex, "6"=Sab
+        day_key = str((day_date.weekday() + 1) % 7)
         
-        if iso_weekday not in work_days:
-            continue
+        intervals = []
+        if weekly_schedule and day_key in weekly_schedule:
+            day_cfg = weekly_schedule[day_key]
+            if not day_cfg.get("enabled"):
+                continue
+            intervals = day_cfg.get("intervals", [])
+            if not intervals:
+                continue
+        else:
+            # Fallback para work_days legado
+            iso_weekday = day_date.weekday() + 1
+            if iso_weekday not in work_days:
+                continue
+            intervals = [{"start": start_hour_str, "end": end_hour_str}]
             
         day_busy = busy_by_date.get(date_str, [])
-        
-        # Gera slots
-        current_m = start_work_m
         slots = []
+        seen_slot_times = set()
         
-        while current_m + duration <= end_work_m:
-            slot_start = current_m
-            slot_end = current_m + duration
+        for iv in intervals:
+            iv_start_m = to_minutes(iv.get("start", "09:00"))
+            iv_end_m = to_minutes(iv.get("end", "18:00"))
             
-            # Verifica colisão com almoço
-            overlaps_lunch = not (slot_end <= lunch_s_m or slot_start >= lunch_e_m)
+            current_m = iv_start_m
             
-            # Verifica colisão com atividades ocupadas (incluindo buffer)
-            overlaps_busy = False
-            for (b_start, b_end) in day_busy:
-                # Com buffer
-                if not (slot_end + buffer_mins <= b_start or slot_start >= b_end + buffer_mins):
-                    overlaps_busy = True
-                    break
-                    
-            # Verifica antecedência mínima se for o dia de hoje
-            is_past = False
-            if date_str == now_local.strftime("%Y-%m-%d"):
-                now_m = now_local.hour * 60 + now_local.minute
-                if slot_start < now_m + (min_notice_hrs * 60):
+            while current_m + duration <= iv_end_m:
+                slot_start = current_m
+                slot_end = current_m + duration
+                
+                # Verifica colisão com atividades ocupadas (incluindo buffer antes e depois)
+                overlaps_busy = False
+                for (b_start, b_end) in day_busy:
+                    # O slot precisará de buffer_before livre antes de começar e buffer_after livre após terminar
+                    required_start = slot_start - buffer_before
+                    required_end = slot_end + buffer_after
+                    if not (required_end <= b_start or required_start >= b_end):
+                        overlaps_busy = True
+                        break
+                        
+                # Verifica antecedência mínima se for o dia de hoje
+                is_past = False
+                if date_str == now_local.strftime("%Y-%m-%d"):
+                    now_m = now_local.hour * 60 + now_local.minute
+                    if slot_start < now_m + (min_notice_hrs * 60):
+                        is_past = True
+                elif day_date < now_local.replace(hour=0, minute=0, second=0):
                     is_past = True
-            elif day_date < now_local.replace(hour=0, minute=0, second=0):
-                is_past = True
+                    
+                time_key = to_time_str(slot_start)
+                if not overlaps_busy and not is_past and time_key not in seen_slot_times:
+                    seen_slot_times.add(time_key)
+                    slots.append({
+                        "time": time_key,
+                        "end_time": to_time_str(slot_end),
+                        "duration_minutes": duration
+                    })
+                    
+                # Avança pelo intervalo configurado (slot_step)
+                current_m += slot_step
                 
-            if not overlaps_lunch and not overlaps_busy and not is_past:
-                slots.append({
-                    "time": to_time_str(slot_start),
-                    "end_time": to_time_str(slot_end),
-                    "duration_minutes": duration
-                })
-                
-            current_m += duration + buffer_mins
-            
+        # Ordena slots
+        slots.sort(key=lambda s: s["time"])
+        
         result_days.append({
             "date": date_str,
             "weekday_name": weekday_names[day_date.weekday()],
