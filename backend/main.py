@@ -93,10 +93,12 @@ class UserResponse(BaseModel):
 class AlertResponse(BaseModel):
     id: str
     alert_type: str
-    cliente_nome: Optional[str]
+    cliente_nome: Optional[str] = None
+    pipedrive_deal_id: Optional[str] = None
     description: str
     severity: str
     is_resolved: bool
+    details: Optional[Dict] = None
     created_at: str
 
 # ============================================================================
@@ -385,12 +387,20 @@ def log_audit_event(
     new_values: Optional[Dict[str, Any]] = None
 ):
     """Registra evento com metadados detalhados na tabela audit_log do Supabase"""
+    clean_user_id = None
+    if user_id:
+        try:
+            uuid.UUID(str(user_id))
+            clean_user_id = str(user_id)
+        except (ValueError, AttributeError):
+            clean_user_id = None
+
     try:
         supabase.table("audit_log").insert({
             "action": action,
             "resource_type": resource_type,
             "resource_id": str(resource_id) if resource_id else None,
-            "user_id": user_id,
+            "user_id": clean_user_id,
             "details": details or {},
             "old_values": old_values,
             "new_values": new_values,
@@ -996,6 +1006,214 @@ async def create_pipedrive_note(
             return None
 
 # ============================================================================
+# PIPELINE COMERCIAL (MONITORAMENTO ATIVO)
+# ============================================================================
+
+PIPELINE_COMERCIAL_ID = 1
+
+async def fetch_comercial_pipeline_data() -> Dict[str, Any]:
+    """Busca dados consolidados do Funil Comercial do Pipedrive"""
+    async with httpx.AsyncClient() as client:
+        # 1. Busca stages do funil 1
+        stages_res = await client.get(
+            "https://api.pipedrive.com/v1/stages",
+            params={"api_token": PIPEDRIVE_API_TOKEN}
+        )
+        all_stages = stages_res.json().get("data") or []
+        comercial_stages = {s["id"]: s["name"] for s in all_stages if s.get("pipeline_id") == PIPELINE_COMERCIAL_ID}
+        
+        # 2. Busca deals abertos do funil 1
+        deals_res = await client.get(
+            "https://api.pipedrive.com/v1/deals",
+            params={"api_token": PIPEDRIVE_API_TOKEN, "pipeline_id": PIPELINE_COMERCIAL_ID, "status": "open", "limit": 100}
+        )
+        raw_deals = deals_res.json().get("data") or []
+        
+        now = datetime.now()
+        total_value = 0.0
+        stages_breakdown = {}
+        stagnant_deals = []
+        overdue_deals = []
+        formatted_deals = []
+        
+        for d in raw_deals:
+            deal_id = str(d.get("id"))
+            title = d.get("title") or "Negócio sem título"
+            person = d.get("person_name") or (d.get("person_id", {}).get("name") if isinstance(d.get("person_id"), dict) else "Cliente")
+            val = float(d.get("value") or 0)
+            total_value += val
+            stage_id = d.get("stage_id")
+            stage_name = comercial_stages.get(stage_id, f"Etapa #{stage_id}")
+            
+            stages_breakdown[stage_name] = stages_breakdown.get(stage_name, 0) + 1
+            
+            # Stagnation check
+            days_inactive = 0
+            update_time_str = d.get("update_time")
+            if update_time_str:
+                try:
+                    up_dt = datetime.strptime(update_time_str, "%Y-%m-%d %H:%M:%S")
+                    days_inactive = (now - up_dt).days
+                except Exception:
+                    pass
+            
+            # Next activity check
+            next_act = d.get("next_activity_date")
+            is_overdue = False
+            if next_act:
+                try:
+                    act_dt = datetime.strptime(next_act, "%Y-%m-%d")
+                    is_overdue = act_dt.date() < now.date()
+                except Exception:
+                    pass
+            
+            deal_obj = {
+                "id": deal_id,
+                "title": title,
+                "person_name": person,
+                "stage_id": stage_id,
+                "stage_name": stage_name,
+                "value": val,
+                "update_time": update_time_str,
+                "days_inactive": days_inactive,
+                "next_activity_date": next_act,
+                "is_stagnant": days_inactive > 15,
+                "is_overdue": is_overdue,
+                "deal_url": f"https://investimentosblue.pipedrive.com/deal/{deal_id}"
+            }
+            
+            formatted_deals.append(deal_obj)
+            if deal_obj["is_stagnant"]:
+                stagnant_deals.append(deal_obj)
+            if is_overdue:
+                overdue_deals.append(deal_obj)
+                
+        return {
+            "pipeline_id": PIPELINE_COMERCIAL_ID,
+            "pipeline_name": "Comercial",
+            "total_deals": len(formatted_deals),
+            "total_value": total_value,
+            "stages_breakdown": stages_breakdown,
+            "stagnant_count": len(stagnant_deals),
+            "overdue_count": len(overdue_deals),
+            "deals": formatted_deals,
+            "stagnant_deals": stagnant_deals,
+            "overdue_deals": overdue_deals
+        }
+
+async def sync_comercial_alerts_internal(user_id: Optional[str] = None) -> Dict[str, Any]:
+    """Varre o Funil Comercial e grava/atualiza os alertas de negócios parados e follow-ups atrasados no Supabase"""
+    data = await fetch_comercial_pipeline_data()
+    stagnant = data.get("stagnant_deals", [])
+    overdue = data.get("overdue_deals", [])
+    
+    # 1. Pega alertas abertos existentes no Supabase para não duplicar
+    existing_alerts_res = supabase.table("alerts").select("id, pipedrive_deal_id, alert_type").eq("is_resolved", False).execute()
+    existing_map = {(a.get("pipedrive_deal_id"), a.get("alert_type")): a.get("id") for a in (existing_alerts_res.data or [])}
+    
+    alerts_created = 0
+    alerts_updated = 0
+    
+    # Processa Negócios Parados
+    for d in stagnant:
+        key = (d["id"], "negocio_parado")
+        desc = f"Negócio '{d['title']}' parado há {d['days_inactive']} dias na etapa '{d['stage_name']}'."
+        sev = "high" if d["value"] >= 50000 or d["days_inactive"] > 30 else "medium"
+        alert_payload = {
+            "alert_type": "negocio_parado",
+            "pipedrive_deal_id": d["id"],
+            "cliente_nome": d["person_name"],
+            "description": desc,
+            "severity": sev,
+            "is_resolved": False,
+            "details": {
+                "deal_id": d["id"],
+                "deal_url": d["deal_url"],
+                "value": d["value"],
+                "stage": d["stage_name"],
+                "days_inactive": d["days_inactive"]
+            }
+        }
+        
+        if key in existing_map:
+            supabase.table("alerts").update(alert_payload).eq("id", existing_map[key]).execute()
+            alerts_updated += 1
+        else:
+            supabase.table("alerts").insert(alert_payload).execute()
+            alerts_created += 1
+            
+    # Processa Follow-ups Atrasados
+    for d in overdue:
+        key = (d["id"], "follow_up_atrasado")
+        desc = f"Follow-up atrasado para '{d['person_name']}' no negócio '{d['title']}'. Venceu em {d['next_activity_date']}."
+        sev = "high" if d["value"] >= 50000 else "medium"
+        alert_payload = {
+            "alert_type": "follow_up_atrasado",
+            "pipedrive_deal_id": d["id"],
+            "cliente_nome": d["person_name"],
+            "description": desc,
+            "severity": sev,
+            "is_resolved": False,
+            "details": {
+                "deal_id": d["id"],
+                "deal_url": d["deal_url"],
+                "value": d["value"],
+                "due_date": d["next_activity_date"]
+            }
+        }
+        
+        if key in existing_map:
+            supabase.table("alerts").update(alert_payload).eq("id", existing_map[key]).execute()
+            alerts_updated += 1
+        else:
+            supabase.table("alerts").insert(alert_payload).execute()
+            alerts_created += 1
+            
+    log_audit_event(
+        action="PIPELINE_COMERCIAL_SYNCED",
+        resource_type="pipeline",
+        resource_id="1",
+        user_id=user_id or "system",
+        details={
+            "pipeline": "Comercial",
+            "total_deals": data["total_deals"],
+            "total_value": data["total_value"],
+            "stagnant_count": len(stagnant),
+            "overdue_count": len(overdue),
+            "alerts_created": alerts_created,
+            "alerts_updated": alerts_updated,
+            "summary": f"Varredura no Funil Comercial concluída: {len(stagnant)} negócios parados e {len(overdue)} follow-ups identificados ({alerts_created} novos alertas)."
+        }
+    )
+    
+    return {
+        "status": "success",
+        "total_deals": data["total_deals"],
+        "total_value": data["total_value"],
+        "stagnant_count": len(stagnant),
+        "overdue_count": len(overdue),
+        "alerts_created": alerts_created,
+        "alerts_updated": alerts_updated,
+        "stages_breakdown": data["stages_breakdown"]
+    }
+
+@app.get("/api/pipedrive/pipeline/comercial/summary")
+async def get_comercial_summary(user: dict = Depends(require_admin)):
+    """Retorna resumo consolidado do Funil Comercial do Pipedrive"""
+    return await fetch_comercial_pipeline_data()
+
+@app.get("/api/pipedrive/pipeline/comercial/deals")
+async def get_comercial_deals(user: dict = Depends(require_admin)):
+    """Retorna lista de negócios abertos no Funil Comercial do Pipedrive"""
+    data = await fetch_comercial_pipeline_data()
+    return {"deals": data.get("deals", [])}
+
+@app.post("/api/pipedrive/pipeline/comercial/sync-alerts")
+async def sync_comercial_alerts_endpoint(user: dict = Depends(require_admin)):
+    """Dispara a sincronização ativa de alertas do Funil Comercial com o banco"""
+    return await sync_comercial_alerts_internal(user_id=user.get("id", user.get("sub")))
+
+# ============================================================================
 # TRANSCRIPTIONS ENDPOINTS
 # ============================================================================
 
@@ -1290,9 +1508,11 @@ async def get_alerts(
             id=alert["id"],
             alert_type=alert["alert_type"],
             cliente_nome=alert.get("cliente_nome"),
+            pipedrive_deal_id=alert.get("pipedrive_deal_id"),
             description=alert["description"],
             severity=alert["severity"],
             is_resolved=alert["is_resolved"],
+            details=alert.get("details"),
             created_at=alert["created_at"]
         )
         for alert in response.data
@@ -1387,23 +1607,14 @@ async def get_audit_logs_stats(user: dict = Depends(require_admin)):
 # ============================================================================
 
 def generate_daily_alerts():
-    """Job diário que consolida alertas"""
-    
+    """Job diário que consolida alertas do Funil Comercial do Pipedrive"""
+    import asyncio
     try:
-        logger.info("Iniciando job diário de alertas...")
-        
-        # 1. Negócio parado (> 15 dias sem atualização)
-        # TODO: Integrar com Pipedrive API para verificar deals
-        
-        # 2. Follow-up atrasado (Activity com due_date vencida)
-        # TODO: Verificar Activities no Pipedrive
-        
-        # 3. Teams pendente (conference_meeting_url vazio e due_date próxima)
-        # TODO: Verificar conference_meeting_url
-        
-        logger.info("Job diário de alertas concluído")
+        logger.info("Iniciando job diário de monitoramento do Funil Comercial...")
+        asyncio.run(sync_comercial_alerts_internal(user_id="system_cron"))
+        logger.info("Job diário de monitoramento concluído com sucesso")
     except Exception as e:
-        logger.error(f"Erro no job diário: {e}")
+        logger.error(f"Erro no job diário do Funil Comercial: {e}")
 
 # Agenda job para rodar diariamente às 7h
 scheduler.add_job(generate_daily_alerts, "cron", hour=7, minute=0, timezone="America/Sao_Paulo")
