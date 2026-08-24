@@ -74,43 +74,6 @@ appblue/
 
 ---
 
-## 🚀 Execução em Ambiente Local
-
-### Pré-requisitos
-* Node.js 18+ e npm
-* Python 3.10+
-* Projeto configurado no Supabase
-
-### 1. Configurando o Backend
-```bash
-cd backend
-python -m venv venv
-
-# Windows
-.\venv\Scripts\activate
-# Linux / macOS
-source venv/bin/activate
-
-pip install -r requirements.txt
-cp .env.example .env
-# Preencha o .env com as credenciais do Supabase, Pipedrive e Google
-
-uvicorn main:app --reload --port 8000
-```
-
-### 2. Configurando o Frontend
-```bash
-cd frontend
-npm install
-cp .env.example .env.local
-# Defina NEXT_PUBLIC_API_URL=http://localhost:8000
-
-npm run dev
-```
-Acesse a aplicação no navegador em `http://localhost:3000`.
-
----
-
 ## 🔒 Segurança e Privacidade
 
 * Todas as operações de dados respeitam políticas de **Row Level Security (RLS)** no PostgreSQL.
