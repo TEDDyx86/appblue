@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #f8fafc;
+    --foreground: #0f172a;
+    --card: #ffffff;
+    --card-foreground: #0f172a;
+    --border: #e2e8f0;
+    --muted: #64748b;
+  }
+
+  body {
+    color: var(--foreground);
+    background-color: var(--background);
+    font-family: var(--font-sans), sans-serif;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display), var(--font-sans), sans-serif;
+  }
+
+  .tnum {
+    font-feature-settings: "tnum" 1;
+  }
+}
+
+/* Ambient glow & luxury utility classes */
+.glow-blue {
+  box-shadow: 0 0 20px rgba(0, 146, 255, 0.35);
+}
+
+.glow-cyan {
+  box-shadow: 0 0 16px rgba(0, 255, 255, 0.40);
+}
+
+.glow-wealth {
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.35);
+}
+
+.card-luxury {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 1) 0%, rgba(248, 250, 252, 0.8) 100%);
+}
+
+.dark .card-luxury {
+  background: linear-gradient(180deg, #000D38 0%, #00061A 100%);
+}
+
+/* Custom adaptive scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #002060;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #0092FF;
+}
