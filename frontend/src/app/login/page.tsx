@@ -3,14 +3,12 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import axios from 'axios'
-import { Zap, Eye, EyeOff, Lock, Mail, User, ArrowRight, ShieldCheck } from 'lucide-react'
+import { Eye, EyeOff, Lock, Mail, ArrowRight, ShieldCheck, LockKeyhole } from 'lucide-react'
 
 export default function LoginPage() {
   const router = useRouter()
-  const [isLogin, setIsLogin] = useState(true)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [fullName, setFullName] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -23,12 +21,10 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const endpoint = isLogin ? '/api/auth/login' : '/api/auth/signup'
-      const payload = isLogin
-        ? { email, password }
-        : { email, password, full_name: fullName }
-
-      const response = await axios.post(`${API_URL}${endpoint}`, payload)
+      const response = await axios.post(`${API_URL}/api/auth/login`, {
+        email: email.trim(),
+        password,
+      })
 
       // Salva tokens no localStorage
       localStorage.setItem('access_token', response.data.access_token)
@@ -36,7 +32,7 @@ export default function LoginPage() {
 
       router.push('/dashboard')
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Falha na autenticação. Verifique os dados.')
+      setError(err.response?.data?.detail || 'Falha na autenticação. Verifique seu e-mail e senha.')
     } finally {
       setLoading(false)
     }
@@ -69,36 +65,14 @@ export default function LoginPage() {
 
         {/* Auth Card */}
         <div className="bg-[#000D38] border border-[#002060] rounded-3xl p-8 shadow-2xl backdrop-blur-md">
-          {/* Tabs */}
-          <div className="flex mb-6 bg-[#00061A]/80 rounded-xl p-1 border border-[#002060]">
-            <button
-              type="button"
-              onClick={() => {
-                setIsLogin(true)
-                setError('')
-              }}
-              className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
-                isLogin
-                  ? 'bg-[#0092FF] text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Entrar
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setIsLogin(false)
-                setError('')
-              }}
-              className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
-                !isLogin
-                  ? 'bg-[#0092FF] text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Criar Conta
-            </button>
+          <div className="flex items-center space-x-2.5 mb-6 pb-4 border-b border-[#002060]">
+            <div className="p-2 bg-[#002060] rounded-xl text-[#0092FF] dark:text-[#00FFFF]">
+              <LockKeyhole className="w-4 h-4" />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-white font-display">Identificação de Acesso</h2>
+              <p className="text-[11px] text-slate-400">Entre com suas credenciais autorizadas</p>
+            </div>
           </div>
 
           {/* Error Banner */}
@@ -110,28 +84,9 @@ export default function LoginPage() {
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
-            {!isLogin && (
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                  Nome Completo
-                </label>
-                <div className="relative">
-                  <User className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                  <input
-                    type="text"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-[#00061A] border border-[#002060] rounded-xl text-xs text-white placeholder:text-slate-600 focus:ring-2 focus:ring-[#0092FF] focus:border-[#0092FF] outline-none transition-all"
-                    placeholder="Seu nome"
-                    required={!isLogin}
-                  />
-                </div>
-              </div>
-            )}
-
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                E-mail
+                E-mail Corporativo
               </label>
               <div className="relative">
                 <Mail className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -140,7 +95,7 @@ export default function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full pl-10 pr-4 py-2.5 bg-[#00061A] border border-[#002060] rounded-xl text-xs text-white placeholder:text-slate-600 focus:ring-2 focus:ring-[#0092FF] focus:border-[#0092FF] outline-none transition-all"
-                  placeholder="seu@investimentosblue.com.br"
+                  placeholder="seu.nome@investimentosblue.com.br"
                   required
                 />
               </div>
@@ -148,7 +103,7 @@ export default function LoginPage() {
 
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Senha
+                Senha de Acesso
               </label>
               <div className="relative">
                 <Lock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -159,7 +114,6 @@ export default function LoginPage() {
                   className="w-full pl-10 pr-10 py-2.5 bg-[#00061A] border border-[#002060] rounded-xl text-xs text-white placeholder:text-slate-600 focus:ring-2 focus:ring-[#0092FF] focus:border-[#0092FF] outline-none transition-all"
                   placeholder="••••••••"
                   required
-                  minLength={8}
                 />
                 <button
                   type="button"
@@ -176,10 +130,19 @@ export default function LoginPage() {
               disabled={loading}
               className="w-full mt-2 bg-[#0092FF] hover:bg-[#007AFF] text-white py-3 rounded-xl font-bold text-xs flex items-center justify-center space-x-2 transition-all shadow-md shadow-[#0092FF]/30 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <span>{loading ? 'Processando...' : isLogin ? 'Acessar Dashboard' : 'Criar Minha Conta'}</span>
+              <span>{loading ? 'Autenticando...' : 'Entrar no Sistema'}</span>
               {!loading && <ArrowRight className="w-4 h-4" />}
             </button>
           </form>
+
+          {/* Access notice */}
+          <div className="mt-6 pt-4 border-t border-[#002060] text-center">
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              🔒 <span className="font-semibold text-slate-300">Acesso Restrito à Equipe Blue3.</span>
+              <br />
+              A criação de novas contas é gerenciada exclusivamente pelo administrador do sistema.
+            </p>
+          </div>
         </div>
 
         {/* Footer info */}

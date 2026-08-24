@@ -172,35 +172,89 @@ def require_admin(user: dict = Depends(get_current_user)):
 # AUTH ENDPOINTS
 # ============================================================================
 
-@app.post("/api/auth/signup", response_model=TokenResponse)
+@app.post("/api/auth/signup")
 async def signup(req: SignupRequest):
-    """Criar novo usuário"""
-    
-    # Verifica se email já existe
-    existing = supabase.table("users").select("id").eq("email", req.email).execute()
+    """Cadastro público desabilitado por segurança"""
+    raise HTTPException(
+        status_code=403,
+        detail="Cadastro público desabilitado. Novas contas devem ser criadas pelo Administrador no painel de Configurações."
+    )
+
+class CreateUserByAdminRequest(BaseModel):
+    email: EmailStr
+    password: str
+    full_name: str
+    role: str = "member"  # "admin" ou "member"
+
+@app.get("/api/admin/users")
+async def list_users(user: dict = Depends(require_admin)):
+    """Lista todos os usuários do sistema (Exclusivo Admin)"""
+    res = supabase.table("users").select("id, email, full_name, role, created_at").order("created_at", desc=False).execute()
+    return {"users": res.data or []}
+
+@app.post("/api/admin/users")
+async def create_user_by_admin(req: CreateUserByAdminRequest, user: dict = Depends(require_admin)):
+    """Cria um novo usuário pela conta de Administrador"""
+    existing = supabase.table("users").select("id").eq("email", req.email.strip().lower()).execute()
     if existing.data:
-        raise HTTPException(status_code=400, detail="Email já cadastrado")
-    
-    # Cria usuário
+        raise HTTPException(status_code=400, detail="Este e-mail já está cadastrado no sistema")
+        
     user_id = str(uuid.uuid4())
     password_hash = hash_password(req.password)
+    role = req.role if req.role in ["admin", "member"] else "member"
     
     supabase.table("users").insert({
         "id": user_id,
-        "email": req.email,
+        "email": req.email.strip().lower(),
         "password_hash": password_hash,
-        "full_name": req.full_name,
-        "role": "admin"  # Por enquanto, todos os novos usuários são admin
+        "full_name": req.full_name.strip(),
+        "role": role
     }).execute()
     
-    # Cria JWT
-    access_token, refresh_token = create_jwt(user_id)
-    
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_in=JWT_EXPIRATION_HOURS * 3600
+    log_audit_event(
+        action="USER_CREATED_BY_ADMIN",
+        resource_type="user",
+        resource_id=user_id,
+        user_id=user["sub"],
+        details={
+            "created_user_email": req.email,
+            "created_user_name": req.full_name,
+            "created_user_role": role,
+            "summary": f"Novo usuário '{req.full_name}' ({req.email}) criado com perfil {role.upper()} pelo administrador."
+        }
     )
+    
+    return {
+        "status": "success",
+        "message": f"Usuário {req.full_name} criado com sucesso!",
+        "user": {
+            "id": user_id,
+            "email": req.email,
+            "full_name": req.full_name,
+            "role": role
+        }
+    }
+
+@app.delete("/api/admin/users/{user_id_to_delete}")
+async def delete_user_by_admin(user_id_to_delete: str, user: dict = Depends(require_admin)):
+    """Exclui um usuário do sistema (Exclusivo Admin)"""
+    if user_id_to_delete == user["sub"]:
+        raise HTTPException(status_code=400, detail="Você não pode excluir sua própria conta de administrador")
+        
+    supabase.table("users").delete().eq("id", user_id_to_delete).execute()
+    
+    log_audit_event(
+        action="USER_DELETED_BY_ADMIN",
+        resource_type="user",
+        resource_id=user_id_to_delete,
+        user_id=user["sub"],
+        details={
+            "deleted_user_id": user_id_to_delete,
+            "summary": f"Usuário #{user_id_to_delete} removido do sistema pelo administrador."
+        }
+    )
+    
+    return {"status": "success", "message": "Usuário removido com sucesso"}
 
 @app.post("/api/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest):
