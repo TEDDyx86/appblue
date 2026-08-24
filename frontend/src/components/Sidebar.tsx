@@ -13,11 +13,8 @@ import {
   ChevronRight,
   ShieldCheck,
   Zap,
-  Sun,
-  Moon,
   Activity,
 } from 'lucide-react'
-import { useTheme } from '@/context/ThemeContext'
 
 interface SidebarProps {
   collapsed: boolean
@@ -35,7 +32,6 @@ export default function Sidebar({
   userEmail = 'robson.vieira@investimentosblue.com.br',
 }: SidebarProps) {
   const pathname = usePathname()
-  const { theme, isDark, toggleTheme } = useTheme()
 
   const navItems = [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -126,45 +122,6 @@ export default function Sidebar({
           )
         })}
       </nav>
-
-      {/* Status Badge */}
-      {!collapsed && (
-        <div className="mx-3 mb-2 p-3 rounded-xl bg-gradient-to-br from-[#00061A] to-[#000D38] border border-[#002060] text-xs shadow-inner">
-          <div className="flex items-center space-x-2 text-emerald-400 font-semibold mb-1">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span>
-            <span>Pipeline Conectado</span>
-          </div>
-          <p className="text-[11px] text-slate-400">
-            Drive & Pipedrive sincronizados.
-          </p>
-        </div>
-      )}
-
-      {/* Theme Toggle Button */}
-      <div className={`${collapsed ? 'px-2' : 'px-3'} pb-2`}>
-        <button
-          type="button"
-          onClick={toggleTheme}
-          className={`w-full flex items-center rounded-xl bg-[#00061A]/70 border border-[#002060]/70 text-slate-300 hover:text-white hover:bg-[#002060]/40 transition-all text-xs font-semibold ${
-            collapsed ? 'justify-center py-2' : 'justify-between px-3 py-2'
-          }`}
-          title={isDark ? 'Mudar para Tema Claro' : 'Mudar para Tema Escuro'}
-        >
-          <div className="flex items-center space-x-2">
-            {isDark ? (
-              <Moon className="w-4 h-4 text-[#00FFFF]" />
-            ) : (
-              <Sun className="w-4 h-4 text-amber-400" />
-            )}
-            {!collapsed && <span>{isDark ? 'Modo Escuro' : 'Modo Claro'}</span>}
-          </div>
-          {!collapsed && (
-            <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-[#0092FF]/20 text-[#0092FF]">
-              {isDark ? 'Escuro' : 'Claro'}
-            </span>
-          )}
-        </button>
-      </div>
 
       {/* User Profile & Logout */}
       <div className="p-3 border-t border-[#002060]/80 bg-[#00061A]/70">
