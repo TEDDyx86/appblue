@@ -161,6 +161,19 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     
     return payload
 
+def get_current_user_optional(authorization: Optional[str] = Header(None)) -> Optional[dict]:
+    """Dependency opcional: extrai usuário se houver token válido, sem bloquear clientes públicos"""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    try:
+        token = authorization.split(" ")[1]
+        payload = verify_jwt(token)
+        if payload.get("type") == "access":
+            return payload
+    except Exception:
+        pass
+    return None
+
 def require_admin(user: dict = Depends(get_current_user)):
     """Dependency: verifica se é admin"""
     # Busca role no DB
@@ -1973,15 +1986,13 @@ class BookingRequest(BaseModel):
     platform: str = "teams"  # "teams" | "meet" | "presencial"
     notes: Optional[str] = None
 
-@app.get("/api/calendar/settings")
-async def get_calendar_settings(user: dict = Depends(require_admin)):
-    """Obtém configurações de disponibilidade da agenda"""
+def get_calendar_settings_data() -> Dict[str, Any]:
+    """Função interna para carregar configurações de calendário"""
     try:
         res = supabase.table("configuration").select("value").eq("key", "calendar_settings").execute()
         if res.data and len(res.data) > 0:
             val = res.data[0]["value"]
             data = json.loads(val) if isinstance(val, str) else val
-            # Garante campos padrão caso ausentes
             if "weekly_schedule" not in data:
                 data["weekly_schedule"] = DEFAULT_WEEKLY_SCHEDULE
             if "buffer_before_minutes" not in data:
@@ -1994,18 +2005,12 @@ async def get_calendar_settings(user: dict = Depends(require_admin)):
     except Exception as e:
         logger.error(f"Erro ao buscar calendar_settings: {e}")
         
-    # Default settings
-    default_settings = CalendarSettings().dict()
-    try:
-        supabase.table("configuration").insert({
-            "key": "calendar_settings",
-            "value": json.dumps(default_settings),
-            "value_type": "json",
-            "description": "Configurações de horários e regras da agenda"
-        }).execute()
-    except Exception:
-        pass
-    return default_settings
+    return CalendarSettings().dict()
+
+@app.get("/api/calendar/settings")
+async def get_calendar_settings(user: dict = Depends(require_admin)):
+    """Obtém configurações de disponibilidade da agenda para o admin"""
+    return get_calendar_settings_data()
 
 @app.post("/api/calendar/settings")
 @app.put("/api/calendar/settings")
@@ -2059,11 +2064,11 @@ async def get_available_slots(
     duration: int = 60,
     start_date: Optional[str] = None,
     days_count: int = 30,
-    user: dict = Depends(require_admin)
+    user: Optional[dict] = Depends(get_current_user_optional)
 ):
-    """Calcula slots livres estilo Calendly baseando-se nas regras e conflitos"""
+    """Calcula slots livres estilo Calendly baseando-se nas regras e conflitos (acesso público)"""
     # 1. Carrega configurações
-    settings_res = await get_calendar_settings(user)
+    settings_res = get_calendar_settings_data()
     weekly_schedule = settings_res.get("weekly_schedule")
     work_days = settings_res.get("work_days", [1, 2, 3, 4, 5])
     start_hour_str = settings_res.get("start_hour", "09:00")
@@ -2223,8 +2228,8 @@ async def get_available_slots(
     }
 
 @app.post("/api/calendar/book")
-async def book_meeting(booking: BookingRequest, user: dict = Depends(require_admin)):
-    """Cria agendamento de reunião integrado ao Pipedrive"""
+async def book_meeting(booking: BookingRequest, user: Optional[dict] = Depends(get_current_user_optional)):
+    """Cria agendamento de reunião integrado ao Pipedrive (acesso público)"""
     try:
         # 1. Busca ou cria Pessoa no Pipedrive
         person_id = booking.person_id
@@ -2300,7 +2305,7 @@ async def book_meeting(booking: BookingRequest, user: dict = Depends(require_adm
             action="CALENDAR_BOOKING_CREATED",
             resource_type="calendar_booking",
             resource_id=activity_id,
-            user_id=user.get("id", user.get("sub")),
+            user_id=user.get("id", user.get("sub")) if user else "PUBLIC_CLIENT",
             details={
                 "client_name": booking.client_name,
                 "client_email": booking.client_email,
@@ -2417,23 +2422,9 @@ async def cancel_meeting(activity_id: str, user: dict = Depends(require_admin)):
 # ============================================================================
 
 @app.get("/api/calendar/types")
-async def get_calendar_meeting_types(user: dict = Depends(require_admin)):
-    """Retorna tipos de reuniões para o agendador autenticado"""
-    try:
-        res = supabase.table("configuration").select("value").eq("key", "calendar_settings").execute()
-        if res.data and len(res.data) > 0:
-            val = res.data[0]["value"]
-            settings_dict = json.loads(val) if isinstance(val, str) else val
-            return {
-                "planner_name": "Robson Vieira Tavernard",
-                "planner_role": "Planejamento Financeiro e Sucessório",
-                "company": "Blue3 Investimentos",
-                "meeting_types": settings_dict.get("meeting_types", CalendarSettings().meeting_types),
-                "timezone": settings_dict.get("timezone", "America/Sao_Paulo")
-            }
-    except Exception as e:
-        logger.error(f"Erro ao carregar tipos de reunião: {e}")
-        
+async def get_calendar_meeting_types(user: Optional[dict] = Depends(get_current_user_optional)):
+    """Retorna tipos de reuniões para o agendador (acesso público)"""
+    settings_dict = get_calendar_settings_data()
     return {
         "planner_name": "Robson Vieira Tavernard",
         "planner_role": "Planejamento Financeiro e Sucessório",
