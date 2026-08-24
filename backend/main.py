@@ -6,6 +6,7 @@ Autenticação, Webhooks, Integração CRM
 import os
 import uuid
 import json
+import base64
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple
 from functools import wraps
@@ -336,15 +337,57 @@ async def get_me(user: dict = Depends(get_current_user)):
 # ============================================================================
 
 def get_google_drive_service():
-    """Cria serviço do Google Drive"""
-    if not GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON:
-        raise HTTPException(status_code=500, detail="Google Drive service account não configurado")
+    """Cria serviço do Google Drive suportando JSON em string, base64, caminho exato ou fallback"""
+    scopes = ["https://www.googleapis.com/auth/drive"]
     
-    credentials = Credentials.from_service_account_file(
-        GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON,
-        scopes=["https://www.googleapis.com/auth/drive"]
+    # 1. Se variável GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON estiver definida
+    if GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON:
+        val = GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON.strip()
+        
+        # Caso A: JSON string direto (ex: '{"type": "service_account", ...}')
+        if val.startswith("{") and val.endswith("}"):
+            try:
+                info = json.loads(val)
+                credentials = Credentials.from_service_account_info(info, scopes=scopes)
+                return build("drive", "v3", credentials=credentials)
+            except Exception as e:
+                logger.warning(f"Erro ao carregar GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON como JSON: {e}")
+                
+        # Caso B: String Base64
+        try:
+            if not os.path.exists(val) and len(val) > 80:
+                decoded = base64.b64decode(val).decode("utf-8")
+                if decoded.startswith("{") and decoded.endswith("}"):
+                    info = json.loads(decoded)
+                    credentials = Credentials.from_service_account_info(info, scopes=scopes)
+                    return build("drive", "v3", credentials=credentials)
+        except Exception:
+            pass
+            
+        # Caso C: Caminho de arquivo existente
+        if os.path.exists(val):
+            credentials = Credentials.from_service_account_file(val, scopes=scopes)
+            return build("drive", "v3", credentials=credentials)
+
+    # 2. Fallbacks de caminhos conhecidos no projeto
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    possible_paths = [
+        os.path.join(base_dir, "credentials", "service-account.json"),
+        os.path.join(base_dir, "service-account.json"),
+        os.path.join(os.getcwd(), "backend", "credentials", "service-account.json"),
+        os.path.join(os.getcwd(), "credentials", "service-account.json"),
+        "credentials/service-account.json",
+        "service-account.json"
+    ]
+    for p in possible_paths:
+        if os.path.exists(p):
+            credentials = Credentials.from_service_account_file(p, scopes=scopes)
+            return build("drive", "v3", credentials=credentials)
+            
+    raise HTTPException(
+        status_code=500,
+        detail="Credenciais do Google Drive não encontradas. No painel da hospedagem (ex: Render), configure a variável de ambiente GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON com o conteúdo JSON da Service Account."
     )
-    return build("drive", "v3", credentials=credentials)
 
 def find_google_drive_folder():
     """Encontra a pasta 'Tactiq Transcription' no Drive"""
