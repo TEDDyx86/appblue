@@ -31,6 +31,9 @@ export interface Alert {
   severity: 'low' | 'medium' | 'high'
   is_resolved: boolean
   created_at: string
+  pipedrive_deal_id?: string
+  pipedrive_activity_id?: string
+  details?: Record<string, any>
 }
 
 const alertConfig: Record<
@@ -66,6 +69,40 @@ const alertConfig: Record<
   },
 }
 
+function getAlertActivityInfo(alert: Alert): { dateLabel: string; timestamp: number } {
+  // 1. Follow-up atrasado: data de vencimento da atividade no Pipedrive (due_date)
+  if (alert.details?.due_date) {
+    const raw = String(alert.details.due_date)
+    const dt = new Date(raw.includes('T') ? raw : `${raw}T00:00:00`)
+    if (!isNaN(dt.getTime())) {
+      return {
+        dateLabel: `Venceu em ${dt.toLocaleDateString('pt-BR')}`,
+        timestamp: dt.getTime(),
+      }
+    }
+  }
+
+  // 2. Negócio parado: data da última atualização no Pipedrive (update_time)
+  if (alert.details?.update_time) {
+    const raw = String(alert.details.update_time)
+    const dt = new Date(raw.replace(' ', 'T'))
+    if (!isNaN(dt.getTime())) {
+      const days = alert.details?.days_inactive
+      return {
+        dateLabel: days !== undefined ? `Parado há ${days}d (desde ${dt.toLocaleDateString('pt-BR')})` : `Última mov.: ${dt.toLocaleDateString('pt-BR')}`,
+        timestamp: dt.getTime(),
+      }
+    }
+  }
+
+  // 3. Fallback: created_at da detecção
+  const dt = new Date(alert.created_at)
+  return {
+    dateLabel: isNaN(dt.getTime()) ? '' : dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+    timestamp: isNaN(dt.getTime()) ? 0 : dt.getTime(),
+  }
+}
+
 export default function AlertsPage() {
   const router = useRouter()
   const { theme, isDark, toggleTheme } = useTheme()
@@ -94,7 +131,7 @@ export default function AlertsPage() {
 
       const response = await axios.get(`${API_URL}/api/alerts`, {
         headers: { Authorization: `Bearer ${token}` },
-        params: { status: activeTab },
+        params: { resolved: activeTab === 'resolved' },
       })
       setAlerts(response.data)
     } catch (err: any) {
@@ -143,10 +180,10 @@ export default function AlertsPage() {
 
     return list.sort((a, b) => {
       if (sortBy === 'newest') {
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        return getAlertActivityInfo(b).timestamp - getAlertActivityInfo(a).timestamp
       }
       if (sortBy === 'oldest') {
-        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        return getAlertActivityInfo(a).timestamp - getAlertActivityInfo(b).timestamp
       }
       if (sortBy === 'severity') {
         const weight: Record<string, number> = { high: 3, medium: 2, low: 1 }
@@ -369,8 +406,9 @@ export default function AlertsPage() {
                             <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-[#00061A] text-slate-700 dark:text-slate-300 border border-transparent dark:border-[#002060]">
                               {alert.severity === 'high' ? 'Alta Prioridade' : alert.severity === 'medium' ? 'Média' : 'Baixa'}
                             </span>
-                            <span className="text-[11px] text-slate-400">
-                              Registrado em: {formatDate(alert.created_at)}
+                            <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 flex items-center space-x-1">
+                              <Clock className="w-3 h-3 text-slate-400" />
+                              <span>{getAlertActivityInfo(alert).dateLabel}</span>
                             </span>
                           </div>
 

@@ -1389,7 +1389,8 @@ async def sync_comercial_alerts_internal(user_id: Optional[str] = None) -> Dict[
                 "deal_url": d["deal_url"],
                 "value": d["value"],
                 "stage": d["stage_name"],
-                "days_inactive": d["days_inactive"]
+                "days_inactive": d["days_inactive"],
+                "update_time": d.get("update_time")
             }
         }
         
@@ -1416,7 +1417,8 @@ async def sync_comercial_alerts_internal(user_id: Optional[str] = None) -> Dict[
                 "deal_id": d["id"],
                 "deal_url": d["deal_url"],
                 "value": d["value"],
-                "due_date": d["next_activity_date"]
+                "due_date": d["next_activity_date"],
+                "update_time": d.get("update_time")
             }
         }
         
