@@ -91,7 +91,6 @@ export default function AgendaPage() {
   const [selectedAssessor, setSelectedAssessor] = useState<string>('all')
   const [periodFilter, setPeriodFilter] = useState<'next_30_days' | 'this_week' | 'next_week' | 'this_month' | 'all'>('all')
   const [activitySearch, setActivitySearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'done'>('all')
   const [activitySortBy, setActivitySortBy] = useState<'date_asc' | 'date_desc' | 'assessor_az' | 'client_az'>('date_asc')
   const [copiedSingleId, setCopiedSingleId] = useState<string | null>(null)
   const [copiedConsolidated, setCopiedConsolidated] = useState(false)
@@ -112,7 +111,7 @@ export default function AgendaPage() {
     }
   }, [])
 
-  // Carrega Atividades e Assessores do Pipedrive
+  // Carrega Atividades e Assessores do Pipedrive (apenas em aberto)
   const fetchActivities = useCallback(async () => {
     try {
       setLoadingActivities(true)
@@ -122,14 +121,9 @@ export default function AgendaPage() {
         return
       }
 
-      const params: any = { period: periodFilter }
+      const params: any = { period: periodFilter, done: false }
       if (selectedAssessor !== 'all') {
         params.assessor_name = selectedAssessor
-      }
-      if (statusFilter === 'pending') {
-        params.done = false
-      } else if (statusFilter === 'done') {
-        params.done = true
       }
 
       const res = await axios.get(`${API_URL}/api/pipedrive/activities`, {
@@ -148,7 +142,7 @@ export default function AgendaPage() {
     } finally {
       setLoadingActivities(false)
     }
-  }, [API_URL, router, selectedAssessor, statusFilter, periodFilter])
+  }, [API_URL, router, selectedAssessor, periodFilter])
 
   // Carrega configurações de booking
   const fetchSettings = useCallback(async () => {
@@ -214,13 +208,16 @@ export default function AgendaPage() {
     setTimeout(() => setCopiedConsolidated(false), 2500)
   }
 
-  // Filtra, deduplica e ordena atividades
+  // Filtra, deduplica e ordena atividades (excluindo concluídas/feitas)
   const filteredActivities = useMemo(() => {
     const seen = new Set<string>()
     const list = activities.filter((a) => {
       // Deduplicação estrita
       if (!a.id || seen.has(a.id)) return false
       seen.add(a.id)
+
+      // Regra de integridade: Ignora atividades marcadas como feito
+      if (a.done) return false
 
       // Regra de integridade: Só exibe com Cliente (Pessoa) E Assessor (Org)
       if (!a.person_name || !a.org_name || a.org_name === 'Sem Assessor') return false
@@ -523,25 +520,9 @@ export default function AgendaPage() {
                     <option value="client_az">👤 Por Cliente (A-Z)</option>
                   </select>
 
-                  <div className="flex items-center space-x-1.5 w-full sm:w-auto">
-                    {[
-                      { key: 'all', label: 'Todas' },
-                      { key: 'pending', label: 'Pendentes' },
-                      { key: 'done', label: 'Concluídas' },
-                    ].map((s) => (
-                      <button
-                        key={s.key}
-                        type="button"
-                        onClick={() => setStatusFilter(s.key as any)}
-                        className={`flex-1 sm:flex-initial px-3 py-2 rounded-xl text-xs font-bold transition-colors ${
-                          statusFilter === s.key
-                            ? 'bg-slate-900 dark:bg-[#002060] text-white'
-                            : 'bg-slate-100 dark:bg-[#00061A] text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-[#002060]'
-                        }`}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
+                  <div className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-xs font-bold whitespace-nowrap self-stretch sm:self-auto justify-center">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span>Em Aberto ({filteredActivities.length})</span>
                   </div>
                 </div>
               </div>

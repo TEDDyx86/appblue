@@ -1096,6 +1096,8 @@ async def list_pipedrive_activities(
                 query_params["end_date"] = computed_end
             if done is not None:
                 query_params["done"] = 1 if done else 0
+            else:
+                query_params["done"] = 0  # REGRA: Apenas atividades em aberto por padrão
                 
             res = await client.get("https://api.pipedrive.com/v1/activities", params=query_params)
             if res.status_code != 200:
@@ -1121,6 +1123,10 @@ async def list_pipedrive_activities(
             if act_id in seen_activity_ids:
                 continue
             seen_activity_ids.add(act_id)
+            
+            # REGRA: Ignora / oculta qualquer atividade marcada como feito (done == True)
+            if bool(a.get("done")):
+                continue
             
             org_id = a.get("org_id")
             org_name = a.get("org_name") or assessores_map.get(org_id)
