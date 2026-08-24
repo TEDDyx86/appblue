@@ -36,7 +36,7 @@ export default function Sidebar({
   const navItems = [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/transcriptions', label: 'Transcrições', icon: FileText, badge: 'Auto' },
-    { href: '/agenda', label: 'Agenda & Bookings', icon: Calendar, badge: 'Novo' },
+    { href: '/agenda', label: 'Agenda', icon: Calendar, badge: 'Pipedrive' },
     { href: '/logs', label: 'Logs & Auditoria', icon: Activity, badge: 'Live' },
     { href: '/alerts', label: 'Alertas', icon: AlertTriangle },
     { href: '/settings', label: 'Configurações', icon: Settings },

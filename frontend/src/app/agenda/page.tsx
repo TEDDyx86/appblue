@@ -24,15 +24,43 @@ import {
   Link as LinkIcon,
   Sun,
   Moon,
+  Users,
+  Search,
+  MessageSquare,
+  Send,
+  Building2,
+  CheckCheck,
+  ChevronRight,
+  Filter,
 } from 'lucide-react'
 import { useTheme } from '@/context/ThemeContext'
 
-interface MeetingType {
+interface PipedriveActivity {
   id: string
+  type: string
+  subject: string
+  due_date: string
+  due_time: string
+  duration: string
+  time_slot: string
+  day_of_week: string
+  date_display: string
+  person_name: string
+  person_id?: string
+  person_url?: string
+  org_name: string
+  org_id?: string | number
+  deal_id?: string
+  deal_title?: string
+  deal_url?: string
+  done: boolean
+  whatsapp_template: string
+}
+
+interface AssessorItem {
+  id: number | string
   name: string
-  duration: number
-  color: string
-  description: string
+  count: number
 }
 
 interface CalendarSettingsData {
@@ -46,45 +74,33 @@ interface CalendarSettingsData {
   min_notice_hours: number
   max_future_days: number
   timezone: string
-  meeting_types: MeetingType[]
+  meeting_types: any[]
 }
 
-interface ScheduledMeeting {
-  id: string | number
-  subject: string
-  date: string
-  time: string
-  duration: string
-  client_name: string
-  person_id?: string | number
-  deal_id?: string | number
-  is_done?: boolean
-  pipedrive_person_url?: string
-  pipedrive_deal_url?: string
-}
-
-export default function AgendaAdminPage() {
+export default function AgendaPage() {
   const router = useRouter()
   const { theme, isDark, toggleTheme } = useTheme()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [activeTab, setActiveTab] = useState<'settings' | 'meetings' | 'embed'>('settings')
+  const [activeTab, setActiveTab] = useState<'calendar' | 'settings'>('calendar')
 
-  // Settings State
+  // Activities from Pipedrive State
+  const [activities, setActivities] = useState<PipedriveActivity[]>([])
+  const [assessores, setAssessores] = useState<AssessorItem[]>([])
+  const [whatsappConsolidated, setWhatsappConsolidated] = useState('')
+  const [loadingActivities, setLoadingActivities] = useState(true)
+  const [selectedAssessor, setSelectedAssessor] = useState<string>('all')
+  const [activitySearch, setActivitySearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'done'>('pending')
+  const [copiedSingleId, setCopiedSingleId] = useState<string | null>(null)
+  const [copiedConsolidated, setCopiedConsolidated] = useState(false)
+
+  // Booking Settings State
   const [settings, setSettings] = useState<CalendarSettingsData | null>(null)
-  const [loadingSettings, setLoadingSettings] = useState(true)
+  const [loadingSettings, setLoadingSettings] = useState(false)
   const [savingSettings, setSavingSettings] = useState(false)
   const [settingsFeedback, setSettingsFeedback] = useState('')
-
-  // Meetings List State
-  const [meetings, setMeetings] = useState<ScheduledMeeting[]>([])
-  const [loadingMeetings, setLoadingMeetings] = useState(false)
-  const [meetingsFilter, setMeetingsFilter] = useState<'upcoming' | 'past' | 'all'>('upcoming')
-  const [cancelingId, setCancelingId] = useState<string | number | null>(null)
-
-  // Link & Embed Helpers
   const [publicUrl, setPublicUrl] = useState('')
   const [copiedLink, setCopiedLink] = useState(false)
-  const [copiedEmbed, setCopiedEmbed] = useState(false)
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -94,58 +110,73 @@ export default function AgendaAdminPage() {
     }
   }, [])
 
-  // Carrega configurações
-  const fetchSettings = useCallback(async () => {
+  // Carrega Atividades e Assessores do Pipedrive
+  const fetchActivities = useCallback(async () => {
     try {
-      setLoadingSettings(true)
+      setLoadingActivities(true)
       const token = localStorage.getItem('access_token')
       if (!token) {
         router.push('/login')
         return
       }
 
-      const res = await axios.get(`${API_URL}/api/calendar/settings`, {
+      const params: any = { limit: 100 }
+      if (selectedAssessor !== 'all') {
+        params.assessor_name = selectedAssessor
+      }
+      if (statusFilter === 'pending') {
+        params.done = false
+      } else if (statusFilter === 'done') {
+        params.done = true
+      }
+
+      const res = await axios.get(`${API_URL}/api/pipedrive/activities`, {
         headers: { Authorization: `Bearer ${token}` },
+        params,
       })
-      setSettings(res.data)
+
+      setActivities(res.data.activities || [])
+      setAssessores(res.data.assessores || [])
+      setWhatsappConsolidated(res.data.whatsapp_consolidated || '')
     } catch (err: any) {
       if (err.response?.status === 401) {
         localStorage.removeItem('access_token')
         router.push('/login')
       }
     } finally {
+      setLoadingActivities(false)
+    }
+  }, [API_URL, router, selectedAssessor, statusFilter])
+
+  // Carrega configurações de booking
+  const fetchSettings = useCallback(async () => {
+    try {
+      setLoadingSettings(true)
+      const token = localStorage.getItem('access_token')
+      if (!token) return
+
+      const res = await axios.get(`${API_URL}/api/calendar/settings`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      setSettings(res.data)
+    } catch (err) {
+      console.error('Erro ao carregar configurações de booking:', err)
+    } finally {
       setLoadingSettings(false)
     }
-  }, [API_URL, router])
-
-  // Carrega reuniões agendadas no Pipedrive
-  const fetchMeetings = useCallback(async () => {
-    try {
-      setLoadingMeetings(true)
-      const token = localStorage.getItem('access_token')
-      const res = await axios.get(`${API_URL}/api/calendar/meetings`, {
-        headers: { Authorization: `Bearer ${token}` },
-        params: { filter_type: meetingsFilter },
-      })
-      setMeetings(res.data || [])
-    } catch (err) {
-      console.error('Erro ao buscar reuniões:', err)
-    } finally {
-      setLoadingMeetings(false)
-    }
-  }, [API_URL, meetingsFilter])
+  }, [API_URL])
 
   useEffect(() => {
-    fetchSettings()
-  }, [fetchSettings])
+    fetchActivities()
+  }, [fetchActivities])
 
   useEffect(() => {
-    if (activeTab === 'meetings') {
-      fetchMeetings()
+    if (activeTab === 'settings') {
+      fetchSettings()
     }
-  }, [activeTab, fetchMeetings])
+  }, [activeTab, fetchSettings])
 
-  // Salvar configurações
+  // Salva configurações
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!settings) return
@@ -154,67 +185,67 @@ export default function AgendaAdminPage() {
       setSavingSettings(true)
       setSettingsFeedback('')
       const token = localStorage.getItem('access_token')
-      await axios.post(`${API_URL}/api/calendar/settings`, settings, {
+      await axios.put(`${API_URL}/api/calendar/settings`, settings, {
         headers: { Authorization: `Bearer ${token}` },
       })
-      setSettingsFeedback('Configurações da agenda salvas com sucesso!')
+      setSettingsFeedback('Configurações salvas com sucesso!')
       setTimeout(() => setSettingsFeedback(''), 3000)
-    } catch (err) {
-      setSettingsFeedback('Erro ao salvar configurações.')
+    } catch (err: any) {
+      setSettingsFeedback('Erro ao salvar: ' + (err.response?.data?.detail || err.message))
     } finally {
       setSavingSettings(false)
     }
   }
 
-  // Cancelar reunião no Pipedrive
-  const handleCancelMeeting = async (activityId: string | number) => {
-    if (!confirm('Tem certeza que deseja cancelar esta reunião no Pipedrive?')) return
+  // Copia mensagem de template único (WhatsApp)
+  const handleCopySingleTemplate = (id: string, text: string) => {
+    navigator.clipboard.writeText(text)
+    setCopiedSingleId(id)
+    setTimeout(() => setCopiedSingleId(null), 2000)
+  }
 
-    try {
-      setCancelingId(activityId)
-      const token = localStorage.getItem('access_token')
-      await axios.delete(`${API_URL}/api/calendar/meetings/${activityId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      fetchMeetings()
-    } catch (err) {
-      alert('Erro ao cancelar reunião.')
-    } finally {
-      setCancelingId(null)
+  // Copia mensagem consolidada
+  const handleCopyConsolidated = () => {
+    if (!whatsappConsolidated) return
+    navigator.clipboard.writeText(whatsappConsolidated)
+    setCopiedConsolidated(true)
+    setTimeout(() => setCopiedConsolidated(false), 2500)
+  }
+
+  // Filtra atividades por busca de texto
+  const filteredActivities = useMemo(() => {
+    return activities.filter((a) => {
+      if (!activitySearch.trim()) return true
+      const q = activitySearch.toLowerCase().trim()
+      return (
+        (a.person_name || '').toLowerCase().includes(q) ||
+        (a.subject || '').toLowerCase().includes(q) ||
+        (a.org_name || '').toLowerCase().includes(q) ||
+        (a.deal_title || '').toLowerCase().includes(q)
+      )
+    })
+  }, [activities, activitySearch])
+
+  // Agrupa atividades por data para o calendário
+  const groupedByDate = useMemo(() => {
+    const groups: Record<string, { label: string; dateStr: string; items: PipedriveActivity[] }> = {}
+    for (const act of filteredActivities) {
+      const key = act.due_date || 'Sem data'
+      if (!groups[key]) {
+        const dayLabel = act.day_of_week
+          ? `${act.day_of_week.charAt(0).toUpperCase() + act.day_of_week.slice(1)} (${act.date_display})`
+          : 'Data a Definir'
+        groups[key] = { label: dayLabel, dateStr: key, items: [] }
+      }
+      groups[key].items.push(act)
     }
-  }
-
-  const handleCopyPublicLink = () => {
-    navigator.clipboard.writeText(publicUrl)
-    setCopiedLink(true)
-    setTimeout(() => setCopiedLink(false), 2000)
-  }
-
-  const iframeCode = `<iframe \n  src="${publicUrl}" \n  width="100%" \n  height="750" \n  frameborder="0" \n  style="border: none; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);"\n></iframe>`
-
-  const handleCopyIframeCode = () => {
-    navigator.clipboard.writeText(iframeCode)
-    setCopiedEmbed(true)
-    setTimeout(() => setCopiedEmbed(false), 2000)
-  }
+    return Object.values(groups)
+  }, [filteredActivities])
 
   const handleLogout = () => {
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
     router.push('/login')
-  }
-
-  const formatDateDisplay = (dateStr: string) => {
-    if (!dateStr) return ''
-    const parts = dateStr.split('-')
-    if (parts.length < 3) return dateStr
-    const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]))
-    return d.toLocaleDateString('pt-BR', {
-      weekday: 'short',
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-    })
   }
 
   return (
@@ -232,530 +263,533 @@ export default function AgendaAdminPage() {
           sidebarCollapsed ? 'pl-20' : 'pl-64'
         }`}
       >
-        {/* Top Header */}
+        {/* Header */}
         <header className="h-16 bg-white dark:bg-[#000D38] border-b border-slate-200/80 dark:border-[#002060] px-6 sm:px-8 flex items-center justify-between sticky top-0 z-30 transition-colors">
-          <div>
-            <h1 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight flex items-center space-x-2 font-display">
-              <CalendarIcon className="w-5 h-5 text-[#0092FF]" />
-              <span>Configuração da Agenda & Iframe</span>
+          <div className="flex items-center space-x-3">
+            <h1 className="text-lg font-bold text-slate-900 dark:text-white font-display tracking-tight">
+              Agenda de Atendimentos
             </h1>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Gerencie regras de atendimento e gere o link público ou código embed
-            </p>
+            <span className="hidden sm:inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 dark:bg-blue-950/60 text-[#0092FF] dark:text-[#00FFFF] border border-blue-200 dark:border-blue-800/60">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#0092FF] animate-pulse"></span>
+              <span>Pipedrive CRM & Assessores</span>
+            </span>
           </div>
 
-          <div className="flex items-center space-x-2">
-            {/* Theme Toggle Button */}
+          <div className="flex items-center space-x-3">
+            {/* Sync Button */}
+            <button
+              onClick={() => fetchActivities()}
+              disabled={loadingActivities}
+              className="inline-flex items-center space-x-2 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] hover:bg-slate-100 dark:hover:bg-[#002060] text-xs font-medium text-slate-700 dark:text-slate-300 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingActivities ? 'animate-spin text-[#0092FF]' : 'text-slate-500'}`} />
+              <span className="hidden sm:inline">Atualizar Atividades</span>
+            </button>
+
+            {/* Theme Toggle */}
             <button
               onClick={toggleTheme}
-              className="p-2 rounded-xl border border-slate-200 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] hover:bg-slate-100 dark:hover:bg-[#002060] text-slate-600 dark:text-slate-300 transition-colors"
+              className="p-1.5 rounded-xl border border-slate-200 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] hover:bg-slate-100 dark:hover:bg-[#002060] text-slate-600 dark:text-slate-300 transition-colors"
               title={isDark ? 'Mudar para Tema Claro' : 'Mudar para Tema Escuro'}
             >
               {isDark ? <Moon className="w-4 h-4 text-[#00FFFF]" /> : <Sun className="w-4 h-4 text-amber-500" />}
             </button>
-
-            <button
-              onClick={handleCopyPublicLink}
-              className="inline-flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white font-bold text-xs shadow-xs shadow-blue-500/30 transition-all"
-            >
-              {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copiedLink ? 'Link Copiado!' : 'Copiar Link Público'}</span>
-            </button>
-
-            <a
-              href={publicUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors"
-              title="Abrir página pública de agendamento em nova aba"
-            >
-              <ExternalLink className="w-4 h-4" />
-            </a>
           </div>
         </header>
 
-        {/* Page Content Body */}
+        {/* Page Body */}
         <main className="p-6 sm:p-8 space-y-6 max-w-7xl w-full mx-auto">
-          {/* PUBLIC LINK & EMBED BANNER */}
-          <div className="p-5 rounded-2xl bg-gradient-to-br from-[#000D38] via-[#002060] to-[#000D38] border border-[#002060] text-white shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <div className="flex items-center space-x-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-[#0092FF]/20 text-[#00FFFF] border border-[#0092FF]/40">
-                  Agendador Online
-                </span>
-                <span className="text-xs text-slate-300">Estilo Calendly & Microsoft Bookings</span>
-              </div>
-              <h3 className="text-sm font-bold text-white">
-                Link do seu Domínio para Agendamento & Iframe
-              </h3>
-              <p className="text-xs text-blue-200 font-mono bg-[#00061A]/70 px-3 py-1.5 rounded-lg inline-block border border-[#002060]">
-                {publicUrl || 'Carregando URL...'}
-              </p>
+          {/* Top Tabs Switcher */}
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#002060] pb-4">
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={() => setActiveTab('calendar')}
+                className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                  activeTab === 'calendar'
+                    ? 'bg-[#0092FF] text-white shadow-md shadow-blue-500/25'
+                    : 'bg-white dark:bg-[#000D38] border border-slate-200 dark:border-[#002060] text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-[#00061A]'
+                }`}
+              >
+                <CalendarIcon className="w-4 h-4" />
+                <span>Calendário por Assessor</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('settings')}
+                className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                  activeTab === 'settings'
+                    ? 'bg-[#0092FF] text-white shadow-md shadow-blue-500/25'
+                    : 'bg-white dark:bg-[#000D38] border border-slate-200 dark:border-[#002060] text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-[#00061A]'
+                }`}
+              >
+                <Sliders className="w-4 h-4" />
+                <span>Autoagendamento & Links</span>
+              </button>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={handleCopyPublicLink}
-                className="px-3.5 py-2 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white font-bold text-xs shadow-xs shadow-blue-500/30 transition-all flex items-center space-x-1.5"
-              >
-                {copiedLink ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                <span>{copiedLink ? 'Copiado!' : 'Copiar URL'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveTab('embed')}
-                className="px-3.5 py-2 rounded-xl bg-[#000D38] hover:bg-[#002060] text-white font-semibold text-xs border border-[#002060] transition-all flex items-center space-x-1.5"
-              >
-                <Code className="w-4 h-4 text-[#00FFFF]" />
-                <span>Gerar Código Iframe</span>
-              </button>
-
+            {/* Quick Link Generator Info */}
+            <div className="hidden md:flex items-center space-x-2">
+              <span className="text-xs text-slate-500 dark:text-slate-400">Link de Agendamento:</span>
               <a
-                href={publicUrl}
+                href="/agendar"
                 target="_blank"
-                rel="noreferrer"
-                className="px-3.5 py-2 rounded-xl bg-[#000D38] hover:bg-[#002060] text-slate-200 font-semibold text-xs border border-[#002060] transition-all flex items-center space-x-1.5"
+                className="text-xs font-bold text-[#0092FF] dark:text-[#00FFFF] hover:underline inline-flex items-center space-x-1"
               >
-                <span>Testar Página</span>
-                <ExternalLink className="w-3.5 h-3.5" />
+                <span>/agendar</span>
+                <ExternalLink className="w-3 h-3" />
               </a>
             </div>
           </div>
 
-          {/* Navigation Tabs */}
-          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-            <div className="flex bg-slate-200/70 p-1 rounded-xl border border-slate-300/60">
-              <button
-                type="button"
-                onClick={() => setActiveTab('settings')}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center space-x-2 ${
-                  activeTab === 'settings'
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <Sliders className="w-3.5 h-3.5 text-[#0092FF]" />
-                <span>Configuração de Horários & Regras</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveTab('meetings')}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center space-x-2 ${
-                  activeTab === 'meetings'
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <CalendarCheck className="w-3.5 h-3.5 text-[#002060]" />
-                <span>Reuniões Agendadas</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveTab('embed')}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center space-x-2 ${
-                  activeTab === 'embed'
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <Code className="w-3.5 h-3.5 text-amber-600" />
-                <span>Código Iframe (Embed)</span>
-              </button>
-            </div>
-          </div>
-
-          {/* TAB 1: SETTINGS */}
-          {activeTab === 'settings' && (
-            <div className="space-y-6 animate-fade-in max-w-4xl">
-              {settingsFeedback && (
-                <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-xs font-bold text-[#002060] animate-slide-down">
-                  {settingsFeedback}
-                </div>
-              )}
-
-              <form onSubmit={handleSaveSettings} className="space-y-6">
-                {/* Working Days */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm space-y-4">
+          {/* ========================================================================= */}
+          {/* TAB 1: CALENDÁRIO POR ASSESSOR & ATIVIDADES PIPEDRIVE */}
+          {/* ========================================================================= */}
+          {activeTab === 'calendar' && (
+            <div className="space-y-6">
+              {/* FILTROS DE ASSESSOR & BUSCA */}
+              <div className="bg-white dark:bg-[#000D38] rounded-2xl border border-slate-200/90 dark:border-[#002060] p-5 shadow-sm space-y-4">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                   <div>
-                    <h3 className="text-sm font-bold text-slate-900">
-                      Dias de Atendimento da Agenda
-                    </h3>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Selecione em quais dias os clientes poderão agendar reuniões
+                    <h2 className="text-sm font-bold text-slate-900 dark:text-white font-display flex items-center space-x-2">
+                      <Building2 className="w-4 h-4 text-[#0092FF] dark:text-[#00FFFF]" />
+                      <span>Filtrar Atividades por Assessor (Organização Pipedrive)</span>
+                    </h2>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      Selecione um assessor para visualizar os atendimentos da semana e gerar o template para WhatsApp
                     </p>
                   </div>
 
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      { id: 1, label: 'Segunda-feira' },
-                      { id: 2, label: 'Terça-feira' },
-                      { id: 3, label: 'Quarta-feira' },
-                      { id: 4, label: 'Quinta-feira' },
-                      { id: 5, label: 'Sexta-feira' },
-                      { id: 6, label: 'Sábado' },
-                      { id: 7, label: 'Domingo' },
-                    ].map((day) => {
-                      const isActive = (settings?.work_days || []).includes(day.id)
-                      return (
-                        <button
-                          key={day.id}
-                          type="button"
-                          onClick={() => {
-                            if (!settings) return
-                            const current = settings.work_days || []
-                            const next = isActive
-                              ? current.filter((d) => d !== day.id)
-                              : [...current, day.id]
-                            setSettings({ ...settings, work_days: next })
-                          }}
-                          className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all ${
-                            isActive
-                              ? 'bg-[#0092FF] text-white border-[#0092FF] shadow-xs'
-                              : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'
+                  {/* WhatsApp Consolidated Action Button */}
+                  {whatsappConsolidated && (
+                    <button
+                      type="button"
+                      onClick={handleCopyConsolidated}
+                      className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/25 transition-all self-start lg:self-auto"
+                    >
+                      {copiedConsolidated ? <CheckCheck className="w-4 h-4" /> : <MessageSquare className="w-4 h-4" />}
+                      <span>{copiedConsolidated ? 'Agenda Copiada!' : 'Copiar Agenda p/ WhatsApp do Assessor'}</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Assessores Pills Bar */}
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAssessor('all')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center space-x-1.5 ${
+                      selectedAssessor === 'all'
+                        ? 'bg-[#0092FF] text-white shadow-xs'
+                        : 'bg-slate-100 dark:bg-[#00061A] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#002060] hover:bg-slate-200 dark:hover:bg-[#002060]'
+                    }`}
+                  >
+                    <span>Todos os Assessores</span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-white/20">
+                      {activities.length}
+                    </span>
+                  </button>
+
+                  {assessores.map((assessor) => {
+                    const isSelected = selectedAssessor === assessor.name
+                    return (
+                      <button
+                        key={assessor.name}
+                        type="button"
+                        onClick={() => setSelectedAssessor(assessor.name)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center space-x-1.5 ${
+                          isSelected
+                            ? 'bg-[#0092FF] text-white shadow-xs'
+                            : 'bg-slate-100 dark:bg-[#00061A] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#002060] hover:bg-slate-200 dark:hover:bg-[#002060]'
+                        }`}
+                      >
+                        <span>{assessor.name}</span>
+                        <span
+                          className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                            isSelected ? 'bg-white/25 text-white' : 'bg-slate-200 dark:bg-[#002060] text-slate-600 dark:text-slate-400'
                           }`}
                         >
-                          {day.label}
-                        </button>
-                      )
-                    })}
-                  </div>
+                          {assessor.count}
+                        </span>
+                      </button>
+                    )
+                  })}
                 </div>
 
-                {/* Working Hours & Lunch */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm space-y-4">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">
-                      Horário Comercial & Intervalo de Almoço
-                    </h3>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Defina a janela diária para geração dos horários disponíveis
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <div>
-                      <label className="text-[11px] font-bold uppercase text-slate-500 block mb-1">
-                        Início Expediente
-                      </label>
-                      <input
-                        type="time"
-                        value={settings?.start_hour || '08:30'}
-                        onChange={(e) =>
-                          setSettings(settings ? { ...settings, start_hour: e.target.value } : null)
-                        }
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-[#0092FF]"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] font-bold uppercase text-slate-500 block mb-1">
-                        Fim Expediente
-                      </label>
-                      <input
-                        type="time"
-                        value={settings?.end_hour || '18:00'}
-                        onChange={(e) =>
-                          setSettings(settings ? { ...settings, end_hour: e.target.value } : null)
-                        }
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-teal-600"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] font-bold uppercase text-slate-500 block mb-1">
-                        Início Almoço
-                      </label>
-                      <input
-                        type="time"
-                        value={settings?.lunch_start || '12:00'}
-                        onChange={(e) =>
-                          setSettings(settings ? { ...settings, lunch_start: e.target.value } : null)
-                        }
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-teal-600"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] font-bold uppercase text-slate-500 block mb-1">
-                        Fim Almoço
-                      </label>
-                      <input
-                        type="time"
-                        value={settings?.lunch_end || '13:30'}
-                        onChange={(e) =>
-                          setSettings(settings ? { ...settings, lunch_end: e.target.value } : null)
-                        }
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-teal-600"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Buffer & Notice */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm space-y-4">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">
-                      Regras de Intervalo e Antecedência
-                    </h3>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-[11px] font-bold uppercase text-slate-500 block mb-1">
-                        Intervalo de Respiro entre Reuniões (Buffer)
-                      </label>
-                      <select
-                        value={settings?.buffer_minutes || 15}
-                        onChange={(e) =>
-                          setSettings(
-                            settings ? { ...settings, buffer_minutes: parseInt(e.target.value) } : null
-                          )
-                        }
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-teal-600"
+                {/* Secondary Search & Status Filter */}
+                <div className="flex flex-col sm:flex-row items-center gap-3 pt-3 border-t border-slate-100 dark:border-[#002060]/70">
+                  <div className="relative flex-1 w-full">
+                    <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={activitySearch}
+                      onChange={(e) => setActivitySearch(e.target.value)}
+                      placeholder="Buscar por cliente, assunto ou deal..."
+                      className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:bg-white focus:ring-2 focus:ring-[#0092FF] outline-none"
+                    />
+                    {activitySearch && (
+                      <button
+                        onClick={() => setActivitySearch('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
                       >
-                        <option value="0">0 minutos (sem intervalo)</option>
-                        <option value="10">10 minutos</option>
-                        <option value="15">15 minutos (recomendado)</option>
-                        <option value="30">30 minutos</option>
-                      </select>
-                    </div>
+                        &times;
+                      </button>
+                    )}
+                  </div>
 
-                    <div>
-                      <label className="text-[11px] font-bold uppercase text-slate-500 block mb-1">
-                        Antecedência Mínima para Agendamento
-                      </label>
-                      <select
-                        value={settings?.min_notice_hours || 2}
-                        onChange={(e) =>
-                          setSettings(
-                            settings ? { ...settings, min_notice_hours: parseInt(e.target.value) } : null
-                          )
-                        }
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-teal-600"
+                  <div className="flex items-center space-x-1.5 w-full sm:w-auto">
+                    {[
+                      { key: 'pending', label: 'Pendentes' },
+                      { key: 'done', label: 'Concluídas' },
+                      { key: 'all', label: 'Todas' },
+                    ].map((s) => (
+                      <button
+                        key={s.key}
+                        type="button"
+                        onClick={() => setStatusFilter(s.key as any)}
+                        className={`flex-1 sm:flex-initial px-3 py-2 rounded-xl text-xs font-bold transition-colors ${
+                          statusFilter === s.key
+                            ? 'bg-slate-900 dark:bg-[#002060] text-white'
+                            : 'bg-slate-100 dark:bg-[#00061A] text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-[#002060]'
+                        }`}
                       >
-                        <option value="1">1 hora de antecedência</option>
-                        <option value="2">2 horas de antecedência</option>
-                        <option value="4">4 horas de antecedência</option>
-                        <option value="24">24 horas (1 dia antes)</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Meeting Types List */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm space-y-4">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">
-                      Tipos de Reunião Habilitados
-                    </h3>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Tipos de reunião que aparecem para o cliente escolher na página pública
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {(settings?.meeting_types || []).map((m) => (
-                      <div key={m.id} className="p-4 rounded-xl bg-slate-50 border border-slate-200">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-xs font-bold text-slate-900">{m.name}</h4>
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200">
-                            {m.duration} min
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-500 mt-1">{m.description}</p>
-                      </div>
+                        {s.label}
+                      </button>
                     ))}
                   </div>
                 </div>
-
-                <button
-                  type="submit"
-                  disabled={savingSettings}
-                  className="px-6 py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-sm transition-all disabled:opacity-50 flex items-center space-x-2"
-                >
-                  <Check className="w-4 h-4 text-teal-400" />
-                  <span>{savingSettings ? 'Salvando...' : 'Salvar Configurações da Agenda'}</span>
-                </button>
-              </form>
-            </div>
-          )}
-
-          {/* TAB 2: SCHEDULED MEETINGS */}
-          {activeTab === 'meetings' && (
-            <div className="space-y-6 animate-fade-in">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200/90 shadow-sm">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900">
-                    Reuniões Agendadas no Pipedrive
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Atividades do tipo &quot;Reunião&quot; sincronizadas em tempo real
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setMeetingsFilter('upcoming')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                      meetingsFilter === 'upcoming'
-                        ? 'bg-slate-900 text-white'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    Próximas
-                  </button>
-                  <button
-                    onClick={() => setMeetingsFilter('past')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                      meetingsFilter === 'past'
-                        ? 'bg-slate-900 text-white'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    Concluídas
-                  </button>
-                  <button
-                    onClick={() => setMeetingsFilter('all')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                      meetingsFilter === 'all'
-                        ? 'bg-slate-900 text-white'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    Todas
-                  </button>
-                </div>
               </div>
 
-              {loadingMeetings ? (
-                <div className="py-20 text-center space-y-3">
-                  <div className="w-8 h-8 border-3 border-teal-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                  <p className="text-xs font-semibold text-slate-600">Carregando reuniões...</p>
-                </div>
-              ) : meetings.length === 0 ? (
-                <div className="py-20 bg-white rounded-2xl border border-slate-200/90 text-center p-6 shadow-sm">
-                  <CalendarCheck className="w-12 h-12 mx-auto text-slate-300 mb-3" />
-                  <h3 className="text-sm font-bold text-slate-900">Nenhuma reunião encontrada</h3>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {meetings.map((m) => (
-                    <div
-                      key={m.id}
-                      className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between"
-                    >
-                      <div>
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200">
-                            {m.time} • {m.duration}
-                          </span>
-                          <span className="text-xs font-semibold text-slate-500">
-                            {formatDateDisplay(m.date)}
+              {/* CALENDÁRIO / ATIVIDADES GRID */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                {/* Atividades agrupadas por dia (2 colunas) */}
+                <div className="lg:col-span-2 space-y-4">
+                  {loadingActivities ? (
+                    <div className="py-16 text-center bg-white dark:bg-[#000D38] rounded-2xl border border-slate-200 dark:border-[#002060] p-6">
+                      <div className="w-8 h-8 border-2 border-[#0092FF] border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-300">Carregando atividades do Pipedrive...</p>
+                    </div>
+                  ) : groupedByDate.length === 0 ? (
+                    <div className="py-16 text-center bg-white dark:bg-[#000D38] rounded-2xl border border-slate-200 dark:border-[#002060] p-6">
+                      <CalendarCheck className="w-10 h-10 text-slate-400 mx-auto mb-2 opacity-50" />
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-white font-display">Nenhuma atividade encontrada</h3>
+                      <p className="text-xs text-slate-400 mt-1">Não há reuniões ou tarefas cadastradas para os filtros selecionados.</p>
+                    </div>
+                  ) : (
+                    groupedByDate.map((group) => (
+                      <div
+                        key={group.dateStr}
+                        className="bg-white dark:bg-[#000D38] rounded-2xl border border-slate-200/90 dark:border-[#002060] overflow-hidden shadow-sm"
+                      >
+                        {/* Day Header */}
+                        <div className="p-3.5 px-5 bg-slate-50/80 dark:bg-[#00061A]/70 border-b border-slate-200/80 dark:border-[#002060] flex items-center justify-between">
+                          <div className="flex items-center space-x-2.5">
+                            <div className="w-2.5 h-2.5 rounded-full bg-[#0092FF]"></div>
+                            <h3 className="text-xs font-bold text-slate-900 dark:text-white font-display">
+                              {group.label}
+                            </h3>
+                          </div>
+                          <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                            {group.items.length} {group.items.length === 1 ? 'atendimento' : 'atendimentos'}
                           </span>
                         </div>
 
-                        <h4 className="text-sm font-bold text-slate-900 leading-snug mt-2 line-clamp-2">
-                          {m.subject}
-                        </h4>
+                        {/* Activities for this day */}
+                        <div className="divide-y divide-slate-100 dark:divide-[#002060]/70 p-2">
+                          {group.items.map((act) => {
+                            const isCopied = copiedSingleId === act.id
+                            return (
+                              <div
+                                key={act.id}
+                                className="p-3.5 rounded-xl hover:bg-slate-50/70 dark:hover:bg-[#00061A]/50 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                              >
+                                <div className="min-w-0 flex-1">
+                                  {/* Badges & Meta */}
+                                  <div className="flex flex-wrap items-center gap-2 mb-1">
+                                    {/* Time badge */}
+                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-[#0092FF] dark:text-[#00FFFF] border border-blue-200 dark:border-blue-800/60 font-mono flex items-center space-x-1">
+                                      <Clock className="w-3 h-3" />
+                                      <span>{act.time_slot}</span>
+                                    </span>
 
-                        {m.client_name && (
-                          <p className="text-xs text-slate-600 font-medium mt-1.5 flex items-center space-x-1.5">
-                            <User className="w-3.5 h-3.5 text-teal-600 flex-shrink-0" />
-                            <span className="truncate">{m.client_name}</span>
-                          </p>
-                        )}
+                                    {/* Assessor badge */}
+                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60 flex items-center space-x-1">
+                                      <Building2 className="w-2.5 h-2.5" />
+                                      <span>{act.org_name}</span>
+                                    </span>
+
+                                    {/* Deal badge if exists */}
+                                    {act.deal_id && (
+                                      <a
+                                        href={act.deal_url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#00061A] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#002060] hover:text-[#0092FF] transition-colors inline-flex items-center space-x-1"
+                                        title="Abrir Deal no Pipedrive"
+                                      >
+                                        <span>Deal #{act.deal_id}</span>
+                                        <ExternalLink className="w-2.5 h-2.5" />
+                                      </a>
+                                    )}
+                                  </div>
+
+                                  {/* Title / Subject */}
+                                  <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate font-display">
+                                    {act.subject}
+                                  </h4>
+
+                                  {/* Client name with link */}
+                                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                                    Cliente: <span className="font-semibold text-slate-800 dark:text-slate-200">{act.person_name}</span>
+                                  </p>
+                                </div>
+
+                                {/* WhatsApp 1-Click Copy & Actions */}
+                                <div className="flex items-center space-x-2 flex-shrink-0">
+                                  {/* Copy WhatsApp template button */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopySingleTemplate(act.id, act.whatsapp_template)}
+                                    className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                                      isCopied
+                                        ? 'bg-emerald-600 text-white shadow-xs'
+                                        : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/60'
+                                    }`}
+                                    title={`Copiar para WhatsApp: "${act.whatsapp_template}"`}
+                                  >
+                                    {isCopied ? <Check className="w-3.5 h-3.5" /> : <MessageSquare className="w-3.5 h-3.5" />}
+                                    <span>{isCopied ? 'Copiado!' : 'Copiar p/ Whats'}</span>
+                                  </button>
+
+                                  {/* Direct Pipedrive Link */}
+                                  {act.deal_url && (
+                                    <a
+                                      href={act.deal_url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="p-2 rounded-xl text-slate-400 hover:text-[#0092FF] hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors"
+                                      title="Abrir no Pipedrive"
+                                    >
+                                      <ExternalLink className="w-3.5 h-3.5" />
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
                       </div>
+                    ))
+                  )}
+                </div>
 
-                      <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2 text-xs">
-                        <div className="flex items-center gap-1.5">
-                          {m.pipedrive_person_url && (
-                            <a
-                              href={m.pipedrive_person_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-800 font-semibold text-[11px] transition-colors"
-                            >
-                              <span>Pessoa</span>
-                              <ExternalLink className="w-3 h-3 text-teal-600" />
-                            </a>
-                          )}
-                          {m.pipedrive_deal_url && (
-                            <a
-                              href={m.pipedrive_deal_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold text-[11px] transition-colors"
-                            >
-                              <span>Deal</span>
-                              <ExternalLink className="w-3 h-3 text-slate-300" />
-                            </a>
-                          )}
-                        </div>
-
-                        <button
-                          onClick={() => handleCancelMeeting(m.id)}
-                          disabled={cancelingId === m.id}
-                          className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 transition-colors"
-                          title="Cancelar reunião no Pipedrive"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                {/* WhatsApp Preview & Fast Dispatch Box (1 coluna lateral) */}
+                <div className="lg:col-span-1 space-y-4">
+                  <div className="bg-white dark:bg-[#000D38] rounded-2xl border border-slate-200/90 dark:border-[#002060] p-5 shadow-sm space-y-3 sticky top-24">
+                    <div className="flex items-center space-x-2.5 pb-3 border-b border-slate-100 dark:border-[#002060]">
+                      <div className="p-2 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 rounded-xl border border-emerald-200 dark:border-emerald-800/60">
+                        <MessageSquare className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-slate-900 dark:text-white font-display">
+                          Mensagem Pronta para WhatsApp
+                        </h3>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          {selectedAssessor !== 'all' ? `Assessor: ${selectedAssessor}` : 'Visão Geral'}
+                        </p>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
 
-          {/* TAB 3: EMBED / IFRAME GENERATOR */}
-          {activeTab === 'embed' && (
-            <div className="space-y-6 animate-fade-in max-w-4xl">
-              <div className="bg-white p-6 sm:p-8 rounded-2xl border border-slate-200/90 shadow-sm space-y-6">
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">
-                    Código de Incorporação (Iframe Embed)
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Copie o código abaixo e cole no HTML do seu site, landing page ou portal de clientes
-                  </p>
-                </div>
+                    {whatsappConsolidated ? (
+                      <div className="space-y-3">
+                        <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] text-xs font-mono text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed max-h-[320px] overflow-y-auto">
+                          {whatsappConsolidated}
+                        </div>
 
-                {/* Code Snippet Box */}
-                <div className="relative">
-                  <pre className="p-4 bg-slate-950 text-teal-300 rounded-2xl text-xs font-mono overflow-x-auto border border-slate-800">
-                    <code>{iframeCode}</code>
-                  </pre>
-                  <button
-                    onClick={handleCopyIframeCode}
-                    className="absolute right-3 top-3 px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow-sm transition-all flex items-center space-x-1.5"
-                  >
-                    {copiedEmbed ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedEmbed ? 'Copiado!' : 'Copiar Código'}</span>
-                  </button>
-                </div>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            type="button"
+                            onClick={handleCopyConsolidated}
+                            className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center space-x-2 shadow-md shadow-emerald-600/25 transition-all"
+                          >
+                            {copiedConsolidated ? <CheckCheck className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                            <span>{copiedConsolidated ? 'Copiado com Sucesso!' : 'Copiar Texto Completo'}</span>
+                          </button>
 
-                {/* Live Preview */}
-                <div className="space-y-2 pt-4 border-t border-slate-100">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold uppercase text-slate-600">
-                      Pré-visualização do Iframe ao Vivo
-                    </h4>
-                    <span className="text-[11px] text-slate-400">Dimensão simulada</span>
-                  </div>
-                  <div className="border border-slate-300 rounded-2xl overflow-hidden shadow-inner bg-slate-100 p-2">
-                    <iframe
-                      src={publicUrl}
-                      className="w-full h-[600px] rounded-xl border border-slate-200 bg-white"
-                      title="Pré-visualização do Agendador"
-                    />
+                          <a
+                            href={`https://wa.me/?text=${encodeURIComponent(whatsappConsolidated)}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="p-2.5 rounded-xl bg-slate-100 dark:bg-[#00061A] hover:bg-slate-200 dark:hover:bg-[#002060] text-emerald-600 dark:text-emerald-400 border border-slate-200 dark:border-[#002060] transition-colors"
+                            title="Abrir no WhatsApp Web"
+                          >
+                            <Send className="w-4 h-4" />
+                          </a>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="py-8 text-center text-xs text-slate-400">
+                        <p>Selecione um assessor acima para gerar o resumo semanal formatado.</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* TAB 2: CONFIGURAÇÕES DE AUTOAGENDAMENTO (BOOKINGS) */}
+          {/* ========================================================================= */}
+          {activeTab === 'settings' && (
+            <div className="space-y-6 max-w-4xl">
+              {/* Share Public Link Card */}
+              <div className="bg-gradient-to-br from-[#0092FF]/10 via-[#000D38] to-[#00061A] border border-[#0092FF]/30 rounded-2xl p-6 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-bold text-white font-display flex items-center space-x-2">
+                    <Share2 className="w-4 h-4 text-[#00FFFF]" />
+                    <span>Link Público de Autoagendamento</span>
+                  </h3>
+                  <p className="text-xs text-slate-300 mt-1">
+                    Envie para clientes ou assessores escolherem o melhor horário disponível na sua agenda
+                  </p>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={publicUrl}
+                    className="px-3 py-2 bg-[#00061A] border border-[#002060] rounded-xl text-xs text-[#00FFFF] font-mono w-60 outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(publicUrl)
+                      setCopiedLink(true)
+                      setTimeout(() => setCopiedLink(false), 2000)
+                    }}
+                    className="p-2.5 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white font-bold text-xs transition-all shadow-xs"
+                    title="Copiar link"
+                  >
+                    {copiedLink ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  </button>
+                  <a
+                    href="/agendar"
+                    target="_blank"
+                    className="p-2.5 rounded-xl bg-[#002060] hover:bg-[#002a80] text-white transition-colors"
+                    title="Abrir tela de agendamento"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                  </a>
+                </div>
+              </div>
+
+              {/* Form Settings */}
+              {loadingSettings ? (
+                <div className="py-12 text-center text-xs text-slate-400">Carregando configurações...</div>
+              ) : settings ? (
+                <form onSubmit={handleSaveSettings} className="bg-white dark:bg-[#000D38] rounded-2xl border border-slate-200/90 dark:border-[#002060] p-6 shadow-sm space-y-6">
+                  {settingsFeedback && (
+                    <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800/60 text-xs text-[#0092FF] dark:text-[#00FFFF] font-bold">
+                      {settingsFeedback}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                        Horário de Início do Expediente
+                      </label>
+                      <input
+                        type="time"
+                        value={settings.start_hour}
+                        onChange={(e) => setSettings({ ...settings, start_hour: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                        Horário de Fim do Expediente
+                      </label>
+                      <input
+                        type="time"
+                        value={settings.end_hour}
+                        onChange={(e) => setSettings({ ...settings, end_hour: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                        Início do Almoço / Pausa
+                      </label>
+                      <input
+                        type="time"
+                        value={settings.lunch_start}
+                        onChange={(e) => setSettings({ ...settings, lunch_start: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                        Fim do Almoço / Pausa
+                      </label>
+                      <input
+                        type="time"
+                        value={settings.lunch_end}
+                        onChange={(e) => setSettings({ ...settings, lunch_end: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                        Duração Padrão das Reuniões
+                      </label>
+                      <select
+                        value={settings.slot_duration_minutes}
+                        onChange={(e) => setSettings({ ...settings, slot_duration_minutes: Number(e.target.value) })}
+                        className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white"
+                      >
+                        <option value={30}>30 minutos</option>
+                        <option value={45}>45 minutos</option>
+                        <option value={60}>60 minutos (1 hora)</option>
+                        <option value={90}>90 minutos (1h30)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                        Intervalo de Respiro (Buffer) entre Reuniões
+                      </label>
+                      <select
+                        value={settings.buffer_minutes}
+                        onChange={(e) => setSettings({ ...settings, buffer_minutes: Number(e.target.value) })}
+                        className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white"
+                      >
+                        <option value={0}>Sem intervalo</option>
+                        <option value={10}>10 minutos</option>
+                        <option value={15}>15 minutos</option>
+                        <option value={30}>30 minutos</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="pt-4 border-t border-slate-100 dark:border-[#002060] flex items-center justify-end">
+                    <button
+                      type="submit"
+                      disabled={savingSettings}
+                      className="px-6 py-2.5 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white font-bold text-xs shadow-md shadow-blue-500/25 transition-all disabled:opacity-50"
+                    >
+                      {savingSettings ? 'Salvando...' : 'Salvar Alterações'}
+                    </button>
+                  </div>
+                </form>
+              ) : null}
             </div>
           )}
         </main>

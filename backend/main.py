@@ -1006,6 +1006,170 @@ async def create_pipedrive_note(
             return None
 
 # ============================================================================
+# PIPEDRIVE: ATIVIDADES, ASSESSORES (ORGANIZAÇÕES) & AGENDA
+# ============================================================================
+
+DIAS_SEMANA_PT = {
+    0: "segunda-feira",
+    1: "terça-feira",
+    2: "quarta-feira",
+    3: "quinta-feira",
+    4: "sexta-feira",
+    5: "sábado",
+    6: "domingo"
+}
+
+@app.get("/api/pipedrive/assessores")
+async def list_pipedrive_assessores(user: dict = Depends(require_admin)):
+    """Lista todas as Organizações (Assessores) cadastradas no Pipedrive"""
+    async with httpx.AsyncClient() as client:
+        res = await client.get(
+            "https://api.pipedrive.com/v1/organizations",
+            params={"api_token": PIPEDRIVE_API_TOKEN, "limit": 100}
+        )
+        if res.status_code != 200:
+            return {"assessores": []}
+        data = res.json().get("data") or []
+        assessores = [{"id": o.get("id"), "name": o.get("name")} for o in data if o.get("name")]
+        return {"assessores": sorted(assessores, key=lambda x: x["name"])}
+
+@app.get("/api/pipedrive/activities")
+async def list_pipedrive_activities(
+    assessor_name: Optional[str] = None,
+    assessor_id: Optional[int] = None,
+    done: Optional[bool] = None,
+    limit: int = 100,
+    user: dict = Depends(require_admin)
+):
+    """
+    Lista atividades do Pipedrive com mapeamento de Assessor (Organização),
+    Cliente (Pessoa), Deal, Horário formatado e templates prontos para WhatsApp.
+    """
+    params = {
+        "api_token": PIPEDRIVE_API_TOKEN,
+        "limit": limit,
+        "user_id": 0  # Todas as atividades do Robson / equipe
+    }
+    if done is not None:
+        params["done"] = 1 if done else 0
+
+    async with httpx.AsyncClient() as client:
+        res = await client.get("https://api.pipedrive.com/v1/activities", params=params)
+        if res.status_code != 200:
+            return {"activities": [], "assessores": [], "total": 0, "whatsapp_consolidated": ""}
+        
+        raw_data = res.json().get("data") or []
+        
+        formatted_activities = []
+        assessores_count: Dict[str, Dict[str, Any]] = {}
+        
+        for a in raw_data:
+            org_name = a.get("org_name") or "Sem Assessor"
+            org_id = a.get("org_id")
+            
+            # Contagem de assessores
+            if org_name not in assessores_count:
+                assessores_count[org_name] = {"id": org_id, "name": org_name, "count": 0}
+            assessores_count[org_name]["count"] += 1
+            
+            # Filtro por assessor se informado
+            if assessor_name and assessor_name != "all" and org_name != assessor_name:
+                continue
+            if assessor_id and org_id != assessor_id:
+                continue
+                
+            due_date_str = a.get("due_date") or ""
+            due_time_str = a.get("due_time") or ""
+            duration_str = a.get("duration") or "01:00"
+            
+            time_slot = "Horário a definir"
+            day_name = ""
+            date_display = ""
+            
+            if due_date_str:
+                try:
+                    dt = datetime.strptime(due_date_str, "%Y-%m-%d")
+                    day_name = DIAS_SEMANA_PT.get(dt.weekday(), "")
+                    date_display = dt.strftime("%d/%m")
+                except Exception:
+                    pass
+                    
+            if due_time_str:
+                try:
+                    start_parts = [int(p) for p in due_time_str.split(":")[:2]]
+                    dur_parts = [int(p) for p in duration_str.split(":")[:2]]
+                    start_min = start_parts[0] * 60 + start_parts[1]
+                    dur_min = dur_parts[0] * 60 + dur_parts[1]
+                    end_min = start_min + dur_min
+                    end_h, end_m = divmod(end_min, 60)
+                    start_fmt = f"{start_parts[0]:02d}:{start_parts[1]:02d}"
+                    end_fmt = f"{end_h:02d}:{end_m:02d}"
+                    time_slot = f"{start_fmt} - {end_fmt}"
+                except Exception:
+                    time_slot = due_time_str
+                    
+            person_name = a.get("person_name") or "Cliente"
+            person_id = a.get("person_id")
+            deal_title = a.get("deal_title")
+            deal_id = a.get("deal_id")
+            subj = a.get("subject") or "Reunião"
+            act_type = a.get("type") or "meeting"
+            
+            # Template WhatsApp linha única: 'segunda-feira (20/08) R1 com ana (16:00-17:00)'
+            wa_template = f"{day_name} ({date_display}) {subj} com {person_name} ({time_slot})".strip()
+            
+            formatted_activities.append({
+                "id": str(a.get("id")),
+                "type": act_type,
+                "subject": subj,
+                "due_date": due_date_str,
+                "due_time": due_time_str,
+                "duration": duration_str,
+                "time_slot": time_slot,
+                "day_of_week": day_name,
+                "date_display": date_display,
+                "person_name": person_name,
+                "person_id": str(person_id) if person_id else None,
+                "person_url": f"https://investimentosblue.pipedrive.com/person/{person_id}" if person_id else None,
+                "org_name": org_name,
+                "org_id": org_id,
+                "deal_id": str(deal_id) if deal_id else None,
+                "deal_title": deal_title,
+                "deal_url": f"https://investimentosblue.pipedrive.com/deal/{deal_id}" if deal_id else None,
+                "done": bool(a.get("done")),
+                "whatsapp_template": wa_template
+            })
+            
+        # Ordena por data e horário
+        formatted_activities.sort(key=lambda x: (x["due_date"], x["due_time"] or "99:99"))
+        
+        # Gera template consolidado para WhatsApp se filtrado por assessor
+        whatsapp_consolidated = ""
+        target_assessor_label = assessor_name if (assessor_name and assessor_name != "all") else "Geral"
+        if formatted_activities:
+            lines = [f"📅 *Agenda de Atendimentos - Robson Vieira & {target_assessor_label}*\n"]
+            by_date: Dict[str, List[Dict]] = {}
+            for act in formatted_activities:
+                d_key = f"{act['day_of_week'].capitalize()} ({act['date_display']})"
+                by_date.setdefault(d_key, []).append(act)
+                
+            for d_header, acts in by_date.items():
+                lines.append(f"🔹 *{d_header}*")
+                for act in acts:
+                    lines.append(f"• {act['time_slot']} | {act['subject']} com {act['person_name']}")
+                lines.append("")
+                
+            lines.append("Qualquer dúvida ou ajuste de horário, estou à disposição! 🚀")
+            whatsapp_consolidated = "\n".join(lines).strip()
+            
+        return {
+            "activities": formatted_activities,
+            "assessores": sorted(list(assessores_count.values()), key=lambda x: -x["count"]),
+            "whatsapp_consolidated": whatsapp_consolidated,
+            "total": len(formatted_activities)
+        }
+
+# ============================================================================
 # PIPELINE COMERCIAL (MONITORAMENTO ATIVO)
 # ============================================================================
 
