@@ -1007,6 +1007,26 @@ async def create_pipedrive_note(
             logger.error(f"Erro ao criar nota no Pipedrive: {res.text}")
             return None
 
+async def delete_pipedrive_note(note_id: str) -> bool:
+    """Exclui uma nota existente no Pipedrive"""
+    if not note_id or not PIPEDRIVE_API_TOKEN:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.delete(
+                f"https://api.pipedrive.com/v1/notes/{note_id}",
+                params={"api_token": PIPEDRIVE_API_TOKEN}
+            )
+            if res.status_code in [200, 204]:
+                logger.info(f"Nota #{note_id} excluída com sucesso no Pipedrive.")
+                return True
+            else:
+                logger.warning(f"Resposta ao excluir nota {note_id}: {res.status_code} - {res.text}")
+                return False
+    except Exception as e:
+        logger.error(f"Erro ao excluir nota {note_id} no Pipedrive: {e}")
+        return False
+
 # ============================================================================
 # PIPEDRIVE: ATIVIDADES, ASSESSORES (ORGANIZAÇÕES) & AGENDA
 # ============================================================================
@@ -1495,6 +1515,7 @@ class AssignTranscriptionRequest(BaseModel):
     cliente_nome: Optional[str] = None
     create_note: bool = True
     create_activity: bool = True
+    delete_old_note: bool = True  # Exclui a nota anterior no Pipedrive se estiver reatribuindo
 
 @app.get("/api/transcriptions", response_model=List[TranscriptionResponse])
 async def get_transcriptions(
@@ -1531,7 +1552,7 @@ async def assign_transcription_to_crm(
     req: AssignTranscriptionRequest,
     user: dict = Depends(require_admin)
 ):
-    """Atribui manualmente uma transcrição a um Cliente/Negócio no Pipedrive com criação de nota e tarefa"""
+    """Atribui/Reatribui manualmente uma transcrição a um Cliente/Negócio no Pipedrive com remoção de nota antiga e criação de nova"""
     
     # 1. Busca transcrição existente
     t_res = supabase.table("transcriptions").select("*").eq("id", transcription_id).execute()
@@ -1546,7 +1567,14 @@ async def assign_transcription_to_crm(
     deal_id = req.deal_id
     client_name = req.custom_client_name or req.cliente_nome
     
-    # 2. Se informou deal_id mas não person_id, busca person_id no Deal
+    # 2. Se já possuía uma nota anterior e foi solicitado apagar ao reatribuir, exclui no Pipedrive
+    old_pipe_info = briefing_json.get("pipedrive") or {}
+    old_note_id = old_pipe_info.get("note_id")
+    old_deleted = False
+    if req.delete_old_note and old_note_id:
+        old_deleted = await delete_pipedrive_note(old_note_id)
+    
+    # 3. Se informou deal_id mas não person_id, busca person_id no Deal
     if deal_id and not person_id:
         try:
             async with httpx.AsyncClient() as client:
@@ -1564,7 +1592,7 @@ async def assign_transcription_to_crm(
         except Exception as e:
             logger.warning(f"Não foi possível buscar person_id do deal {deal_id}: {e}")
             
-    # 3. Se informou person_id mas não client_name, busca nome da pessoa
+    # 4. Se informou person_id mas não client_name, busca nome da pessoa
     if person_id and not client_name:
         try:
             async with httpx.AsyncClient() as client:
@@ -1581,7 +1609,7 @@ async def assign_transcription_to_crm(
     if not client_name:
         client_name = briefing_json.get("dados_cliente", {}).get("nome") or "Cliente"
         
-    # 4. Atualiza briefing_json com Pipedrive URLs
+    # 5. Atualiza briefing_json com Pipedrive URLs
     if "pipedrive" not in briefing_json:
         briefing_json["pipedrive"] = {}
     if "dados_cliente" not in briefing_json:
@@ -1593,7 +1621,7 @@ async def assign_transcription_to_crm(
     briefing_json["pipedrive"]["person_url"] = f"https://investimentosblue.pipedrive.com/person/{person_id}" if person_id else None
     briefing_json["pipedrive"]["deal_url"] = f"https://investimentosblue.pipedrive.com/deal/{deal_id}" if deal_id else None
     
-    # 5. Cria Nota no Pipedrive
+    # 6. Cria Nova Nota no Pipedrive
     note_id = None
     if req.create_note:
         topicos_html = "".join([f"<li>{topico}</li>" for topico in briefing_json.get("principais_topicos", [])])
@@ -1614,15 +1642,15 @@ async def assign_transcription_to_crm(
             note_id = str(note_res.get("id"))
             briefing_json["pipedrive"]["note_id"] = note_id
             
-    # 6. Atualiza registro da Transcrição
+    # 7. Atualiza registro da Transcrição
     supabase.table("transcriptions").update({
         "processing_status": "completed",
         "briefing_json": briefing_json
     }).eq("id", transcription_id).execute()
     
-    # 7. Registra no Log de Auditoria
+    # 8. Registra no Log de Auditoria
     log_audit_event(
-        action="DRIVE_DOC_LINKED",
+        action="DRIVE_DOC_REASSIGNED" if old_note_id else "DRIVE_DOC_LINKED",
         resource_type="transcription",
         resource_id=transcription_id,
         user_id=user.get("id", user.get("sub")),
@@ -1632,22 +1660,87 @@ async def assign_transcription_to_crm(
             "pipedrive_person_id": person_id,
             "pipedrive_deal_id": deal_id,
             "pipedrive_note_id": note_id,
+            "old_note_id": old_note_id,
+            "old_note_deleted": old_deleted,
             "deal_url": briefing_json["pipedrive"].get("deal_url"),
             "person_url": briefing_json["pipedrive"].get("person_url"),
             "proxima_acao": briefing_json.get("proxima_acao", {}).get("descricao"),
             "is_linked_to_crm": True,
             "assigned_manually": True,
-            "summary": f"Transcrição '{meeting_title}' vinculada com sucesso ao cliente '{client_name}'" + (f" (Deal #{deal_id})" if deal_id else "") + " no Pipedrive por Robson com anotação sincronizada."
+            "summary": f"Transcrição '{meeting_title}' " + (f"reatribuída (nota antiga #{old_note_id} removida) para '{client_name}'" if old_note_id else f"vinculada ao cliente '{client_name}'") + (f" (Deal #{deal_id})" if deal_id else "") + " no Pipedrive por Robson com nova anotação sincronizada."
         }
     )
     
     return {
         "status": "success",
-        "message": f"Transcrição vinculada com sucesso ao Pipedrive!",
+        "message": f"Transcrição vinculada com sucesso ao Pipedrive!" + (" (Nota anterior substituída)" if old_deleted else ""),
         "person_id": person_id,
         "deal_id": deal_id,
         "person_url": briefing_json["pipedrive"].get("person_url"),
         "deal_url": briefing_json["pipedrive"].get("deal_url"),
+        "briefing_json": briefing_json
+    }
+
+@app.delete("/api/transcriptions/{transcription_id}/unlink")
+@app.post("/api/transcriptions/{transcription_id}/unlink")
+async def unlink_transcription_from_crm(
+    transcription_id: str,
+    delete_note: bool = True,
+    user: dict = Depends(require_admin)
+):
+    """Desvincula uma transcrição do Pipedrive e exclui a anotação associada no CRM"""
+    t_res = supabase.table("transcriptions").select("*").eq("id", transcription_id).execute()
+    if not t_res.data:
+        raise HTTPException(status_code=404, detail="Transcrição não encontrada")
+        
+    t = t_res.data[0]
+    briefing_json = t.get("briefing_json") or {}
+    meeting_title = t.get("meeting_title") or "Reunião"
+    pipe_info = briefing_json.get("pipedrive") or {}
+    old_note_id = pipe_info.get("note_id")
+    old_person = briefing_json.get("dados_cliente", {}).get("nome") or pipe_info.get("person_id")
+    old_deal = pipe_info.get("deal_id")
+    
+    # 1. Se solicitado, apaga a anotação no Pipedrive
+    note_deleted = False
+    if delete_note and old_note_id:
+        note_deleted = await delete_pipedrive_note(old_note_id)
+        
+    # 2. Limpa os vínculos no briefing_json
+    briefing_json["pipedrive"] = {
+        "person_id": None,
+        "deal_id": None,
+        "person_url": None,
+        "deal_url": None,
+        "note_id": None
+    }
+    
+    # 3. Atualiza registro da Transcrição
+    supabase.table("transcriptions").update({
+        "processing_status": "pending",
+        "briefing_json": briefing_json
+    }).eq("id", transcription_id).execute()
+    
+    # 4. Registra no Log de Auditoria
+    log_audit_event(
+        action="DRIVE_DOC_UNLINKED",
+        resource_type="transcription",
+        resource_id=transcription_id,
+        user_id=user.get("id", user.get("sub")),
+        details={
+            "doc_title": meeting_title,
+            "old_client": old_person,
+            "old_deal_id": old_deal,
+            "old_note_id": old_note_id,
+            "note_deleted_from_crm": note_deleted,
+            "summary": f"Transcrição '{meeting_title}' desvinculada do Pipedrive por Robson" + (f" (nota #{old_note_id} removida do CRM)." if note_deleted else ".")
+        }
+    )
+    
+    return {
+        "status": "success",
+        "message": "Transcrição desvinculada com sucesso" + (" e anotação removida do Pipedrive." if note_deleted else "."),
+        "note_deleted": note_deleted,
         "briefing_json": briefing_json
     }
 
