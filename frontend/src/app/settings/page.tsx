@@ -51,6 +51,7 @@ export default function SettingsPage() {
   const [status, setStatus] = useState<SystemStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [testing, setTesting] = useState(false)
+  const [testFeedback, setTestFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [user, setUser] = useState<any>(null)
   const [usersList, setUsersList] = useState<UserItem[]>([])
 
@@ -81,7 +82,7 @@ export default function SettingsPage() {
       }
 
       const [statusRes, userRes] = await Promise.all([
-        axios.get(`${API_URL}/api/health`, {
+        axios.get(`${API_URL}/api/system/status`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
         axios.get(`${API_URL}/api/auth/me`, {
@@ -116,13 +117,24 @@ export default function SettingsPage() {
   const handleTestIntegrations = async () => {
     try {
       setTesting(true)
+      setTestFeedback(null)
       const token = localStorage.getItem('access_token')
-      await axios.post(
+      const res = await axios.post(
         `${API_URL}/api/webhooks/trigger-sync`,
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       )
       await fetchSettings()
+      setTestFeedback({
+        type: 'success',
+        message: res.data?.message || 'Conexões testadas e sincronizadas com sucesso!'
+      })
+      setTimeout(() => setTestFeedback(null), 6000)
+    } catch (err: any) {
+      setTestFeedback({
+        type: 'error',
+        message: 'Erro ao testar conexões: ' + (err.response?.data?.detail || err.message)
+      })
     } finally {
       setTesting(false)
     }
@@ -332,15 +344,52 @@ export default function SettingsPage() {
 
           {/* Section 2: Integrations Status */}
           <div className="space-y-4">
-            <div>
-              <h2 className="text-sm font-bold text-slate-900 dark:text-white tracking-tight flex items-center space-x-2 font-display">
-                <ShieldCheck className="w-4 h-4 text-[#0092FF] dark:text-[#00FFFF]" />
-                <span>Status das Integrações</span>
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Saúde dos conectores que operam o fluxo de dados
-              </p>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-bold text-slate-900 dark:text-white tracking-tight flex items-center space-x-2 font-display">
+                  <ShieldCheck className="w-4 h-4 text-[#0092FF] dark:text-[#00FFFF]" />
+                  <span>Status das Integrações</span>
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Saúde dos conectores que operam o fluxo de dados em tempo real
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleTestIntegrations}
+                disabled={testing}
+                className="inline-flex items-center space-x-2 px-3.5 py-2 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 text-[#0092FF] dark:text-[#00FFFF] font-bold text-xs hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-all self-start sm:self-auto disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${testing ? 'animate-spin' : ''}`} />
+                <span>{testing ? 'Testando Conexões...' : 'Testar Conexões Agora'}</span>
+              </button>
             </div>
+
+            {testFeedback && (
+              <div
+                className={`p-3.5 rounded-2xl border text-xs flex items-center justify-between animate-fade-in ${
+                  testFeedback.type === 'success'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/60 text-emerald-800 dark:text-emerald-300'
+                    : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800/60 text-rose-800 dark:text-rose-300'
+                }`}
+              >
+                <div className="flex items-center space-x-2">
+                  {testFeedback.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+                  )}
+                  <span className="font-semibold">{testFeedback.message}</span>
+                </div>
+                <button
+                  onClick={() => setTestFeedback(null)}
+                  className="p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-slate-400"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Supabase */}
@@ -351,8 +400,14 @@ export default function SettingsPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-bold text-slate-900 dark:text-white font-display">Supabase (PostgreSQL)</h3>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60">
-                      Conectado
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                        status?.supabase?.connected
+                          ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/60'
+                          : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800/60'
+                      }`}
+                    >
+                      {status?.supabase?.connected ? 'Conectado' : 'Desconectado'}
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
@@ -369,8 +424,14 @@ export default function SettingsPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-bold text-slate-900 dark:text-white font-display">Google Drive API</h3>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60">
-                      Conectado
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                        status?.google_drive?.connected
+                          ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/60'
+                          : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800/60'
+                      }`}
+                    >
+                      {status?.google_drive?.connected ? 'Conectado' : 'Desconectado'}
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
@@ -387,8 +448,14 @@ export default function SettingsPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-bold text-slate-900 dark:text-white font-display">Pipedrive CRM (v1/v2)</h3>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60">
-                      Conectado
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                        status?.pipedrive?.connected
+                          ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/60'
+                          : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800/60'
+                      }`}
+                    >
+                      {status?.pipedrive?.connected ? 'Conectado' : 'Desconectado'}
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
@@ -405,8 +472,14 @@ export default function SettingsPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-bold text-slate-900 dark:text-white font-display">Job Scheduler (Cron)</h3>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60">
-                      Ativo
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                        status?.scheduler?.active
+                          ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/60'
+                          : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/60'
+                      }`}
+                    >
+                      {status?.scheduler?.active ? 'Ativo' : 'Inativo'}
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
