@@ -27,6 +27,14 @@ const jetbrains = JetBrains_Mono({
 export const metadata: Metadata = {
   title: 'Robson Tavernard — Blue3 Automação & CRM',
   description: 'Plataforma de inteligência pós-reunião, CRM e agendamento de Robson Vieira Tavernard',
+  icons: {
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+    ],
+    shortcut: '/icon.svg',
+    apple: '/icon.svg',
+  },
 }
 
 export default function RootLayout({
