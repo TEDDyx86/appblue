@@ -77,19 +77,17 @@ export default function AuthenticatedBookingPage() {
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
-  // Guarda de Autenticação & Carregamento inicial
+  // Carregamento inicial de tipos de reunião
   useEffect(() => {
     async function loadTypes() {
       try {
-        const token = localStorage.getItem('access_token')
-        if (!token) {
-          router.push('/login')
-          return
+        const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
+        const headers: Record<string, string> = {}
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`
         }
 
-        const res = await axios.get(`${API_URL}/api/calendar/types`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
+        const res = await axios.get(`${API_URL}/api/calendar/types`, { headers })
         setPlannerInfo({
           planner_name: res.data.planner_name || 'Robson Vieira Tavernard',
           planner_role: res.data.planner_role || 'Planejamento Financeiro e Sucessório',
@@ -101,28 +99,25 @@ export default function AuthenticatedBookingPage() {
           setSelectedMeetingType(types[0])
         }
       } catch (err: any) {
-        if (err.response?.status === 401) {
-          localStorage.removeItem('access_token')
-          router.push('/login')
-        }
+        console.error('Erro ao carregar tipos de reunião:', err)
       }
     }
     loadTypes()
-  }, [API_URL, router])
+  }, [API_URL])
 
   // Carrega slots quando o tipo de reunião mudar
   const loadSlots = useCallback(
     async (duration: number) => {
       try {
         setLoadingSlots(true)
-        const token = localStorage.getItem('access_token')
-        if (!token) {
-          router.push('/login')
-          return
+        const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
+        const headers: Record<string, string> = {}
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`
         }
 
         const res = await axios.get(`${API_URL}/api/calendar/available-slots`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers,
           params: { duration, days_count: 35 },
         })
         const days: DayData[] = res.data.days || []
@@ -132,15 +127,12 @@ export default function AuthenticatedBookingPage() {
           setSelectedDate(firstWithSlots.date)
         }
       } catch (err: any) {
-        if (err.response?.status === 401) {
-          localStorage.removeItem('access_token')
-          router.push('/login')
-        }
+        console.error('Erro ao carregar slots disponíveis:', err)
       } finally {
         setLoadingSlots(false)
       }
     },
-    [API_URL, router]
+    [API_URL]
   )
 
   useEffect(() => {
@@ -172,10 +164,10 @@ export default function AuthenticatedBookingPage() {
 
     try {
       setSubmitting(true)
-      const token = localStorage.getItem('access_token')
-      if (!token) {
-        router.push('/login')
-        return
+      const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
+      const headers: Record<string, string> = {}
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`
       }
 
       const payload = {
@@ -191,17 +183,10 @@ export default function AuthenticatedBookingPage() {
         notes: notes.trim() || undefined,
       }
 
-      const res = await axios.post(`${API_URL}/api/calendar/book`, payload, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      const res = await axios.post(`${API_URL}/api/calendar/book`, payload, { headers })
       setBookingResult(res.data)
       setStep('success')
     } catch (err: any) {
-      if (err.response?.status === 401) {
-        localStorage.removeItem('access_token')
-        router.push('/login')
-        return
-      }
       alert(`Erro ao confirmar agendamento: ${err.response?.data?.detail || err.message}`)
     } finally {
       setSubmitting(false)
