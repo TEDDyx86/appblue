@@ -7,7 +7,7 @@ import os
 import uuid
 import json
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from functools import wraps
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks
@@ -2038,26 +2038,133 @@ async def save_calendar_settings(settings: CalendarSettings, user: dict = Depend
         logger.error(f"Erro ao salvar calendar_settings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-async def fetch_pipedrive_busy_activities(start_date: str, end_date: str) -> List[Dict]:
-    """Busca atividades marcadas no Pipedrive para verificar horários ocupados"""
+# Cache para séries recorrentes de calendário
+_RECURRING_ACTIVITIES_CACHE: List[Dict] = []
+_RECURRING_CACHE_TIME: Optional[datetime] = None
+
+async def fetch_pipedrive_busy_intervals(start_date: str, end_date: str) -> Dict[str, List[Tuple[int, int]]]:
+    """
+    Busca todas as ocupações reais da agenda no Pipedrive:
+    - Atividades normais (abertas e concluídas que possuem horário)
+    - Eventos sincronizados de calendários externos (Teams, Outlook, Google Calendar)
+    - Ocorrências de séries recorrentes (ex: Encontro EPS Mensal, reuniões periódicas)
+    Faz a conversão correta de fusos horários (UTC para São Paulo UTC-3 quando originado de calendar-sync).
+    Retorna: { 'YYYY-MM-DD': [(start_minutes_of_day, end_minutes_of_day), ...] }
+    """
+    global _RECURRING_ACTIVITIES_CACHE, _RECURRING_CACHE_TIME
+    
+    raw_activities: List[Dict] = []
+    
     try:
-        async with httpx.AsyncClient() as client:
-            res = await client.get(
-                f"https://api.pipedrive.com/v1/activities",
-                params={
-                    "api_token": PIPEDRIVE_API_TOKEN,
-                    "start_date": start_date,
-                    "end_date": end_date,
-                    "done": 0,
-                    "limit": 100
-                }
-            )
-            if res.status_code == 200:
-                data = res.json()
-                return data.get("data", []) or []
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            # 1. Busca atividades com horário dentro do período (user_id=0 inclui todo o calendário)
+            start = 0
+            while True:
+                res = await client.get(
+                    "https://api.pipedrive.com/v1/activities",
+                    params={
+                        "api_token": PIPEDRIVE_API_TOKEN,
+                        "user_id": 0,
+                        "start_date": start_date,
+                        "end_date": end_date,
+                        "start": start,
+                        "limit": 100
+                    }
+                )
+                if res.status_code != 200:
+                    break
+                data = res.json().get("data", []) or []
+                raw_activities.extend(data)
+                pag = res.json().get("additional_data", {}).get("pagination", {})
+                if not pag.get("more_items_in_collection"):
+                    break
+                start = pag.get("next_start", start + 100)
+                
+            # 2. Busca e mantém cache de eventos recorrentes (rec_rule / series)
+            now = datetime.utcnow()
+            if not _RECURRING_ACTIVITIES_CACHE or not _RECURRING_CACHE_TIME or (now - _RECURRING_CACHE_TIME).total_seconds() > 300:
+                rec_list = []
+                r_start = 0
+                while True:
+                    res_r = await client.get(
+                        "https://api.pipedrive.com/v1/activities",
+                        params={
+                            "api_token": PIPEDRIVE_API_TOKEN,
+                            "user_id": 0,
+                            "start": r_start,
+                            "limit": 100
+                        }
+                    )
+                    if res_r.status_code != 200:
+                        break
+                    r_data = res_r.json().get("data", []) or []
+                    for item in r_data:
+                        if item.get("rec_rule") or item.get("series"):
+                            rec_list.append(item)
+                    pag_r = res_r.json().get("additional_data", {}).get("pagination", {})
+                    if not pag_r.get("more_items_in_collection"):
+                        break
+                    r_start = pag_r.get("next_start", r_start + 100)
+                _RECURRING_ACTIVITIES_CACHE = rec_list
+                _RECURRING_CACHE_TIME = now
+                
+            raw_activities.extend(_RECURRING_ACTIVITIES_CACHE)
     except Exception as e:
-        logger.error(f"Erro ao buscar activities do Pipedrive: {e}")
-    return []
+        logger.error(f"Erro ao buscar atividades ocupadas do Pipedrive: {e}")
+        
+    busy_by_date: Dict[str, List[Tuple[int, int]]] = {}
+    
+    def add_busy_slot(date_str: str, time_str: str, duration_str: str, is_utc: bool = False):
+        if not date_str or not time_str:
+            return
+        try:
+            th, tm = map(int, time_str.split(":")[:2])
+            # Se o horário vem em UTC (de calendar-sync ou series), converte para horário local de SP (-3h)
+            if is_utc:
+                dt_utc = datetime.strptime(f"{date_str} {th:02d}:{tm:02d}", "%Y-%m-%d %H:%M")
+                dt_sp = dt_utc - timedelta(hours=3)
+                date_str = dt_sp.strftime("%Y-%m-%d")
+                start_m = dt_sp.hour * 60 + dt_sp.minute
+            else:
+                start_m = th * 60 + tm
+                
+            dur_m = 60
+            if duration_str:
+                dh, dm = map(int, duration_str.split(":")[:2])
+                dur_m = dh * 60 + dm
+                if dur_m <= 0:
+                    dur_m = 30
+                    
+            end_m = start_m + dur_m
+            if date_str not in busy_by_date:
+                busy_by_date[date_str] = []
+            busy_by_date[date_str].append((start_m, end_m))
+        except Exception:
+            pass
+
+    for act in raw_activities:
+        due_date = act.get("due_date")
+        due_time = act.get("due_time")
+        dur = act.get("duration")
+        ref_type = act.get("reference_type")
+        series = act.get("series") or []
+        
+        # Eventos do calendar-sync armazenam horários em UTC no Pipedrive
+        is_calendar_sync = (ref_type == "calendar-sync")
+        
+        # Ocorrência direta / pai
+        if due_date and due_time:
+            add_busy_slot(due_date, due_time, dur, is_utc=is_calendar_sync)
+            
+        # Ocorrências de séries recorrentes (armazenadas em UTC)
+        if isinstance(series, list):
+            for s in series:
+                s_date = s.get("due_date")
+                s_time = s.get("due_time")
+                if s_date and s_time:
+                    add_busy_slot(s_date, s_time, dur, is_utc=True)
+                    
+    return busy_by_date
 
 @app.get("/api/calendar/available-slots")
 async def get_available_slots(
@@ -2073,8 +2180,6 @@ async def get_available_slots(
     work_days = settings_res.get("work_days", [1, 2, 3, 4, 5])
     start_hour_str = settings_res.get("start_hour", "09:00")
     end_hour_str = settings_res.get("end_hour", "18:00")
-    lunch_start_str = settings_res.get("lunch_start", "12:00")
-    lunch_end_str = settings_res.get("lunch_end", "13:00")
     
     buffer_before = settings_res.get("buffer_before_minutes", 0)
     buffer_after = settings_res.get("buffer_after_minutes", settings_res.get("buffer_minutes", 0))
@@ -2086,7 +2191,7 @@ async def get_available_slots(
     
     # 2. Período de cálculo
     now_utc = datetime.utcnow()
-    # Aproximação de fuso SP (-3h)
+    # Horário local de SP (-3h)
     now_local = now_utc - timedelta(hours=3)
     
     if start_date:
@@ -2099,33 +2204,12 @@ async def get_available_slots(
         
     end_calc_date = curr_date + timedelta(days=actual_days_count)
     
-    # 3. Busca conflitos do Pipedrive
-    busy_activities = await fetch_pipedrive_busy_activities(
+    # 3. Busca ocupações reais no Pipedrive (incluindo calendar-sync e séries recorrentes)
+    busy_by_date = await fetch_pipedrive_busy_intervals(
         curr_date.strftime("%Y-%m-%d"),
         end_calc_date.strftime("%Y-%m-%d")
     )
     
-    # Mapeia ocupações por data: { "YYYY-MM-DD": [ (start_min, end_min) ] }
-    busy_by_date: Dict[str, List[tuple]] = {}
-    for act in busy_activities:
-        act_date = act.get("due_date")
-        act_time = act.get("due_time")  # "HH:MM"
-        act_dur = act.get("duration")   # "HH:MM"
-        if act_date and act_time:
-            try:
-                th, tm = map(int, act_time.split(":")[:2])
-                start_m = th * 60 + tm
-                dur_m = 45
-                if act_dur:
-                    dh, dm = map(int, act_dur.split(":")[:2])
-                    dur_m = dh * 60 + dm
-                end_m = start_m + dur_m
-                if act_date not in busy_by_date:
-                    busy_by_date[act_date] = []
-                busy_by_date[act_date].append((start_m, end_m))
-            except Exception:
-                pass
-                
     # Converte strings de horário para minutos do dia
     def to_minutes(h_str: str) -> int:
         h, m = map(int, h_str.split(":")[:2])
@@ -2178,10 +2262,9 @@ async def get_available_slots(
                 slot_start = current_m
                 slot_end = current_m + duration
                 
-                # Verifica colisão com atividades ocupadas (incluindo buffer antes e depois)
+                # Verifica colisão com atividades ocupadas no Pipedrive (considerando buffers)
                 overlaps_busy = False
                 for (b_start, b_end) in day_busy:
-                    # O slot precisará de buffer_before livre antes de começar e buffer_after livre após terminar
                     required_start = slot_start - buffer_before
                     required_end = slot_end + buffer_after
                     if not (required_end <= b_start or required_start >= b_end):
