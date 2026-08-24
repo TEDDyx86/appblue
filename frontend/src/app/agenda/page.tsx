@@ -110,6 +110,11 @@ interface CalendarSettingsData {
   max_future_days?: number
   timezone: string
   meeting_types: MeetingTypeItem[]
+  whatsapp_single_template?: string
+  whatsapp_header_template?: string
+  whatsapp_day_template?: string
+  whatsapp_item_template?: string
+  whatsapp_footer_template?: string
 }
 
 const DEFAULT_SCHEDULE: Record<string, DaySchedule> = {
@@ -128,6 +133,21 @@ const TIME_OPTIONS = [
   '13:00', '13:30', '14:00', '14:30', '15:00', '15:30',
   '16:00', '16:30', '17:00', '17:30', '18:00', '18:30',
   '19:00', '19:30', '20:00', '20:30', '21:00', '21:30', '22:00'
+]
+
+const AVAILABLE_TAGS = [
+  { tag: '{cliente}', label: 'Nome do Cliente', demo: 'Carlos Eduardo' },
+  { tag: '{assunto}', label: 'Assunto / Reunião', demo: 'R1 Planejamento Sucessório' },
+  { tag: '{horario}', label: 'Horário (Intervalo)', demo: '14:00 - 15:00' },
+  { tag: '{dia_semana}', label: 'Dia da Semana', demo: 'Segunda-feira' },
+  { tag: '{data}', label: 'Data Curta (Dia/Mês)', demo: '25/08' },
+  { tag: '{assessor}', label: 'Nome do Assessor / Org', demo: 'Investimentos Blue' },
+  { tag: '{deal}', label: 'Título do Deal', demo: 'Holding Familiar' },
+  { tag: '{deal_id}', label: 'ID do Deal', demo: '48' },
+  { tag: '{horario_inicio}', label: 'Hora Início', demo: '14:00' },
+  { tag: '{horario_fim}', label: 'Hora Término', demo: '15:00' },
+  { tag: '{duracao}', label: 'Duração', demo: '01:00' },
+  { tag: '{data_completa}', label: 'Data Completa', demo: '2026-08-25' },
 ]
 
 export default function AgendaPage() {
@@ -161,6 +181,17 @@ export default function AgendaPage() {
   // Modal / Form para Criar/Editar Tipo de Evento
   const [editingMeeting, setEditingMeeting] = useState<MeetingTypeItem | null>(null)
   const [isCreatingMeeting, setIsCreatingMeeting] = useState(false)
+
+  // Modal de Personalização de Templates do WhatsApp
+  const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false)
+  const [templateModalTab, setTemplateModalTab] = useState<'single' | 'consolidated'>('single')
+  const [tempSingleTpl, setTempSingleTpl] = useState('')
+  const [tempHeaderTpl, setTempHeaderTpl] = useState('')
+  const [tempDayTpl, setTempDayTpl] = useState('')
+  const [tempItemTpl, setTempItemTpl] = useState('')
+  const [tempFooterTpl, setTempFooterTpl] = useState('')
+  const [activeTemplateField, setActiveTemplateField] = useState<'single' | 'header' | 'day' | 'item' | 'footer'>('single')
+  const [templateSavedFeedback, setTemplateSavedFeedback] = useState(false)
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -359,6 +390,97 @@ export default function AgendaPage() {
     navigator.clipboard.writeText(whatsappConsolidated)
     setCopiedConsolidated(true)
     setTimeout(() => setCopiedConsolidated(false), 2500)
+  }
+
+  // Abertura e manipulação do Modal de Templates WhatsApp
+  const handleOpenTemplateModal = () => {
+    setTempSingleTpl(settings?.whatsapp_single_template || '{dia_semana} ({data}) {assunto} com {cliente} ({horario})')
+    setTempHeaderTpl(settings?.whatsapp_header_template || '📅 *Agenda de Atendimentos - Robson Vieira & {assessor}*\n')
+    setTempDayTpl(settings?.whatsapp_day_template || '🔹 *{dia_semana} ({data})*')
+    setTempItemTpl(settings?.whatsapp_item_template || '• {horario} | {assunto} com {cliente}')
+    setTempFooterTpl(settings?.whatsapp_footer_template !== undefined ? settings.whatsapp_footer_template : 'Qualquer dúvida ou ajuste de horário, estou à disposição! 🚀')
+    setIsTemplateModalOpen(true)
+    setTemplateSavedFeedback(false)
+  }
+
+  const handleInsertTag = (tag: string) => {
+    if (activeTemplateField === 'single') setTempSingleTpl((prev) => (prev ? prev + ' ' + tag : tag))
+    else if (activeTemplateField === 'header') setTempHeaderTpl((prev) => (prev ? prev + ' ' + tag : tag))
+    else if (activeTemplateField === 'day') setTempDayTpl((prev) => (prev ? prev + ' ' + tag : tag))
+    else if (activeTemplateField === 'item') setTempItemTpl((prev) => (prev ? prev + ' ' + tag : tag))
+    else if (activeTemplateField === 'footer') setTempFooterTpl((prev) => (prev ? prev + ' ' + tag : tag))
+  }
+
+  const handleResetDefaultTemplates = () => {
+    setTempSingleTpl('{dia_semana} ({data}) {assunto} com {cliente} ({horario})')
+    setTempHeaderTpl('📅 *Agenda de Atendimentos - Robson Vieira & {assessor}*\n')
+    setTempDayTpl('🔹 *{dia_semana} ({data})*')
+    setTempItemTpl('• {horario} | {assunto} com {cliente}')
+    setTempFooterTpl('Qualquer dúvida ou ajuste de horário, estou à disposição! 🚀')
+  }
+
+  const handleSaveTemplateSettings = async () => {
+    const current = settings || {
+      work_days: [1, 2, 3, 4, 5],
+      start_hour: '09:00',
+      end_hour: '18:00',
+      lunch_start: '12:00',
+      lunch_end: '13:00',
+      slot_duration_minutes: 60,
+      timezone: 'America/Sao_Paulo',
+      meeting_types: [],
+    }
+    const updatedSettings: CalendarSettingsData = {
+      ...current,
+      whatsapp_single_template: tempSingleTpl,
+      whatsapp_header_template: tempHeaderTpl,
+      whatsapp_day_template: tempDayTpl,
+      whatsapp_item_template: tempItemTpl,
+      whatsapp_footer_template: tempFooterTpl,
+    }
+    setSettings(updatedSettings)
+    await handleSaveSettings(undefined, updatedSettings)
+    await fetchActivities()
+    setTemplateSavedFeedback(true)
+    setTimeout(() => {
+      setTemplateSavedFeedback(false)
+      setIsTemplateModalOpen(false)
+    }, 900)
+  }
+
+  // Demo simulation helper
+  const formatDemoText = (tpl: string, customCtx?: Record<string, string>) => {
+    if (!tpl) return ''
+    const demoCtx: Record<string, string> = {
+      dia_semana: 'Segunda-feira',
+      dia: 'Segunda-feira',
+      day_of_week: 'Segunda-feira',
+      data: '25/08',
+      date_display: '25/08',
+      data_completa: '2026-08-25',
+      due_date: '2026-08-25',
+      horario: '14:00 - 15:00',
+      time_slot: '14:00 - 15:00',
+      horario_inicio: '14:00',
+      horario_fim: '15:00',
+      duracao: '01:00',
+      duration: '01:00',
+      cliente: 'Carlos Eduardo',
+      person_name: 'Carlos Eduardo',
+      assunto: 'R1 Planejamento Sucessório',
+      subject: 'R1 Planejamento Sucessório',
+      assessor: 'Investimentos Blue',
+      org_name: 'Investimentos Blue',
+      deal: 'Holding Familiar',
+      deal_title: 'Holding Familiar',
+      deal_id: '48',
+      ...customCtx,
+    }
+    let text = tpl
+    Object.entries(demoCtx).forEach(([k, v]) => {
+      text = text.replaceAll(`{${k}}`, v)
+    })
+    return text
   }
 
   // Filtra, deduplica e ordena atividades (excluindo concluídas/feitas)
@@ -823,18 +945,30 @@ export default function AgendaPage() {
                 {/* WhatsApp Preview & Fast Dispatch Box (1 coluna lateral) */}
                 <div className="lg:col-span-1 space-y-4">
                   <div className="bg-white dark:bg-[#000D38] rounded-2xl border border-slate-200/90 dark:border-[#002060] p-5 shadow-sm space-y-3 sticky top-24">
-                    <div className="flex items-center space-x-2.5 pb-3 border-b border-slate-100 dark:border-[#002060]">
-                      <div className="p-2 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 rounded-xl border border-emerald-200 dark:border-emerald-800/60">
-                        <MessageSquare className="w-4 h-4" />
+                    <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-[#002060]">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="p-2 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 rounded-xl border border-emerald-200 dark:border-emerald-800/60">
+                          <MessageSquare className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h3 className="text-xs font-bold text-slate-900 dark:text-white font-display">
+                            Mensagem WhatsApp
+                          </h3>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {selectedAssessor !== 'all' ? `Assessor: ${selectedAssessor}` : 'Visão Geral'}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="text-xs font-bold text-slate-900 dark:text-white font-display">
-                          Mensagem Pronta para WhatsApp
-                        </h3>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                          {selectedAssessor !== 'all' ? `Assessor: ${selectedAssessor}` : 'Visão Geral'}
-                        </p>
-                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleOpenTemplateModal}
+                        className="px-2.5 py-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-[#0092FF] dark:text-[#00FFFF] border border-blue-200 dark:border-blue-800/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-all text-xs font-bold flex items-center space-x-1.5"
+                        title="Personalizar texto e formato do WhatsApp"
+                      >
+                        <Sliders className="w-3.5 h-3.5" />
+                        <span>Alterar Template</span>
+                      </button>
                     </div>
 
                     {whatsappConsolidated ? (
@@ -1399,6 +1533,244 @@ export default function AgendaPage() {
           )}
         </main>
       </div>
+
+      {/* ========================================================================= */}
+      {/* MODAL DE PERSONALIZAÇÃO DE TEMPLATES DO WHATSAPP */}
+      {/* ========================================================================= */}
+      {isTemplateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fade-in overflow-y-auto">
+          <div className="bg-white dark:bg-[#000D38] border border-slate-200 dark:border-[#002060] rounded-3xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden my-auto">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-100 dark:border-[#002060] flex items-center justify-between bg-slate-50/50 dark:bg-[#00061A]/50">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 rounded-xl border border-emerald-200 dark:border-emerald-800/60">
+                  <MessageSquare className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white font-display">
+                    Personalizar Templates de Mensagem (WhatsApp)
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Edite o formato das mensagens automáticas e use as tags dinâmicas do sistema
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTemplateModalOpen(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-[#002060] transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-5 overflow-y-auto flex-1">
+              {/* Tab Selector inside Modal */}
+              <div className="flex items-center space-x-2 p-1 bg-slate-100 dark:bg-[#00061A] rounded-xl border border-slate-200 dark:border-[#002060]">
+                <button
+                  type="button"
+                  onClick={() => setTemplateModalTab('single')}
+                  className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center space-x-2 ${
+                    templateModalTab === 'single'
+                      ? 'bg-white dark:bg-[#002060] text-[#0092FF] dark:text-[#00FFFF] shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                  }`}
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  <span>1. Card Individual (Linha Única)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTemplateModalTab('consolidated')}
+                  className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center space-x-2 ${
+                    templateModalTab === 'consolidated'
+                      ? 'bg-white dark:bg-[#002060] text-[#0092FF] dark:text-[#00FFFF] shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                  }`}
+                >
+                  <CalendarRange className="w-3.5 h-3.5" />
+                  <span>2. Agenda Completa (Por Assessor)</span>
+                </button>
+              </div>
+
+              {/* Dynamic Tags Selector Bar */}
+              <div className="p-4 rounded-2xl bg-blue-50/60 dark:bg-[#00061A]/80 border border-blue-100 dark:border-[#002060] space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center space-x-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-[#0092FF]" />
+                    <span>Variáveis Disponíveis (Clique para Inserir no Texto):</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400">Substituídas dinamicamente</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {AVAILABLE_TAGS.map((item) => (
+                    <button
+                      key={item.tag}
+                      type="button"
+                      onClick={() => handleInsertTag(item.tag)}
+                      className="px-2.5 py-1 bg-white dark:bg-[#000D38] border border-blue-200 dark:border-[#002060] hover:border-[#0092FF] text-slate-800 dark:text-slate-200 rounded-lg text-[11px] font-mono font-bold transition-all flex items-center space-x-1.5 shadow-2xs hover:scale-105 active:scale-95"
+                      title={`${item.label} (Exemplo real: "${item.demo}")`}
+                    >
+                      <span className="text-[#0092FF] dark:text-[#00FFFF] font-bold">+</span>
+                      <span>{item.tag}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* TAB 1: Template Card Individual */}
+              {templateModalTab === 'single' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5">
+                      Texto do Botão "Copiar p/ Whats" de cada atividade
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={tempSingleTpl}
+                      onFocus={() => setActiveTemplateField('single')}
+                      onChange={(e) => setTempSingleTpl(e.target.value)}
+                      placeholder="{dia_semana} ({data}) {assunto} com {cliente} ({horario})"
+                      className="w-full p-3.5 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-mono text-slate-800 dark:text-slate-200 outline-none focus:ring-2 focus:ring-[#0092FF]"
+                    />
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                      Padrão sugerido: <code className="text-[#0092FF]">{`{dia_semana} ({data}) {assunto} com {cliente} ({horario})`}</code>
+                    </p>
+                  </div>
+
+                  {/* Live Simulation Card */}
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                      📱 Prévia em Tempo Real
+                    </span>
+                    <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-[#042417] border border-emerald-200 dark:border-emerald-800/60 text-xs font-mono text-emerald-950 dark:text-emerald-200 shadow-inner">
+                      {formatDemoText(tempSingleTpl) || <span className="text-slate-400 italic">Digite algo acima para simular...</span>}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: Template Consolidado do Assessor */}
+              {templateModalTab === 'consolidated' && (
+                <div className="space-y-4">
+                  {/* 1. Cabeçalho */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                      1. Cabeçalho do Relatório
+                    </label>
+                    <input
+                      type="text"
+                      value={tempHeaderTpl}
+                      onFocus={() => setActiveTemplateField('header')}
+                      onChange={(e) => setTempHeaderTpl(e.target.value)}
+                      placeholder="📅 *Agenda de Atendimentos - Robson Vieira & {assessor}*"
+                      className="w-full p-2.5 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-mono text-slate-800 dark:text-slate-200 outline-none focus:ring-2 focus:ring-[#0092FF]"
+                    />
+                  </div>
+
+                  {/* 2. Título do Dia */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                      2. Título do Dia da Semana
+                    </label>
+                    <input
+                      type="text"
+                      value={tempDayTpl}
+                      onFocus={() => setActiveTemplateField('day')}
+                      onChange={(e) => setTempDayTpl(e.target.value)}
+                      placeholder="🔹 *{dia_semana} ({data})*"
+                      className="w-full p-2.5 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-mono text-slate-800 dark:text-slate-200 outline-none focus:ring-2 focus:ring-[#0092FF]"
+                    />
+                  </div>
+
+                  {/* 3. Item / Reunião */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                      3. Formato de Cada Reunião (Linha de Atendimento)
+                    </label>
+                    <input
+                      type="text"
+                      value={tempItemTpl}
+                      onFocus={() => setActiveTemplateField('item')}
+                      onChange={(e) => setTempItemTpl(e.target.value)}
+                      placeholder="• {horario} | {assunto} com {cliente}"
+                      className="w-full p-2.5 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-mono text-slate-800 dark:text-slate-200 outline-none focus:ring-2 focus:ring-[#0092FF]"
+                    />
+                  </div>
+
+                  {/* 4. Rodapé */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                      4. Rodapé / Fechamento da Mensagem
+                    </label>
+                    <input
+                      type="text"
+                      value={tempFooterTpl}
+                      onFocus={() => setActiveTemplateField('footer')}
+                      onChange={(e) => setTempFooterTpl(e.target.value)}
+                      placeholder="Qualquer dúvida ou ajuste de horário, estou à disposição! 🚀"
+                      className="w-full p-2.5 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-mono text-slate-800 dark:text-slate-200 outline-none focus:ring-2 focus:ring-[#0092FF]"
+                    />
+                  </div>
+
+                  {/* Live Simulation Consolidated */}
+                  <div className="space-y-1.5 pt-1">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                      📱 Prévia da Mensagem Consolidada
+                    </span>
+                    <div className="p-3.5 rounded-xl bg-slate-100 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] text-xs font-mono text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed max-h-[220px] overflow-y-auto">
+                      {(formatDemoText(tempHeaderTpl) ? formatDemoText(tempHeaderTpl) + '\n\n' : '') +
+                        (formatDemoText(tempDayTpl) ? formatDemoText(tempDayTpl) + '\n' : '') +
+                        (formatDemoText(tempItemTpl) ? formatDemoText(tempItemTpl) + '\n' : '') +
+                        (formatDemoText(tempItemTpl, {
+                          horario: '16:00 - 17:00',
+                          assunto: 'Revisão de Carteira',
+                          cliente: 'Mariana Costa'
+                        }) ? formatDemoText(tempItemTpl, {
+                          horario: '16:00 - 17:00',
+                          assunto: 'Revisão de Carteira',
+                          cliente: 'Mariana Costa'
+                        }) + '\n\n' : '') +
+                        (formatDemoText(tempFooterTpl) || '')}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-100 dark:border-[#002060] flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-50/50 dark:bg-[#00061A]/50">
+              <button
+                type="button"
+                onClick={handleResetDefaultTemplates}
+                className="text-xs font-bold text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white underline self-start sm:self-auto"
+              >
+                Restaurar Padrão do Sistema
+              </button>
+
+              <div className="flex items-center space-x-2 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setIsTemplateModalOpen(false)}
+                  className="flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-[#002060] transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveTemplateSettings}
+                  disabled={savingSettings}
+                  className="flex-1 sm:flex-initial px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/25 transition-all flex items-center justify-center space-x-1.5"
+                >
+                  {templateSavedFeedback ? <CheckCheck className="w-4 h-4" /> : <Check className="w-4 h-4" />}
+                  <span>{templateSavedFeedback ? 'Salvo com Sucesso!' : 'Salvar Templates'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
