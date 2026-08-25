@@ -924,15 +924,23 @@ async def process_new_transcription(user_id: Optional[str] = None) -> Dict[str, 
             # Extrai data da reunião em formato YYYY-MM-DD
             meeting_date_str = (created_time[:10] if created_time else None) or datetime.now().strftime("%Y-%m-%d")
             
-            # Verifica se já foi processado com sucesso
+            # Verifica se já foi processado com sucesso ou se foi ignorado/desvinculado/excluído
             existing = supabase.table("transcriptions").select("id, processing_status, briefing_json").eq(
                 "google_doc_id", google_doc_id
             ).execute()
             
             existing_record = existing.data[0] if existing.data else None
-            if existing_record and existing_record.get("processing_status") == "completed" and existing_record.get("briefing_json"):
-                stats["already_existing"] += 1
-                continue
+            if existing_record:
+                ex_status = existing_record.get("processing_status")
+                ex_briefing = existing_record.get("briefing_json") or {}
+                
+                # Se já foi completado com briefing, ou marcado como ignorado/desvinculado/excluído, não reprocessa nem recria atividade
+                if ex_status in ["completed", "ignored"] and ex_briefing:
+                    stats["already_existing"] += 1
+                    continue
+                if ex_briefing.get("is_ignored") or ex_briefing.get("manually_unlinked") or ex_briefing.get("is_deleted"):
+                    stats["already_existing"] += 1
+                    continue
                 
             logger.info(f"Processando arquivo do Drive: {meeting_title}")
             
@@ -968,12 +976,25 @@ async def process_new_transcription(user_id: Optional[str] = None) -> Dict[str, 
                 cliente_nome = briefing_json["dados_cliente"]["nome"]
                 cliente_email = briefing_json["dados_cliente"].get("email")
                 
+                # Preserva flags de controle prévias caso existam
+                if existing_record and existing_record.get("briefing_json"):
+                    prev_b = existing_record["briefing_json"]
+                    if prev_b.get("is_ignored"):
+                        briefing_json["is_ignored"] = True
+                    if prev_b.get("manually_unlinked"):
+                        briefing_json["manually_unlinked"] = True
+                    if prev_b.get("is_deleted"):
+                        briefing_json["is_deleted"] = True
+                
                 person_id = None
                 deal_id = None
                 activity_id = None
                 matching_confidence = 0.0
                 
-                if cliente_nome and len(cliente_nome) > 2:
+                # Não cria atividade se o arquivo estiver marcado como ignorado ou desvinculado
+                should_link_crm = not briefing_json.get("is_ignored") and not briefing_json.get("manually_unlinked") and not briefing_json.get("is_deleted")
+                
+                if should_link_crm and cliente_nome and len(cliente_nome) > 2:
                     # Busca no Pipedrive
                     person_results = await search_pipedrive_person(cliente_nome, cliente_email)
                     
@@ -1905,6 +1926,7 @@ async def get_transcriptions(
             created_at=t["created_at"]
         )
         for t in response.data
+        if not (t.get("briefing_json") or {}).get("is_deleted", False)
     ]
 
 @app.post("/api/transcriptions/{transcription_id}/assign")
@@ -1976,12 +1998,15 @@ async def assign_transcription_to_crm(
     if not client_name:
         client_name = briefing_json.get("dados_cliente", {}).get("nome") or "Cliente"
         
-    # 5. Atualiza briefing_json com Pipedrive URLs
+    # 5. Atualiza briefing_json com Pipedrive URLs e limpa flags de ignore/unlinked
     if "pipedrive" not in briefing_json:
         briefing_json["pipedrive"] = {}
     if "dados_cliente" not in briefing_json:
         briefing_json["dados_cliente"] = {}
         
+    briefing_json["is_ignored"] = False
+    briefing_json["manually_unlinked"] = False
+    briefing_json["is_deleted"] = False
     briefing_json["dados_cliente"]["nome"] = client_name
     briefing_json["pipedrive"]["person_id"] = str(person_id) if person_id else None
     briefing_json["pipedrive"]["deal_id"] = str(deal_id) if deal_id else None
@@ -2071,7 +2096,7 @@ async def unlink_transcription_from_crm(
     delete_note: bool = True,
     user: dict = Depends(require_admin)
 ):
-    """Desvincula uma transcrição do Pipedrive e exclui a atividade associada no CRM"""
+    """Desvincula uma transcrição do Pipedrive, exclui a atividade associada no CRM e impede reenvio automático"""
     t_res = supabase.table("transcriptions").select("*").eq("id", transcription_id).execute()
     if not t_res.data:
         raise HTTPException(status_code=404, detail="Transcrição não encontrada")
@@ -2095,7 +2120,8 @@ async def unlink_transcription_from_crm(
     if delete_note and old_note_id:
         note_deleted = await delete_pipedrive_note(old_note_id)
         
-    # 3. Limpa os vínculos no briefing_json
+    # 3. Limpa os vínculos no briefing_json e marca flag de desvinculação manual
+    briefing_json["manually_unlinked"] = True
     briefing_json["pipedrive"] = {
         "person_id": None,
         "deal_id": None,
@@ -2105,9 +2131,9 @@ async def unlink_transcription_from_crm(
         "note_id": None
     }
     
-    # 4. Atualiza registro da Transcrição
+    # 4. Atualiza registro da Transcrição mantendo 'completed' para a sincronização contínua NÃO reenviar
     supabase.table("transcriptions").update({
-        "processing_status": "pending",
+        "processing_status": "completed",
         "briefing_json": briefing_json
     }).eq("id", transcription_id).execute()
     
@@ -2140,7 +2166,7 @@ async def toggle_ignore_transcription(
     transcription_id: str,
     user: dict = Depends(require_admin)
 ):
-    """Alterna o status de ignorada/reunião interna de uma transcrição para não gerar alertas ou pendências"""
+    """Alterna o status de ignorada/reunião interna de uma transcrição, removendo atividade do Pipedrive se marcada como ignorada"""
     t_res = supabase.table("transcriptions").select("*").eq("id", transcription_id).execute()
     if not t_res.data:
         raise HTTPException(status_code=404, detail="Transcrição não encontrada")
@@ -2148,12 +2174,26 @@ async def toggle_ignore_transcription(
     t = t_res.data[0]
     briefing_json = t.get("briefing_json") or {}
     meeting_title = t.get("meeting_title") or "Reunião"
+    pipe_info = briefing_json.get("pipedrive") or {}
+    old_activity_id = pipe_info.get("activity_id")
     
     current_ignored = briefing_json.get("is_ignored", False)
     new_ignored = not current_ignored
     briefing_json["is_ignored"] = new_ignored
     
+    act_deleted = False
+    if new_ignored:
+        # Se for marcada como ignorada / reunião interna, remove a atividade existente do Pipedrive para não poluir o CRM
+        if old_activity_id:
+            act_deleted = await delete_pipedrive_activity(old_activity_id)
+            if "pipedrive" in briefing_json:
+                briefing_json["pipedrive"]["activity_id"] = None
+                briefing_json["pipedrive"]["activity_subject"] = None
+                briefing_json["pipedrive"]["activity_type"] = None
+                briefing_json["pipedrive"]["activity_date"] = None
+    
     supabase.table("transcriptions").update({
+        "processing_status": "completed",
         "briefing_json": briefing_json
     }).eq("id", transcription_id).execute()
     
@@ -2167,15 +2207,75 @@ async def toggle_ignore_transcription(
         details={
             "doc_title": meeting_title,
             "is_ignored": new_ignored,
-            "summary": f"Transcrição '{meeting_title}' {action_text} por Robson."
+            "old_activity_id": old_activity_id,
+            "activity_deleted_from_crm": act_deleted,
+            "summary": f"Transcrição '{meeting_title}' {action_text} por Robson" + (f" (atividade #{old_activity_id} removida do Pipedrive)." if act_deleted else ".")
         }
     )
     
     return {
         "status": "success",
         "is_ignored": new_ignored,
-        "message": f"Transcrição {action_text} com sucesso.",
+        "activity_deleted": act_deleted,
+        "message": f"Transcrição {action_text} com sucesso" + (" e atividade removida do Pipedrive." if act_deleted else "."),
         "briefing_json": briefing_json
+    }
+
+@app.delete("/api/transcriptions/{transcription_id}")
+async def delete_transcription_endpoint(
+    transcription_id: str,
+    user: dict = Depends(require_admin)
+):
+    """Exclui/oculta uma transcrição e remove sua atividade associada no Pipedrive com proteção contra reimportação do Google Drive"""
+    t_res = supabase.table("transcriptions").select("*").eq("id", transcription_id).execute()
+    if not t_res.data:
+        raise HTTPException(status_code=404, detail="Transcrição não encontrada")
+        
+    t = t_res.data[0]
+    briefing_json = t.get("briefing_json") or {}
+    meeting_title = t.get("meeting_title") or "Reunião"
+    pipe_info = briefing_json.get("pipedrive") or {}
+    activity_id = pipe_info.get("activity_id")
+    
+    # 1. Apaga do Pipedrive se houver atividade
+    act_deleted = False
+    if activity_id:
+        act_deleted = await delete_pipedrive_activity(activity_id)
+        
+    # 2. Marca flags de controle para não exibir no painel e não ser re-sincronizado pelo auto-sync
+    briefing_json["is_deleted"] = True
+    briefing_json["is_ignored"] = True
+    briefing_json["manually_unlinked"] = True
+    briefing_json["pipedrive"] = {
+        "person_id": None,
+        "deal_id": None,
+        "person_url": None,
+        "deal_url": None,
+        "activity_id": None,
+        "note_id": None
+    }
+    
+    supabase.table("transcriptions").update({
+        "processing_status": "completed",
+        "briefing_json": briefing_json
+    }).eq("id", transcription_id).execute()
+    
+    log_audit_event(
+        action="TRANSCRIPTION_DELETED",
+        resource_type="transcription",
+        resource_id=transcription_id,
+        user_id=user.get("id", user.get("sub")),
+        details={
+            "doc_title": meeting_title,
+            "activity_deleted": act_deleted,
+            "summary": f"Transcrição '{meeting_title}' excluída do painel por Robson" + (f" (atividade #{activity_id} removida do Pipedrive)." if act_deleted else ".")
+        }
+    )
+    
+    return {
+        "status": "success",
+        "message": "Transcrição excluída com sucesso" + (" e atividade removida do Pipedrive." if act_deleted else "."),
+        "activity_deleted": act_deleted
     }
 
 @app.get("/api/pipeline-activities")
