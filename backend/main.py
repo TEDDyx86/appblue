@@ -1203,10 +1203,28 @@ def format_whatsapp_template(template_str: str, ctx: Dict[str, Any]) -> str:
         result = result.replace(f"{{{k}}}", str(v))
     return result
 
+DEFAULT_ACTIVITY_TYPES_MAP = {
+    "meeting": {"name": "R1", "icon_key": "meeting"},
+    "reuniao_2": {"name": "R2", "icon_key": "document"},
+    "r3": {"name": "R3", "icon_key": "finish"},
+    "tactiq": {"name": "Tactiq", "icon_key": "checkbox"},
+    "call": {"name": "Chamada", "icon_key": "call"},
+    "whatsapp": {"name": "WhatsApp", "icon_key": "smartphone"},
+    "email": {"name": "E-mail", "icon_key": "email"},
+    "task": {"name": "Tarefa", "icon_key": "task"},
+    "deadline": {"name": "Prazo", "icon_key": "deadline"},
+    "teams": {"name": "Teams", "icon_key": "clip"},
+    "no_show": {"name": "R1 No Show", "icon_key": "scissors"},
+    "r2_no_show": {"name": "R2 No Show", "icon_key": "scissors"},
+    "r3_no_show": {"name": "R3 No Show", "icon_key": "scissors"}
+}
+
 @app.get("/api/pipedrive/activities")
 async def list_pipedrive_activities(
     assessor_name: Optional[str] = None,
     assessor_id: Optional[int] = None,
+    activity_type: Optional[str] = None,
+    tag: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     period: Optional[str] = None,
@@ -1215,7 +1233,7 @@ async def list_pipedrive_activities(
 ):
     """
     Lista atividades do Pipedrive com suporte a paginação completa,
-    filtros por período (esta semana, este mês, etc.), assessor e geração de template WhatsApp.
+    filtros por período (esta semana, este mês, etc.), assessor, tags/tipos de atividade e geração de template WhatsApp.
     """
     try:
         cal_settings = get_calendar_settings_data()
@@ -1259,8 +1277,8 @@ async def list_pipedrive_activities(
             computed_start = (now - timedelta(days=30)).strftime("%Y-%m-%d")
             computed_end = (now + timedelta(days=90)).strftime("%Y-%m-%d")
 
-        # Busca organizações (Assessores) cadastradas
         async with httpx.AsyncClient() as client:
+            # 1. Busca organizações (Assessores) cadastradas
             orgs_res = await client.get(
                 "https://api.pipedrive.com/v1/organizations",
                 params={"api_token": PIPEDRIVE_API_TOKEN, "limit": 100}
@@ -1268,7 +1286,15 @@ async def list_pipedrive_activities(
             all_orgs = (orgs_res.json().get("data") or []) if orgs_res.status_code == 200 else []
             assessores_map = {o["id"]: o["name"] for o in all_orgs if o.get("name")}
             
-            # Paginação sobre as atividades no Pipedrive (até 500 registros)
+            # 2. Busca Tipos/Tags de Atividades cadastrados no Pipedrive
+            types_res = await client.get(
+                "https://api.pipedrive.com/v1/activityTypes",
+                params={"api_token": PIPEDRIVE_API_TOKEN}
+            )
+            raw_types = (types_res.json().get("data") or []) if types_res.status_code == 200 else []
+            types_map = {t["key_string"]: t for t in raw_types if t.get("key_string")}
+            
+            # 3. Paginação sobre as atividades no Pipedrive (até 500 registros)
             all_raw_activities = []
             start_offset = 0
             
@@ -1305,6 +1331,9 @@ async def list_pipedrive_activities(
                 
             formatted_activities = []
             assessores_count: Dict[str, Dict[str, Any]] = {}
+            types_count: Dict[str, Dict[str, Any]] = {}
+            
+            selected_tag_filter = tag or activity_type
             
             for a in all_raw_activities:
                 # Rejeita concluídas
@@ -1314,12 +1343,18 @@ async def list_pipedrive_activities(
                 org_name = a.get("org_name") or (assessores_map.get(a.get("org_id")) if a.get("org_id") else None)
                 org_id = a.get("org_id")
                 person_name = a.get("person_name")
+                raw_act_type = a.get("type") or "meeting"
                 
                 # Filtro: Apenas com cliente e assessor (organização) definidos
                 if not person_name or not org_name or org_name == "Sem Assessor":
                     continue
                     
-                # Atualiza contagem por assessor
+                # Mapeia nome legível e ícone da Tag / Tipo
+                t_info = types_map.get(raw_act_type) or DEFAULT_ACTIVITY_TYPES_MAP.get(raw_act_type) or {"name": raw_act_type.capitalize(), "icon_key": "tag"}
+                t_name = t_info.get("name") or raw_act_type.capitalize()
+                t_icon = t_info.get("icon_key") or "tag"
+                
+                # Atualiza contagem global por assessor
                 if org_name not in assessores_count:
                     assessores_count[org_name] = {
                         "id": org_id,
@@ -1328,10 +1363,24 @@ async def list_pipedrive_activities(
                     }
                 assessores_count[org_name]["count"] += 1
                 
+                # Atualiza contagem global por Tag / Tipo de Atividade
+                if raw_act_type not in types_count:
+                    types_count[raw_act_type] = {
+                        "key": raw_act_type,
+                        "name": t_name,
+                        "icon": t_icon,
+                        "count": 0
+                    }
+                types_count[raw_act_type]["count"] += 1
+                
                 # Filtro por assessor selecionado
                 if assessor_name and assessor_name != "all" and org_name != assessor_name:
                     continue
                 if assessor_id and org_id != assessor_id:
+                    continue
+                    
+                # Filtro por Tag / Tipo de atividade
+                if selected_tag_filter and selected_tag_filter != "all" and raw_act_type != selected_tag_filter:
                     continue
                     
                 due_date_str = a.get("due_date") or ""
@@ -1370,7 +1419,6 @@ async def list_pipedrive_activities(
                 deal_title = a.get("deal_title")
                 deal_id = a.get("deal_id")
                 subj = a.get("subject") or "Reunião"
-                act_type = a.get("type") or "meeting"
                 
                 act_ctx = {
                     "day_name": day_name,
@@ -1393,7 +1441,9 @@ async def list_pipedrive_activities(
                 
                 formatted_activities.append({
                     "id": str(a.get("id")),
-                    "type": act_type,
+                    "type": raw_act_type,
+                    "type_name": t_name,
+                    "type_icon": t_icon,
                     "subject": subj,
                     "due_date": due_date_str,
                     "due_time": due_time_str,
@@ -1465,9 +1515,16 @@ async def list_pipedrive_activities(
                 key=lambda x: -x["count"]
             )
             
+            # Retorna tags/tipos de atividades ordenados por contagem (maiores primeiro)
+            tags_list = sorted(
+                [t for t in types_count.values() if t["count"] > 0],
+                key=lambda x: -x["count"]
+            )
+            
             return {
                 "activities": formatted_activities,
                 "assessores": assessores_list,
+                "tags": tags_list,
                 "whatsapp_consolidated": whatsapp_consolidated,
                 "templates": {
                     "whatsapp_single_template": tpl_single,

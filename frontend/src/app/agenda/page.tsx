@@ -42,12 +42,16 @@ import {
   ToggleLeft,
   ToggleRight,
   Eye,
+  Tag,
+  Bookmark,
 } from 'lucide-react'
 import { useTheme } from '@/context/ThemeContext'
 
 interface PipedriveActivity {
   id: string
   type: string
+  type_name?: string
+  type_icon?: string
   subject: string
   due_date: string
   due_time: string
@@ -65,6 +69,13 @@ interface PipedriveActivity {
   deal_url?: string
   done: boolean
   whatsapp_template: string
+}
+
+interface TagItem {
+  key: string
+  name: string
+  count: number
+  icon?: string
 }
 
 interface AssessorItem {
@@ -150,6 +161,32 @@ const AVAILABLE_TAGS = [
   { tag: '{data_completa}', label: 'Data Completa', demo: '2026-08-25' },
 ]
 
+const getTagBadgeStyle = (typeKey: string) => {
+  switch (typeKey?.toLowerCase()) {
+    case 'meeting':
+    case 'r1':
+      return 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800/60'
+    case 'reuniao_2':
+    case 'r2':
+      return 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800/60'
+    case 'r3':
+      return 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800/60'
+    case 'tactiq':
+      return 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/60'
+    case 'call':
+      return 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800/60'
+    case 'whatsapp':
+      return 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/60'
+    case 'email':
+      return 'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800/60'
+    case 'deadline':
+      return 'bg-orange-50 dark:bg-orange-950/60 text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-800/60'
+    case 'task':
+    default:
+      return 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+  }
+}
+
 export default function AgendaPage() {
   const router = useRouter()
   const { theme, isDark, toggleTheme } = useTheme()
@@ -159,9 +196,11 @@ export default function AgendaPage() {
   // Activities from Pipedrive State
   const [activities, setActivities] = useState<PipedriveActivity[]>([])
   const [assessores, setAssessores] = useState<AssessorItem[]>([])
+  const [tags, setTags] = useState<TagItem[]>([])
   const [whatsappConsolidated, setWhatsappConsolidated] = useState('')
   const [loadingActivities, setLoadingActivities] = useState(true)
   const [selectedAssessor, setSelectedAssessor] = useState<string>('all')
+  const [selectedTag, setSelectedTag] = useState<string>('all')
   const [periodFilter, setPeriodFilter] = useState<'next_30_days' | 'this_week' | 'next_week' | 'this_month' | 'all'>('all')
   const [activitySearch, setActivitySearch] = useState('')
   const [activitySortBy, setActivitySortBy] = useState<'date_asc' | 'date_desc' | 'assessor_az' | 'client_az'>('date_asc')
@@ -215,6 +254,9 @@ export default function AgendaPage() {
       if (selectedAssessor !== 'all') {
         params.assessor_name = selectedAssessor
       }
+      if (selectedTag !== 'all') {
+        params.tag = selectedTag
+      }
 
       const res = await axios.get(`${API_URL}/api/pipedrive/activities`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -223,6 +265,7 @@ export default function AgendaPage() {
 
       setActivities(res.data.activities || [])
       setAssessores(res.data.assessores || [])
+      setTags(res.data.tags || [])
       setWhatsappConsolidated(res.data.whatsapp_consolidated || '')
     } catch (err: any) {
       if (err.response?.status === 401) {
@@ -232,7 +275,7 @@ export default function AgendaPage() {
     } finally {
       setLoadingActivities(false)
     }
-  }, [API_URL, router, selectedAssessor, periodFilter])
+  }, [API_URL, router, selectedAssessor, selectedTag, periodFilter])
 
   // Carrega configurações de booking
   const fetchSettings = useCallback(async () => {
@@ -492,6 +535,7 @@ export default function AgendaPage() {
 
       if (a.done) return false
       if (!a.person_name || !a.org_name || a.org_name === 'Sem Assessor') return false
+      if (selectedTag !== 'all' && a.type !== selectedTag) return false
 
       if (!activitySearch.trim()) return true
       const q = activitySearch.toLowerCase().trim()
@@ -518,7 +562,7 @@ export default function AgendaPage() {
       }
       return 0
     })
-  }, [activities, activitySearch, activitySortBy])
+  }, [activities, activitySearch, activitySortBy, selectedTag])
 
   // Agrupa atividades por data para o calendário
   const groupedByDate = useMemo(() => {
@@ -689,10 +733,10 @@ export default function AgendaPage() {
                   )}
                 </div>
 
-                {/* Período e Seletor Principal de Assessor */}
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-1">
-                  {/* Seletor Dropdown de Assessor (Elimina scroll horizontal) */}
-                  <div className="flex items-center space-x-2 flex-1">
+                {/* Período, Seletor de Assessor e Seletor de Tag / Tipo */}
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-3 pt-1">
+                  {/* Seletor Dropdown de Assessor */}
+                  <div className="md:col-span-4 flex items-center space-x-2">
                     <span className="text-xs font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap flex items-center space-x-1.5">
                       <Building2 className="w-3.5 h-3.5 text-[#0092FF]" />
                       <span>Assessor:</span>
@@ -700,9 +744,9 @@ export default function AgendaPage() {
                     <select
                       value={selectedAssessor}
                       onChange={(e) => setSelectedAssessor(e.target.value)}
-                      className="w-full sm:max-w-xs px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-[#0092FF] outline-none transition-all"
+                      className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-[#0092FF] outline-none transition-all"
                     >
-                      <option value="all">🏢 Todos os Assessores ({filteredActivities.length})</option>
+                      <option value="all">🏢 Todos os Assessores ({assessores.reduce((acc, a) => acc + a.count, 0)})</option>
                       {assessores.map((a) => (
                         <option key={a.name} value={a.name}>
                           {a.name} ({a.count} {a.count === 1 ? 'em aberto' : 'em aberto'})
@@ -711,9 +755,29 @@ export default function AgendaPage() {
                     </select>
                   </div>
 
+                  {/* Seletor Dropdown de Tag / Tipo de Atividade */}
+                  <div className="md:col-span-4 flex items-center space-x-2">
+                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap flex items-center space-x-1.5">
+                      <Tag className="w-3.5 h-3.5 text-[#0092FF]" />
+                      <span>Tag / Tipo:</span>
+                    </span>
+                    <select
+                      value={selectedTag}
+                      onChange={(e) => setSelectedTag(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-[#0092FF] outline-none transition-all"
+                    >
+                      <option value="all">🏷️ Todas as Tags ({tags.reduce((acc, t) => acc + t.count, 0)})</option>
+                      {tags.map((t) => (
+                        <option key={t.key} value={t.key}>
+                          {t.name} ({t.count} {t.count === 1 ? 'em aberto' : 'em aberto'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   {/* Period Selector Tabs */}
-                  <div className="flex items-center gap-1 overflow-x-auto text-xs">
-                    <span className="text-slate-400 font-bold mr-1 text-[11px]">Período:</span>
+                  <div className="md:col-span-4 flex items-center gap-1 overflow-x-auto text-xs justify-start md:justify-end">
+                    <span className="text-slate-400 font-bold mr-1 text-[11px] whitespace-nowrap">Período:</span>
                     {[
                       { key: 'all', label: 'Todas' },
                       { key: 'this_week', label: 'Esta Semana' },
@@ -737,9 +801,58 @@ export default function AgendaPage() {
                   </div>
                 </div>
 
+                {/* Atalhos de Tags (Apenas tags em uso com contagem) */}
+                {tags.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100 dark:border-[#002060]/70">
+                    <span className="text-[11px] font-bold text-slate-400 mr-1 flex items-center space-x-1">
+                      <Tag className="w-3 h-3 text-[#0092FF]" />
+                      <span>Tags:</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTag('all')}
+                      className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 ${
+                        selectedTag === 'all'
+                          ? 'bg-[#0092FF] text-white shadow-xs'
+                          : 'bg-slate-100 dark:bg-[#00061A] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#002060] hover:bg-slate-200 dark:hover:bg-[#002060]'
+                      }`}
+                    >
+                      <span>Todas</span>
+                    </button>
+
+                    {tags.map((t) => {
+                      const isSelected = selectedTag === t.key
+                      return (
+                        <button
+                          key={t.key}
+                          type="button"
+                          onClick={() => setSelectedTag(isSelected ? 'all' : t.key)}
+                          className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 ${
+                            isSelected
+                              ? 'bg-[#0092FF] text-white shadow-xs'
+                              : 'bg-slate-100 dark:bg-[#00061A] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#002060] hover:bg-slate-200 dark:hover:bg-[#002060]'
+                          }`}
+                        >
+                          <span>{t.name}</span>
+                          <span
+                            className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                              isSelected ? 'bg-white/25 text-white' : 'bg-slate-200 dark:bg-[#002060] text-slate-600 dark:text-slate-400'
+                            }`}
+                          >
+                            {t.count}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+
                 {/* Top Assessores em Grade Envolvente (Wrap Pills) */}
                 <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100 dark:border-[#002060]/70">
-                  <span className="text-[11px] font-bold text-slate-400 mr-1">Atalhos:</span>
+                  <span className="text-[11px] font-bold text-slate-400 mr-1 flex items-center space-x-1">
+                    <Building2 className="w-3 h-3 text-[#0092FF]" />
+                    <span>Assessores:</span>
+                  </span>
                   <button
                     type="button"
                     onClick={() => setSelectedAssessor('all')}
@@ -752,13 +865,13 @@ export default function AgendaPage() {
                     <span>Todos</span>
                   </button>
 
-                  {assessores.slice(0, 7).map((assessor) => {
+                  {assessores.slice(0, 8).map((assessor) => {
                     const isSelected = selectedAssessor === assessor.name
                     return (
                       <button
                         key={assessor.name}
                         type="button"
-                        onClick={() => setSelectedAssessor(assessor.name)}
+                        onClick={() => setSelectedAssessor(isSelected ? 'all' : assessor.name)}
                         className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 ${
                           isSelected
                             ? 'bg-[#0092FF] text-white shadow-xs'
@@ -865,6 +978,15 @@ export default function AgendaPage() {
                                 <div className="min-w-0 flex-1">
                                   {/* Badges & Meta */}
                                   <div className="flex flex-wrap items-center gap-2 mb-1">
+                                    {/* Tag / Type badge */}
+                                    <span
+                                      className={`text-[10px] font-bold px-2 py-0.5 rounded border flex items-center space-x-1 ${getTagBadgeStyle(act.type)}`}
+                                      title={`Tag / Tipo de Atividade: ${act.type_name || act.type}`}
+                                    >
+                                      <Tag className="w-2.5 h-2.5" />
+                                      <span>{act.type_name || act.type}</span>
+                                    </span>
+
                                     {/* Time badge */}
                                     <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-[#0092FF] dark:text-[#00FFFF] border border-blue-200 dark:border-blue-800/60 font-mono flex items-center space-x-1">
                                       <Clock className="w-3 h-3" />
