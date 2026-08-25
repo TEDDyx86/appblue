@@ -524,50 +524,75 @@ async def get_pipedrive_deal(deal_id: str) -> Optional[Dict]:
         return data.get("data") if data.get("success") else None
 
 async def create_pipedrive_activity(
-    person_id: Optional[str] = None,
-    deal_id: Optional[str] = None,
-    subject: str = "",
+    subject: str = "Transcrição Tactiq",
+    activity_type: str = "tactiq",
     due_date: Optional[str] = None,
-    note: str = "",
-    activity_type: str = "meeting"
+    due_time: Optional[str] = None,
+    duration: Optional[str] = None,
+    note_content: Optional[str] = None,
+    note: Optional[str] = None,
+    deal_id: Optional[str] = None,
+    person_id: Optional[str] = None,
+    org_id: Optional[str] = None,
+    done: bool = True
 ) -> Optional[Dict]:
     """
-    Cria Activity no Pipedrive usando API v2.
-    
-    API v2 changes:
-    - Endpoint: /api/v2/activities
-    - Método: POST
-    - Boolean values: usar true/false (não 1/0)
+    Cria Activity no Pipedrive com suporte a tipo, notas ricas e vinculação de participantes.
     """
-    
+    if not PIPEDRIVE_API_TOKEN:
+        logger.warning("PIPEDRIVE_API_TOKEN não configurado")
+        return None
+        
     payload = {
-        "type": activity_type,
-        "subject": subject,
-        "note": note,
+        "type": activity_type or "tactiq",
+        "subject": subject or "Transcrição Tactiq",
+        "done": 1 if done else 0,
+        "note": note_content or note or "",
     }
     
-    if person_id:
-        p_id = int(person_id) if str(person_id).isdigit() else person_id
-        payload["person_id"] = p_id
-        payload["participants"] = [{"person_id": p_id, "primary": True}]
-    if deal_id:
-        payload["deal_id"] = int(deal_id) if str(deal_id).isdigit() else deal_id
     if due_date:
         payload["due_date"] = due_date
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{PIPEDRIVE_BASE_URL}/activities",
-            params={"api_token": PIPEDRIVE_API_TOKEN},
-            json=payload
-        )
+    if due_time:
+        payload["due_time"] = due_time
+    if duration:
+        payload["duration"] = duration
         
-        if response.status_code not in [200, 201]:
-            logger.error(f"Erro ao criar Activity: {response.text}")
-            return None
-        
-        data = response.json()
-        return data.get("data") if data.get("success") else None
+    if deal_id:
+        try:
+            payload["deal_id"] = int(deal_id)
+        except (ValueError, TypeError):
+            payload["deal_id"] = deal_id
+            
+    if person_id:
+        try:
+            payload["participants"] = [{"person_id": int(person_id), "primary": True}]
+        except (ValueError, TypeError):
+            pass
+            
+    if org_id:
+        try:
+            payload["org_id"] = int(org_id)
+        except (ValueError, TypeError):
+            payload["org_id"] = org_id
+            
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                f"{PIPEDRIVE_BASE_URL}/activities",
+                params={"api_token": PIPEDRIVE_API_TOKEN},
+                json=payload
+            )
+            
+            if response.status_code not in [200, 201]:
+                logger.error(f"Erro ao criar Activity no Pipedrive: {response.status_code} - {response.text}")
+                return None
+            
+            data = response.json()
+            logger.info(f"Atividade Pipedrive #{data.get('data', {}).get('id')} ('{subject}') criada com sucesso!")
+            return data.get("data") if data.get("success") else data.get("data")
+    except Exception as e:
+        logger.error(f"Exceção ao criar atividade no Pipedrive: {e}")
+        return None
 
 async def update_pipedrive_activity(activity_id: str, updates: Dict) -> Optional[Dict]:
     """
@@ -789,153 +814,159 @@ async def process_new_transcription(user_id: Optional[str] = None) -> Dict[str, 
             meeting_title = file["name"]
             created_time = file.get("createdTime")
             
-            # Verifica se já foi processado
-            existing = supabase.table("transcriptions").select("id").eq(
+            # Extrai data da reunião em formato YYYY-MM-DD
+            meeting_date_str = (created_time[:10] if created_time else None) or datetime.now().strftime("%Y-%m-%d")
+            
+            # Verifica se já foi processado com sucesso
+            existing = supabase.table("transcriptions").select("id, processing_status, briefing_json").eq(
                 "google_doc_id", google_doc_id
             ).execute()
             
-            if existing.data:
+            existing_record = existing.data[0] if existing.data else None
+            if existing_record and existing_record.get("processing_status") == "completed" and existing_record.get("briefing_json"):
                 stats["already_existing"] += 1
                 continue
                 
-            logger.info(f"Processando arquivo real do Drive: {meeting_title}")
+            logger.info(f"Processando arquivo do Drive: {meeting_title}")
             
-            # Lê conteúdo do arquivo
             try:
+                # Lê conteúdo do arquivo
                 transcription_text = read_google_doc_as_text(google_doc_id)
-            except Exception as e:
-                logger.error(f"Erro ao ler Google Doc {google_doc_id}: {e}")
-                stats["errors"] += 1
-                continue
-            
-            # Cria registro de transcrição (processing)
-            insert_data = {
-                "google_doc_id": google_doc_id,
-                "meeting_title": meeting_title,
-                "meeting_date": created_time,
-                "transcription_text": transcription_text,
-                "processing_status": "processing"
-            }
-            if clean_user_id:
-                insert_data["created_by"] = clean_user_id
                 
-            transcription_record = supabase.table("transcriptions").insert(insert_data).execute()
-            
-            transcription_id = transcription_record.data[0]["id"]
-            
-            # Executa parser real do Tactiq
-            briefing_json = parse_tactiq_doc(transcription_text, meeting_title)
-            cliente_nome = briefing_json["dados_cliente"]["nome"]
-            cliente_email = briefing_json["dados_cliente"].get("email")
-            
-            person_id = None
-            deal_id = None
-            activity_id = None
-            matching_confidence = 0.0
-            
-            if cliente_nome and len(cliente_nome) > 2:
-                # Busca no Pipedrive
-                person_results = await search_pipedrive_person(cliente_nome, cliente_email)
-                
-                if person_results and len(person_results) > 0:
-                    # Encontrou pessoa no Pipedrive
-                    first_person = person_results[0]
-                    # API v2 retorna o objeto em item
-                    item_data = first_person.get("item", first_person)
-                    person_id = str(item_data.get("id"))
-                    matching_confidence = 1.0 if len(person_results) == 1 else 0.75
-                    
-                    # Gera link direto do cliente
-                    briefing_json["pipedrive"]["person_id"] = person_id
-                    briefing_json["pipedrive"]["person_url"] = f"https://investimentosblue.pipedrive.com/person/{person_id}"
-                    
-                    # Busca Deals abertos do cliente
-                    deals = await get_person_deals(person_id)
-                    if deals:
-                        deal_id = str(deals[0].get("id"))
-                        briefing_json["pipedrive"]["deal_id"] = deal_id
-                        briefing_json["pipedrive"]["deal_url"] = f"https://investimentosblue.pipedrive.com/deal/{deal_id}"
-                    
-                    activity_id = None
-                    # Se tiver alta confiança, cria a Atividade do tipo Tactiq concluída no Pipedrive
-                    if matching_confidence >= 0.70:
-                        topicos_html = "".join([f"<li>{topico}</li>" for topico in briefing_json.get("principais_topicos", [])])
-                        activity_note_html = (
-                            f"<h3>📋 Briefing da Reunião (Origem: Tactiq / Google Drive)</h3>"
-                            f"<p><strong>Reunião:</strong> {meeting_title}</p>"
-                            f"<p><strong>Cliente:</strong> {cliente_nome}</p>"
-                            f"<p><strong>Interesse:</strong> {briefing_json.get('dados_cliente', {}).get('demonstrou_interesse', 'Não informado')}</p>"
-                            f"<h4>Principais Tópicos Abordados:</h4>"
-                            f"<ul>{topicos_html or '<li>Discussão patrimonial e sucessória.</li>'}</ul>"
-                            f"<h4>🎯 Próxima Ação Sugerida:</h4>"
-                            f"<p>{briefing_json.get('proxima_acao', {}).get('descricao', 'Dar continuidade aos alinhamentos')}</p>"
-                            f"<hr/>"
-                            f"<p><small>⚡ Sincronizado automaticamente pelo Sistema Robson Tavernard (Investimentos Blue)</small></p>"
-                        )
-                        
-                        # Data da reunião (ou data de hoje)
-                        act_due_date = meeting_date or datetime.now().strftime("%Y-%m-%d")
-                        
-                        act_res = await create_pipedrive_activity(
-                            subject="Transcrição Tactiq",
-                            activity_type="tactiq",
-                            due_date=act_due_date,
-                            done=True,
-                            deal_id=deal_id,
-                            person_id=person_id,
-                            note_content=activity_note_html
-                        )
-                        if act_res:
-                            activity_id = str(act_res.get("id"))
-                            briefing_json["pipedrive"]["activity_id"] = activity_id
-                            briefing_json["pipedrive"]["activity_subject"] = "Transcrição Tactiq"
-                            briefing_json["pipedrive"]["activity_type"] = "tactiq"
-                            briefing_json["pipedrive"]["activity_date"] = act_due_date
-                            logger.info(f"Atividade Pipedrive criada com sucesso: #{activity_id} para {cliente_nome}")
-            
-            # Atualiza transcrição para completed com o briefing real
-            supabase.table("transcriptions").update({
-                "processing_status": "completed",
-                "briefing_json": briefing_json
-            }).eq("id", transcription_id).execute()
-            
-            stats["processed_new"] += 1
-            
-            # Registra no log de auditoria
-            is_linked = bool(deal_id or person_id)
-            if is_linked:
-                action_type = "DRIVE_DOC_LINKED"
-                summary_text = f"Arquivo '{meeting_title}' recebido do Google Drive e vinculado com sucesso ao cliente '{cliente_nome or 'Identificado'}'" + (f" e Deal #{deal_id}" if deal_id else "") + " no Pipedrive com tarefa agendada."
-            else:
-                action_type = "DRIVE_DOC_UNLINKED"
-                if cliente_nome and cliente_nome.lower() != "cliente":
-                    summary_text = f"Arquivo '{meeting_title}' processado pela IA (mencionou '{cliente_nome}'). Não foi vinculado ao Pipedrive pois o contato não foi localizado no CRM ou trata-se de reunião interna."
+                # Se já existe no banco (stuck em processing/failed), reaproveita o ID; senão insere
+                if existing_record:
+                    transcription_id = existing_record["id"]
+                    supabase.table("transcriptions").update({
+                        "meeting_title": meeting_title,
+                        "meeting_date": created_time,
+                        "transcription_text": transcription_text,
+                        "processing_status": "processing"
+                    }).eq("id", transcription_id).execute()
                 else:
-                    summary_text = f"Arquivo '{meeting_title}' processado pela IA. Reunião interna da equipe ou sem cliente externo identificado no Pipedrive."
+                    insert_data = {
+                        "google_doc_id": google_doc_id,
+                        "meeting_title": meeting_title,
+                        "meeting_date": created_time,
+                        "transcription_text": transcription_text,
+                        "processing_status": "processing"
+                    }
+                    if clean_user_id:
+                        insert_data["created_by"] = clean_user_id
+                        
+                    transcription_record = supabase.table("transcriptions").insert(insert_data).execute()
+                    transcription_id = transcription_record.data[0]["id"]
+                
+                # Executa parser real do Tactiq
+                briefing_json = parse_tactiq_doc(transcription_text, meeting_title)
+                cliente_nome = briefing_json["dados_cliente"]["nome"]
+                cliente_email = briefing_json["dados_cliente"].get("email")
+                
+                person_id = None
+                deal_id = None
+                activity_id = None
+                matching_confidence = 0.0
+                
+                if cliente_nome and len(cliente_nome) > 2:
+                    # Busca no Pipedrive
+                    person_results = await search_pipedrive_person(cliente_nome, cliente_email)
+                    
+                    if person_results and len(person_results) > 0:
+                        # Encontrou pessoa no Pipedrive
+                        first_person = person_results[0]
+                        item_data = first_person.get("item", first_person)
+                        person_id = str(item_data.get("id"))
+                        matching_confidence = 1.0 if len(person_results) == 1 else 0.75
+                        
+                        # Gera link direto do cliente
+                        briefing_json["pipedrive"]["person_id"] = person_id
+                        briefing_json["pipedrive"]["person_url"] = f"https://investimentosblue.pipedrive.com/person/{person_id}"
+                        
+                        # Busca Deals abertos do cliente
+                        deals = await get_person_deals(person_id)
+                        if deals:
+                            deal_id = str(deals[0].get("id"))
+                            briefing_json["pipedrive"]["deal_id"] = deal_id
+                            briefing_json["pipedrive"]["deal_url"] = f"https://investimentosblue.pipedrive.com/deal/{deal_id}"
+                        
+                        # Se tiver alta confiança, cria a Atividade do tipo Tactiq concluída no Pipedrive
+                        if matching_confidence >= 0.70:
+                            topicos_html = "".join([f"<li>{topico}</li>" for topico in briefing_json.get("principais_topicos", [])])
+                            activity_note_html = (
+                                f"<h3>📋 Briefing da Reunião (Origem: Tactiq / Google Drive)</h3>"
+                                f"<p><strong>Reunião:</strong> {meeting_title}</p>"
+                                f"<p><strong>Cliente:</strong> {cliente_nome}</p>"
+                                f"<p><strong>Interesse:</strong> {briefing_json.get('dados_cliente', {}).get('demonstrou_interesse', 'Não informado')}</p>"
+                                f"<h4>Principais Tópicos Abordados:</h4>"
+                                f"<ul>{topicos_html or '<li>Discussão patrimonial e sucessória.</li>'}</ul>"
+                                f"<h4>🎯 Próxima Ação Sugerida:</h4>"
+                                f"<p>{briefing_json.get('proxima_acao', {}).get('descricao', 'Dar continuidade aos alinhamentos')}</p>"
+                                f"<hr/>"
+                                f"<p><small>⚡ Sincronizado automaticamente pelo Sistema Robson Tavernard (Investimentos Blue)</small></p>"
+                            )
+                            
+                            act_res = await create_pipedrive_activity(
+                                subject="Transcrição Tactiq",
+                                activity_type="tactiq",
+                                due_date=meeting_date_str,
+                                done=True,
+                                deal_id=deal_id,
+                                person_id=person_id,
+                                note_content=activity_note_html
+                            )
+                            if act_res:
+                                activity_id = str(act_res.get("id"))
+                                briefing_json["pipedrive"]["activity_id"] = activity_id
+                                briefing_json["pipedrive"]["activity_subject"] = "Transcrição Tactiq"
+                                briefing_json["pipedrive"]["activity_type"] = "tactiq"
+                                briefing_json["pipedrive"]["activity_date"] = meeting_date_str
+                                logger.info(f"Atividade Pipedrive criada com sucesso: #{activity_id} para {cliente_nome}")
+                
+                # Atualiza transcrição para completed com o briefing real
+                supabase.table("transcriptions").update({
+                    "processing_status": "completed",
+                    "briefing_json": briefing_json
+                }).eq("id", transcription_id).execute()
+                
+                stats["processed_new"] += 1
+                
+                # Registra no log de auditoria
+                is_linked = bool(deal_id or person_id)
+                if is_linked:
+                    action_type = "DRIVE_DOC_LINKED"
+                    summary_text = f"Arquivo '{meeting_title}' recebido do Google Drive e vinculado com sucesso ao cliente '{cliente_nome or 'Identificado'}'" + (f" e Deal #{deal_id}" if deal_id else "") + " no Pipedrive com tarefa agendada."
+                else:
+                    action_type = "DRIVE_DOC_UNLINKED"
+                    if cliente_nome and cliente_nome.lower() != "cliente":
+                        summary_text = f"Arquivo '{meeting_title}' processado pela IA (mencionou '{cliente_nome}'). Não foi vinculado ao Pipedrive pois o contato não foi localizado no CRM ou trata-se de reunião interna."
+                    else:
+                        summary_text = f"Arquivo '{meeting_title}' processado pela IA. Reunião interna da equipe ou sem cliente externo identificado no Pipedrive."
 
-            log_audit_event(
-                action=action_type,
-                resource_type="transcription",
-                resource_id=transcription_id,
-                user_id=clean_user_id,
-                details={
-                    "doc_title": meeting_title,
-                    "google_doc_id": google_doc_id,
-                    "cliente_nome": cliente_nome if cliente_nome and cliente_nome.lower() != "cliente" else None,
-                    "cliente_email": cliente_email,
-                    "pipedrive_person_id": person_id,
-                    "pipedrive_deal_id": deal_id,
-                    "pipedrive_activity_id": activity_id,
-                    "deal_url": briefing_json.get("pipedrive", {}).get("deal_url"),
-                    "person_url": briefing_json.get("pipedrive", {}).get("person_url"),
-                    "proxima_acao": briefing_json.get("proxima_acao", {}).get("descricao") if is_linked else None,
-                    "tactiq_link": briefing_json.get("tactiq_link"),
-                    "is_linked_to_crm": is_linked,
-                    "summary": summary_text
-                }
-            )
-            
-            logger.info(f"Transcrição concluída e auditada ({action_type}): {meeting_title}")
+                log_audit_event(
+                    action=action_type,
+                    resource_type="transcription",
+                    resource_id=transcription_id,
+                    user_id=clean_user_id,
+                    details={
+                        "doc_title": meeting_title,
+                        "google_doc_id": google_doc_id,
+                        "cliente_nome": cliente_nome if cliente_nome and cliente_nome.lower() != "cliente" else None,
+                        "cliente_email": cliente_email,
+                        "matching_confidence": matching_confidence,
+                        "pipedrive_person_id": person_id,
+                        "pipedrive_deal_id": deal_id,
+                        "pipedrive_activity_id": activity_id,
+                        "deal_url": briefing_json.get("pipedrive", {}).get("deal_url"),
+                        "person_url": briefing_json.get("pipedrive", {}).get("person_url"),
+                        "proxima_acao": briefing_json.get("proxima_acao", {}).get("descricao") if is_linked else None,
+                        "tactiq_link": briefing_json.get("tactiq_link"),
+                        "is_linked_to_crm": is_linked,
+                        "summary": summary_text
+                    }
+                )
+                logger.info(f"Transcrição concluída e auditada ({action_type}): {meeting_title}")
+            except Exception as file_err:
+                logger.error(f"Erro ao processar arquivo {meeting_title} ({google_doc_id}): {file_err}")
+                stats["errors"] += 1
             
     except Exception as e:
         logger.error(f"Erro no processamento de transcrições: {e}")
@@ -1061,76 +1092,6 @@ async def get_deal_by_id(
             "person_name": person.get("name"),
             "url": f"https://investimentosblue.pipedrive.com/deal/{deal_id}"
         }
-
-async def create_pipedrive_activity(
-    subject: str = "Transcrição Tactiq",
-    activity_type: str = "tactiq",
-    due_date: Optional[str] = None,
-    due_time: Optional[str] = None,
-    duration: Optional[str] = None,
-    note_content: Optional[str] = None,
-    deal_id: Optional[str] = None,
-    person_id: Optional[str] = None,
-    org_id: Optional[str] = None,
-    done: bool = True
-) -> Optional[Dict]:
-    """
-    Cria uma Atividade no Pipedrive (por padrão tipo 'tactiq', título 'Transcrição Tactiq' e status concluída).
-    O resumo/briefing completo é inserido no campo de anotação/descrição (note) da atividade.
-    """
-    if not PIPEDRIVE_API_TOKEN:
-        logger.warning("PIPEDRIVE_API_TOKEN não configurado")
-        return None
-        
-    payload = {
-        "subject": subject or "Transcrição Tactiq",
-        "type": activity_type or "tactiq",
-        "done": 1 if done else 0,
-        "note": note_content or "",
-    }
-    
-    if due_date:
-        payload["due_date"] = due_date
-    if due_time:
-        payload["due_time"] = due_time
-    if duration:
-        payload["duration"] = duration
-        
-    if deal_id:
-        try:
-            payload["deal_id"] = int(deal_id)
-        except ValueError:
-            payload["deal_id"] = deal_id
-            
-    if person_id:
-        try:
-            payload["person_id"] = int(person_id)
-        except ValueError:
-            payload["person_id"] = person_id
-            
-    if org_id:
-        try:
-            payload["org_id"] = int(org_id)
-        except ValueError:
-            payload["org_id"] = org_id
-            
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            res = await client.post(
-                f"{PIPEDRIVE_BASE_URL}/activities",
-                params={"api_token": PIPEDRIVE_API_TOKEN},
-                json=payload
-            )
-            if res.status_code in [200, 201]:
-                data = res.json().get("data")
-                logger.info(f"Atividade Pipedrive #{data.get('id')} ('{subject}') criada com sucesso com tipo '{activity_type}'!")
-                return data
-            else:
-                logger.error(f"Erro ao criar atividade no Pipedrive: {res.status_code} - {res.text}")
-                return None
-    except Exception as e:
-        logger.error(f"Exceção ao criar atividade no Pipedrive: {e}")
-        return None
 
 async def delete_pipedrive_activity(activity_id: str) -> bool:
     """Exclui uma atividade existente no Pipedrive"""
