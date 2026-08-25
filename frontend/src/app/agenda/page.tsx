@@ -200,12 +200,26 @@ export default function AgendaPage() {
   const [whatsappConsolidated, setWhatsappConsolidated] = useState('')
   const [loadingActivities, setLoadingActivities] = useState(true)
   const [selectedAssessor, setSelectedAssessor] = useState<string>('all')
-  const [selectedTag, setSelectedTag] = useState<string>('all')
+  const [selectedTags, setSelectedTags] = useState<string[]>([])
+  const [isTagDropdownOpen, setIsTagDropdownOpen] = useState(false)
   const [periodFilter, setPeriodFilter] = useState<'next_30_days' | 'this_week' | 'next_week' | 'this_month' | 'all'>('all')
   const [activitySearch, setActivitySearch] = useState('')
   const [activitySortBy, setActivitySortBy] = useState<'date_asc' | 'date_desc' | 'assessor_az' | 'client_az'>('date_asc')
   const [copiedSingleId, setCopiedSingleId] = useState<string | null>(null)
   const [copiedConsolidated, setCopiedConsolidated] = useState(false)
+
+  // Helper para alternar tags com suporte a multi-seleção
+  const toggleTag = (tagKey: string) => {
+    if (tagKey === 'all') {
+      setSelectedTags([])
+      return
+    }
+    if (selectedTags.includes(tagKey)) {
+      setSelectedTags(selectedTags.filter((k) => k !== tagKey))
+    } else {
+      setSelectedTags([...selectedTags, tagKey])
+    }
+  }
 
   // Booking Settings State
   const [settings, setSettings] = useState<CalendarSettingsData | null>(null)
@@ -254,9 +268,6 @@ export default function AgendaPage() {
       if (selectedAssessor !== 'all') {
         params.assessor_name = selectedAssessor
       }
-      if (selectedTag !== 'all') {
-        params.tag = selectedTag
-      }
 
       const res = await axios.get(`${API_URL}/api/pipedrive/activities`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -275,7 +286,7 @@ export default function AgendaPage() {
     } finally {
       setLoadingActivities(false)
     }
-  }, [API_URL, router, selectedAssessor, selectedTag, periodFilter])
+  }, [API_URL, router, selectedAssessor, periodFilter])
 
   // Carrega configurações de booking
   const fetchSettings = useCallback(async () => {
@@ -535,7 +546,7 @@ export default function AgendaPage() {
 
       if (a.done) return false
       if (!a.person_name || !a.org_name || a.org_name === 'Sem Assessor') return false
-      if (selectedTag !== 'all' && a.type !== selectedTag) return false
+      if (selectedTags.length > 0 && !selectedTags.includes(a.type)) return false
 
       if (!activitySearch.trim()) return true
       const q = activitySearch.toLowerCase().trim()
@@ -562,7 +573,7 @@ export default function AgendaPage() {
       }
       return 0
     })
-  }, [activities, activitySearch, activitySortBy, selectedTag])
+  }, [activities, activitySearch, activitySortBy, selectedTags])
 
   // Agrupa atividades por data para o calendário
   const groupedByDate = useMemo(() => {
@@ -733,51 +744,125 @@ export default function AgendaPage() {
                   )}
                 </div>
 
-                {/* Período, Seletor de Assessor e Seletor de Tag / Tipo */}
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-3 pt-1">
-                  {/* Seletor Dropdown de Assessor */}
-                  <div className="md:col-span-4 flex items-center space-x-2">
-                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap flex items-center space-x-1.5">
-                      <Building2 className="w-3.5 h-3.5 text-[#0092FF]" />
-                      <span>Assessor:</span>
-                    </span>
-                    <select
-                      value={selectedAssessor}
-                      onChange={(e) => setSelectedAssessor(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-[#0092FF] outline-none transition-all"
-                    >
-                      <option value="all">🏢 Todos os Assessores ({assessores.reduce((acc, a) => acc + a.count, 0)})</option>
-                      {assessores.map((a) => (
-                        <option key={a.name} value={a.name}>
-                          {a.name} ({a.count} {a.count === 1 ? 'em aberto' : 'em aberto'})
-                        </option>
-                      ))}
-                    </select>
+                {/* Linha 1: Seletores Principais de Assessor, Tags (Multi-select) e Período */}
+                <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 pt-1">
+                  {/* Grupo Esquerdo: Dropdown de Assessor + Multi-select de Tags */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1">
+                    {/* Seletor Dropdown de Assessor */}
+                    <div className="flex items-center space-x-2 flex-1 sm:max-w-xs">
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap flex items-center space-x-1.5">
+                        <Building2 className="w-3.5 h-3.5 text-[#0092FF]" />
+                        <span>Assessor:</span>
+                      </span>
+                      <select
+                        value={selectedAssessor}
+                        onChange={(e) => setSelectedAssessor(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-[#0092FF] outline-none transition-all"
+                      >
+                        <option value="all">🏢 Todos os Assessores ({assessores.reduce((acc, a) => acc + a.count, 0)})</option>
+                        {assessores.map((a) => (
+                          <option key={a.name} value={a.name}>
+                            {a.name} ({a.count} {a.count === 1 ? 'em aberto' : 'em aberto'})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Seletor Multi-select de Tags / Tipos com Dropdown Checkbox */}
+                    <div className="relative flex items-center space-x-2 flex-1 sm:max-w-xs">
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap flex items-center space-x-1.5">
+                        <Tag className="w-3.5 h-3.5 text-[#0092FF]" />
+                        <span>Tags:</span>
+                      </span>
+                      <div className="relative w-full">
+                        <button
+                          type="button"
+                          onClick={() => setIsTagDropdownOpen(!isTagDropdownOpen)}
+                          className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-[#0092FF] outline-none flex items-center justify-between transition-all"
+                        >
+                          <span className="truncate">
+                            {selectedTags.length === 0
+                              ? `🏷️ Todas as Tags (${tags.reduce((acc, t) => acc + t.count, 0)})`
+                              : `🏷️ ${selectedTags.length} ${selectedTags.length === 1 ? 'Tag selecionada' : 'Tags selecionadas'}`}
+                          </span>
+                          <ChevronDown className={`w-3.5 h-3.5 ml-1 text-slate-400 transition-transform ${isTagDropdownOpen ? 'rotate-180' : ''}`} />
+                        </button>
+
+                        {/* Dropdown Menu com Checkboxes */}
+                        {isTagDropdownOpen && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-20"
+                              onClick={() => setIsTagDropdownOpen(false)}
+                            />
+                            <div className="absolute left-0 top-full mt-1.5 w-64 bg-white dark:bg-[#000D38] border border-slate-200 dark:border-[#002060] rounded-2xl shadow-xl p-2 z-30 space-y-1 max-h-60 overflow-y-auto">
+                              <div className="flex items-center justify-between px-2 py-1 text-[11px] font-bold text-slate-400 border-b border-slate-100 dark:border-[#002060]/70 mb-1">
+                                <span>Multi-seleção de Tags</span>
+                                {selectedTags.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedTags([])}
+                                    className="text-[#0092FF] hover:underline"
+                                  >
+                                    Limpar
+                                  </button>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedTags([])
+                                  setIsTagDropdownOpen(false)
+                                }}
+                                className={`w-full text-left px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between ${
+                                  selectedTags.length === 0
+                                    ? 'bg-[#0092FF]/10 text-[#0092FF]'
+                                    : 'hover:bg-slate-100 dark:hover:bg-[#002060] text-slate-700 dark:text-slate-300'
+                                }`}
+                              >
+                                <span>Todas as Tags</span>
+                                {selectedTags.length === 0 && <Check className="w-3.5 h-3.5 text-[#0092FF]" />}
+                              </button>
+                              {tags.map((t) => {
+                                const isChecked = selectedTags.includes(t.key)
+                                return (
+                                  <div
+                                    key={t.key}
+                                    onClick={() => toggleTag(t.key)}
+                                    className={`flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all ${
+                                      isChecked
+                                        ? 'bg-[#0092FF]/15 text-[#0092FF] dark:text-[#00FFFF]'
+                                        : 'hover:bg-slate-100 dark:hover:bg-[#002060] text-slate-700 dark:text-slate-300'
+                                    }`}
+                                  >
+                                    <div className="flex items-center space-x-2">
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={() => {}}
+                                        className="rounded border-slate-300 text-[#0092FF] focus:ring-[#0092FF] cursor-pointer"
+                                      />
+                                      <span>{t.name}</span>
+                                    </div>
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-[#00061A] text-slate-500 font-bold">
+                                      {t.count}
+                                    </span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Seletor Dropdown de Tag / Tipo de Atividade */}
-                  <div className="md:col-span-4 flex items-center space-x-2">
-                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap flex items-center space-x-1.5">
-                      <Tag className="w-3.5 h-3.5 text-[#0092FF]" />
-                      <span>Tag / Tipo:</span>
+                  {/* Grupo Direito: Abas de Período com Layout Espaçoso (sem corte) */}
+                  <div className="flex items-center gap-1.5 flex-wrap text-xs pt-1 xl:pt-0">
+                    <span className="text-slate-400 font-bold mr-1 text-[11px] whitespace-nowrap flex items-center space-x-1">
+                      <CalendarRange className="w-3 h-3 text-[#0092FF]" />
+                      <span>Período:</span>
                     </span>
-                    <select
-                      value={selectedTag}
-                      onChange={(e) => setSelectedTag(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-[#0092FF] outline-none transition-all"
-                    >
-                      <option value="all">🏷️ Todas as Tags ({tags.reduce((acc, t) => acc + t.count, 0)})</option>
-                      {tags.map((t) => (
-                        <option key={t.key} value={t.key}>
-                          {t.name} ({t.count} {t.count === 1 ? 'em aberto' : 'em aberto'})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Period Selector Tabs */}
-                  <div className="md:col-span-4 flex items-center gap-1 overflow-x-auto text-xs justify-start md:justify-end">
-                    <span className="text-slate-400 font-bold mr-1 text-[11px] whitespace-nowrap">Período:</span>
                     {[
                       { key: 'all', label: 'Todas' },
                       { key: 'this_week', label: 'Esta Semana' },
@@ -789,7 +874,7 @@ export default function AgendaPage() {
                         key={p.key}
                         type="button"
                         onClick={() => setPeriodFilter(p.key as any)}
-                        className={`px-2.5 py-1.5 rounded-xl font-bold whitespace-nowrap transition-all ${
+                        className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition-all ${
                           periodFilter === p.key
                             ? 'bg-[#002060] dark:bg-[#0092FF] text-white shadow-xs'
                             : 'bg-slate-100 dark:bg-[#00061A] text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-[#002060] hover:bg-slate-200 dark:hover:bg-[#002060]'
@@ -801,18 +886,20 @@ export default function AgendaPage() {
                   </div>
                 </div>
 
-                {/* Atalhos de Tags (Apenas tags em uso com contagem) */}
+                {/* Atalhos de Tags (Multi-seleção Interativa em Pills) */}
                 {tags.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100 dark:border-[#002060]/70">
+                  <div className="flex flex-wrap items-center gap-1.5 pt-2.5 border-t border-slate-100 dark:border-[#002060]/70">
                     <span className="text-[11px] font-bold text-slate-400 mr-1 flex items-center space-x-1">
                       <Tag className="w-3 h-3 text-[#0092FF]" />
-                      <span>Tags:</span>
+                      <span>Tags (Multi):</span>
                     </span>
+
+                    {/* Botão Todas */}
                     <button
                       type="button"
-                      onClick={() => setSelectedTag('all')}
+                      onClick={() => setSelectedTags([])}
                       className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 ${
-                        selectedTag === 'all'
+                        selectedTags.length === 0
                           ? 'bg-[#0092FF] text-white shadow-xs'
                           : 'bg-slate-100 dark:bg-[#00061A] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#002060] hover:bg-slate-200 dark:hover:bg-[#002060]'
                       }`}
@@ -820,19 +907,21 @@ export default function AgendaPage() {
                       <span>Todas</span>
                     </button>
 
+                    {/* Pills de cada Tag */}
                     {tags.map((t) => {
-                      const isSelected = selectedTag === t.key
+                      const isSelected = selectedTags.includes(t.key)
                       return (
                         <button
                           key={t.key}
                           type="button"
-                          onClick={() => setSelectedTag(isSelected ? 'all' : t.key)}
+                          onClick={() => toggleTag(t.key)}
                           className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 ${
                             isSelected
-                              ? 'bg-[#0092FF] text-white shadow-xs'
+                              ? 'bg-[#0092FF] text-white shadow-xs ring-2 ring-[#0092FF]/30'
                               : 'bg-slate-100 dark:bg-[#00061A] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#002060] hover:bg-slate-200 dark:hover:bg-[#002060]'
                           }`}
                         >
+                          {isSelected && <Check className="w-3 h-3 text-white" />}
                           <span>{t.name}</span>
                           <span
                             className={`px-1.5 py-0.2 rounded-full text-[10px] ${
@@ -844,6 +933,19 @@ export default function AgendaPage() {
                         </button>
                       )
                     })}
+
+                    {/* Botão de Limpar Seleção quando houver tags marcadas */}
+                    {selectedTags.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTags([])}
+                        className="px-2.5 py-1 rounded-xl text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 hover:bg-rose-100 transition-all flex items-center space-x-1"
+                        title="Limpar seleção de tags"
+                      >
+                        <X className="w-3 h-3" />
+                        <span>Limpar ({selectedTags.length})</span>
+                      </button>
+                    )}
                   </div>
                 )}
 
