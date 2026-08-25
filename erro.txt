@@ -1,0 +1,150 @@
+2026-08-24T22:52:51.92582166Z Collecting h2<5,>=3 (from httpx[http2]<0.29,>=0.26->gotrue<3.0,>=1.3->supabase<2.8.0,>=2.4.0->-r requirements.txt (line 12))
+2026-08-24T22:52:51.927106528Z   Using cached h2-4.4.1-py3-none-any.whl.metadata (3.8 kB)
+2026-08-24T22:52:51.977149741Z Collecting pyasn1<0.7.0,>=0.6.1 (from pyasn1-modules>=0.2.1->google-auth!=2.24.0,!=2.25.0,<3.0.0,>=1.32.0->google-api-python-client>=2.120.0->-r requirements.txt (line 15))
+2026-08-24T22:52:51.978414157Z   Using cached pyasn1-0.6.4-py3-none-any.whl.metadata (8.4 kB)
+2026-08-24T22:52:52.007246148Z Collecting six>=1.5 (from python-dateutil<3.0.0,>=2.8.2->storage3<0.8.0,>=0.5.3->supabase<2.8.0,>=2.4.0->-r requirements.txt (line 12))
+2026-08-24T22:52:52.008540745Z   Using cached six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+2026-08-24T22:52:52.137814887Z Collecting charset_normalizer<4,>=2 (from requests<3.0.0,>=2.33.0->google-api-core!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.0,<3.0.0,>=1.31.5->google-api-python-client>=2.120.0->-r requirements.txt (line 15))
+2026-08-24T22:52:52.139288748Z   Using cached charset_normalizer-3.5.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (45 kB)
+2026-08-24T22:52:52.183031674Z Collecting urllib3<3,>=1.26 (from requests<3.0.0,>=2.33.0->google-api-core!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.0,<3.0.0,>=1.31.5->google-api-python-client>=2.120.0->-r requirements.txt (line 15))
+2026-08-24T22:52:52.184297232Z   Using cached urllib3-2.7.0-py3-none-any.whl.metadata (6.9 kB)
+2026-08-24T22:52:52.217065126Z Collecting pycparser (from cffi>=2.0.0->cryptography>=38.0.3->google-auth!=2.24.0,!=2.25.0,<3.0.0,>=1.32.0->google-api-python-client>=2.120.0->-r requirements.txt (line 15))
+2026-08-24T22:52:52.218354316Z   Using cached pycparser-3.0-py3-none-any.whl.metadata (8.2 kB)
+2026-08-24T22:52:52.246593972Z Collecting hyperframe<7,>=6.1 (from h2<5,>=3->httpx[http2]<0.29,>=0.26->gotrue<3.0,>=1.3->supabase<2.8.0,>=2.4.0->-r requirements.txt (line 12))
+2026-08-24T22:52:52.247846806Z   Using cached hyperframe-6.1.0-py3-none-any.whl.metadata (4.3 kB)
+2026-08-24T22:52:52.259676613Z Collecting hpack<5,>=4.2 (from h2<5,>=3->httpx[http2]<0.29,>=0.26->gotrue<3.0,>=1.3->supabase<2.8.0,>=2.4.0->-r requirements.txt (line 12))
+2026-08-24T22:52:52.260948499Z   Using cached hpack-4.2.0-py3-none-any.whl.metadata (3.3 kB)
+2026-08-24T22:52:52.326009981Z Using cached fastapi-0.119.1-py3-none-any.whl (108 kB)
+2026-08-24T22:52:52.327462511Z Using cached uvicorn-0.31.1-py3-none-any.whl (63 kB)
+2026-08-24T22:52:52.328844572Z Using cached pydantic-2.10.6-py3-none-any.whl (431 kB)
+2026-08-24T22:52:52.330594496Z Using cached pydantic_core-2.27.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.0 MB)
+2026-08-24T22:52:52.333763279Z Using cached python_multipart-0.0.32-py3-none-any.whl (30 kB)
+2026-08-24T22:52:52.335124669Z Using cached pyjwt-2.13.0-py3-none-any.whl (31 kB)
+2026-08-24T22:52:52.336454464Z Using cached bcrypt-4.2.1-cp39-abi3-manylinux_2_28_x86_64.whl (278 kB)
+2026-08-24T22:52:52.338028719Z Using cached supabase-2.7.4-py3-none-any.whl (15 kB)
+2026-08-24T22:52:52.339350973Z Using cached google_api_python_client-2.199.0-py3-none-any.whl (16.0 MB)
+2026-08-24T22:52:52.366568796Z Downloading google_auth_httplib2-0.4.2-py3-none-any.whl (9.5 kB)
+2026-08-24T22:52:52.38086891Z Downloading google_auth_oauthlib-1.4.1-py3-none-any.whl (19 kB)
+2026-08-24T22:52:52.385126373Z Using cached httpx-0.27.2-py3-none-any.whl (76 kB)
+2026-08-24T22:52:52.386582448Z Using cached httpcore-1.0.9-py3-none-any.whl (78 kB)
+2026-08-24T22:52:52.387965535Z Using cached apscheduler-3.11.3-py3-none-any.whl (66 kB)
+2026-08-24T22:52:52.389319255Z Using cached python_dotenv-1.2.3-py3-none-any.whl (22 kB)
+2026-08-24T22:52:52.390677378Z Using cached annotated_types-0.8.0-py3-none-any.whl (13 kB)
+2026-08-24T22:52:52.391970515Z Using cached click-8.4.2-py3-none-any.whl (119 kB)
+2026-08-24T22:52:52.393395284Z Using cached email_validator-2.3.0-py3-none-any.whl (35 kB)
+2026-08-24T22:52:52.405471645Z Downloading google_api_core-2.35.0-py3-none-any.whl (181 kB)
+2026-08-24T22:52:52.43298493Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 181.4/181.4 kB 6.9 MB/s eta 0:00:00
+2026-08-24T22:52:52.447750224Z Downloading google_auth-2.57.0-py3-none-any.whl (259 kB)
+2026-08-24T22:52:52.45999095Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 259.7/259.7 kB 23.5 MB/s eta 0:00:00
+2026-08-24T22:52:52.461309776Z Using cached gotrue-2.12.4-py3-none-any.whl (42 kB)
+2026-08-24T22:52:52.462713006Z Using cached h11-0.16.0-py3-none-any.whl (37 kB)
+2026-08-24T22:52:52.464096699Z Using cached httplib2-0.32.0-py3-none-any.whl (93 kB)
+2026-08-24T22:52:52.46554129Z Using cached httptools-0.8.0-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (464 kB)
+2026-08-24T22:52:52.467292887Z Using cached idna-3.19-py3-none-any.whl (68 kB)
+2026-08-24T22:52:52.468683693Z Using cached postgrest-0.16.11-py3-none-any.whl (21 kB)
+2026-08-24T22:52:52.470011717Z Using cached pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (806 kB)
+2026-08-24T22:52:52.472111916Z Using cached realtime-2.5.3-py3-none-any.whl (21 kB)
+2026-08-24T22:52:52.473420349Z Using cached requests_oauthlib-2.0.0-py2.py3-none-any.whl (24 kB)
+2026-08-24T22:52:52.474774094Z Using cached starlette-0.48.0-py3-none-any.whl (73 kB)
+2026-08-24T22:52:52.476132926Z Using cached anyio-4.14.2-py3-none-any.whl (125 kB)
+2026-08-24T22:52:52.477553702Z Using cached storage3-0.7.7-py3-none-any.whl (16 kB)
+2026-08-24T22:52:52.478885576Z Using cached supafunc-0.5.1-py3-none-any.whl (6.4 kB)
+2026-08-24T22:52:52.480169685Z Using cached typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+2026-08-24T22:52:52.481518458Z Using cached tzlocal-5.4.4-py3-none-any.whl (18 kB)
+2026-08-24T22:52:52.482847062Z Using cached uritemplate-4.2.0-py3-none-any.whl (11 kB)
+2026-08-24T22:52:52.48417027Z Using cached uvloop-0.22.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (3.8 MB)
+2026-08-24T22:52:52.489087757Z Using cached watchfiles-1.2.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (456 kB)
+2026-08-24T22:52:52.490895925Z Using cached websockets-15.0.1-cp311-cp311-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl (182 kB)
+2026-08-24T22:52:52.492382101Z Using cached certifi-2026.7.22-py3-none-any.whl (136 kB)
+2026-08-24T22:52:52.493831219Z Using cached sniffio-1.3.1-py3-none-any.whl (10 kB)
+2026-08-24T22:52:52.495151769Z Using cached cryptography-50.0.0-cp311-abi3-manylinux_2_34_x86_64.whl (4.7 MB)
+2026-08-24T22:52:52.500926194Z Using cached deprecation-2.1.0-py2.py3-none-any.whl (11 kB)
+2026-08-24T22:52:52.502241902Z Using cached dnspython-2.8.0-py3-none-any.whl (331 kB)
+2026-08-24T22:52:52.503899649Z Using cached googleapis_common_protos-1.75.1-py3-none-any.whl (300 kB)
+2026-08-24T22:52:52.505514308Z Using cached oauthlib-3.3.1-py3-none-any.whl (160 kB)
+2026-08-24T22:52:52.50699489Z Using cached proto_plus-1.28.3-py3-none-any.whl (50 kB)
+2026-08-24T22:52:52.508344989Z Using cached protobuf-7.36.0-cp310-abi3-manylinux2014_x86_64.whl (340 kB)
+2026-08-24T22:52:52.510006992Z Using cached pyasn1_modules-0.4.2-py3-none-any.whl (181 kB)
+2026-08-24T22:52:52.511506673Z Using cached pyparsing-3.3.2-py3-none-any.whl (122 kB)
+2026-08-24T22:52:52.512920091Z Using cached python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+2026-08-24T22:52:52.514451058Z Using cached requests-2.34.2-py3-none-any.whl (73 kB)
+2026-08-24T22:52:52.515852442Z Using cached StrEnum-0.4.15-py3-none-any.whl (8.9 kB)
+2026-08-24T22:52:52.517144966Z Using cached cffi-2.1.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (217 kB)
+2026-08-24T22:52:52.518692265Z Using cached charset_normalizer-3.5.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (262 kB)
+2026-08-24T22:52:52.520246744Z Using cached h2-4.4.1-py3-none-any.whl (62 kB)
+2026-08-24T22:52:52.521630454Z Using cached pyasn1-0.6.4-py3-none-any.whl (84 kB)
+2026-08-24T22:52:52.523008455Z Using cached six-1.17.0-py2.py3-none-any.whl (11 kB)
+2026-08-24T22:52:52.52431699Z Using cached urllib3-2.7.0-py3-none-any.whl (131 kB)
+2026-08-24T22:52:52.525771543Z Using cached packaging-26.3-py3-none-any.whl (129 kB)
+2026-08-24T22:52:52.527196498Z Using cached hpack-4.2.0-py3-none-any.whl (34 kB)
+2026-08-24T22:52:52.52859147Z Using cached hyperframe-6.1.0-py3-none-any.whl (13 kB)
+2026-08-24T22:52:52.529871813Z Using cached pycparser-3.0-py3-none-any.whl (48 kB)
+2026-08-24T22:52:52.8156109Z Installing collected packages: strenum, websockets, uvloop, urllib3, uritemplate, tzlocal, typing-extensions, sniffio, six, pyyaml, python-multipart, python-dotenv, pyparsing, PyJWT, pycparser, pyasn1, protobuf, packaging, oauthlib, idna, hyperframe, httptools, hpack, h11, dnspython, click, charset_normalizer, certifi, bcrypt, annotated-types, uvicorn, requests, realtime, python-dateutil, pydantic-core, pyasn1-modules, proto-plus, httplib2, httpcore, h2, googleapis-common-protos, email-validator, deprecation, cffi, apscheduler, anyio, watchfiles, starlette, requests-oauthlib, pydantic, httpx, cryptography, google-auth, fastapi, supafunc, storage3, postgrest, gotrue, google-auth-oauthlib, google-auth-httplib2, google-api-core, supabase, google-api-python-client
+2026-08-24T22:52:55.84634Z Successfully installed PyJWT-2.13.0 annotated-types-0.8.0 anyio-4.14.2 apscheduler-3.11.3 bcrypt-4.2.1 certifi-2026.7.22 cffi-2.1.1 charset_normalizer-3.5.1 click-8.4.2 cryptography-50.0.0 deprecation-2.1.0 dnspython-2.8.0 email-validator-2.3.0 fastapi-0.119.1 google-api-core-2.35.0 google-api-python-client-2.199.0 google-auth-2.57.0 google-auth-httplib2-0.4.2 google-auth-oauthlib-1.4.1 googleapis-common-protos-1.75.1 gotrue-2.12.4 h11-0.16.0 h2-4.4.1 hpack-4.2.0 httpcore-1.0.9 httplib2-0.32.0 httptools-0.8.0 httpx-0.27.2 hyperframe-6.1.0 idna-3.19 oauthlib-3.3.1 packaging-26.3 postgrest-0.16.11 proto-plus-1.28.3 protobuf-7.36.0 pyasn1-0.6.4 pyasn1-modules-0.4.2 pycparser-3.0 pydantic-2.10.6 pydantic-core-2.27.2 pyparsing-3.3.2 python-dateutil-2.9.0.post0 python-dotenv-1.2.3 python-multipart-0.0.32 pyyaml-6.0.3 realtime-2.5.3 requests-2.34.2 requests-oauthlib-2.0.0 six-1.17.0 sniffio-1.3.1 starlette-0.48.0 storage3-0.7.7 strenum-0.4.15 supabase-2.7.4 supafunc-0.5.1 typing-extensions-4.16.0 tzlocal-5.4.4 uritemplate-4.2.0 urllib3-2.7.0 uvicorn-0.31.1 uvloop-0.22.1 watchfiles-1.2.0 websockets-15.0.1
+2026-08-24T22:52:55.863912367Z 
+2026-08-24T22:52:55.863917276Z [notice] A new release of pip is available: 24.0 -> 26.2.1
+2026-08-24T22:52:55.863918745Z [notice] To update, run: pip install --upgrade pip
+2026-08-24T22:52:56.622593859Z ==> Uploading build...
+2026-08-24T22:53:00.62643216Z ==> Uploaded in 2.6s. Compression took 1.4s
+2026-08-24T22:53:00.629237416Z ==> Build successful 🎉
+2026-08-24T22:53:01.898049745Z ==> Deploying...
+2026-08-24T22:53:02.005098008Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-08-24T22:53:11.371780082Z ==> Running 'uvicorn main:app --host 0.0.0.0 --port $PORT'
+2026-08-24T22:53:16.068437691Z Traceback (most recent call last):
+2026-08-24T22:53:16.068481194Z   File "/opt/render/project/src/.venv/bin/uvicorn", line 8, in <module>
+2026-08-24T22:53:16.068611522Z     sys.exit(main())
+2026-08-24T22:53:16.068616012Z              ^^^^^^
+2026-08-24T22:53:16.068619373Z   File "/opt/render/project/src/.venv/lib/python3.11/site-packages/click/core.py", line 1569, in __call__
+2026-08-24T22:53:16.068876679Z     return self.main(*args, **kwargs)
+2026-08-24T22:53:16.068883989Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-24T22:53:16.068906001Z   File "/opt/render/project/src/.venv/lib/python3.11/site-packages/click/core.py", line 1490, in main
+2026-08-24T22:53:16.069168277Z     rv = self.invoke(ctx)
+2026-08-24T22:53:16.069171997Z          ^^^^^^^^^^^^^^^^
+2026-08-24T22:53:16.069174498Z   File "/opt/render/project/src/.venv/lib/python3.11/site-packages/click/core.py", line 1353, in invoke
+2026-08-24T22:53:16.069425654Z     return ctx.invoke(self.callback, **ctx.params)
+2026-08-24T22:53:16.069429314Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-24T22:53:16.069432544Z   File "/opt/render/project/src/.venv/lib/python3.11/site-packages/click/core.py", line 907, in invoke
+2026-08-24T22:53:16.069673509Z     return callback(*args, **kwargs)
+2026-08-24T22:53:16.06968783Z            ^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-24T22:53:16.06969073Z   File "/opt/render/project/src/.venv/lib/python3.11/site-packages/uvicorn/main.py", line 412, in main
+2026-08-24T22:53:16.069803588Z     run(
+2026-08-24T22:53:16.069807698Z   File "/opt/render/project/src/.venv/lib/python3.11/site-packages/uvicorn/main.py", line 579, in run
+2026-08-24T22:53:16.069941937Z     server.run()
+2026-08-24T22:53:16.069948677Z   File "/opt/render/project/src/.venv/lib/python3.11/site-packages/uvicorn/server.py", line 65, in run
+2026-08-24T22:53:16.06999924Z     return asyncio.run(self.serve(sockets=sockets))
+2026-08-24T22:53:16.070022342Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-24T22:53:16.070025812Z   File "/opt/render/project/python/Python-3.11.9/lib/python3.11/asyncio/runners.py", line 190, in run
+2026-08-24T22:53:16.07014441Z     return runner.run(main)
+2026-08-24T22:53:16.07014905Z            ^^^^^^^^^^^^^^^^
+2026-08-24T22:53:16.0701525Z   File "/opt/render/project/python/Python-3.11.9/lib/python3.11/asyncio/runners.py", line 118, in run
+2026-08-24T22:53:16.070223095Z     return self._loop.run_until_complete(task)
+2026-08-24T22:53:16.070239405Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-24T22:53:16.070244616Z   File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+2026-08-24T22:53:16.070397095Z   File "/opt/render/project/src/.venv/lib/python3.11/site-packages/uvicorn/server.py", line 69, in serve
+2026-08-24T22:53:16.07046772Z     await self._serve(sockets)
+2026-08-24T22:53:16.07047616Z   File "/opt/render/project/src/.venv/lib/python3.11/site-packages/uvicorn/server.py", line 76, in _serve
+2026-08-24T22:53:16.070565716Z     config.load()
+2026-08-24T22:53:16.070568966Z   File "/opt/render/project/src/.venv/lib/python3.11/site-packages/uvicorn/config.py", line 434, in load
+2026-08-24T22:53:16.070722956Z     self.loaded_app = import_from_string(self.app)
+2026-08-24T22:53:16.070763309Z                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-24T22:53:16.070768729Z   File "/opt/render/project/src/.venv/lib/python3.11/site-packages/uvicorn/importer.py", line 19, in import_from_string
+2026-08-24T22:53:16.070831543Z     module = importlib.import_module(module_str)
+2026-08-24T22:53:16.070882376Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-24T22:53:16.070916859Z   File "/opt/render/project/python/Python-3.11.9/lib/python3.11/importlib/__init__.py", line 126, in import_module
+2026-08-24T22:53:16.070976102Z     return _bootstrap._gcd_import(name[level:], package, level)
+2026-08-24T22:53:16.071020725Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-24T22:53:16.071026535Z   File "<frozen importlib._bootstrap>", line 1204, in _gcd_import
+2026-08-24T22:53:16.071029646Z   File "<frozen importlib._bootstrap>", line 1176, in _find_and_load
+2026-08-24T22:53:16.071031546Z   File "<frozen importlib._bootstrap>", line 1147, in _find_and_load_unlocked
+2026-08-24T22:53:16.071033786Z   File "<frozen importlib._bootstrap>", line 690, in _load_unlocked
+2026-08-24T22:53:16.071035756Z   File "<frozen importlib._bootstrap_external>", line 936, in exec_module
+2026-08-24T22:53:16.071037696Z   File "<frozen importlib._bootstrap_external>", line 1074, in get_code
+2026-08-24T22:53:16.071042487Z   File "<frozen importlib._bootstrap_external>", line 1004, in source_to_code
+2026-08-24T22:53:16.071068008Z   File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+2026-08-24T22:53:16.071074158Z   File "/opt/render/project/src/backend/main.py", line 1391
+2026-08-24T22:53:16.071076249Z     return {
+2026-08-24T22:53:16.071079629Z            ^
+2026-08-24T22:53:16.071082879Z SyntaxError: '{' was never closed
+2026-08-24T22:53:18.207871431Z ==> Exited with status 1
+2026-08-24T22:53:18.211673395Z ==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
+2026-08-24T22:53:22.579063762Z ==> Running 'uvicorn main:app --host 0.0.0.0 --port $PORT'

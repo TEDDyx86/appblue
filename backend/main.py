@@ -1140,270 +1140,275 @@ async def list_pipedrive_activities(
     Lista atividades do Pipedrive com suporte a paginação completa,
     filtros por período (esta semana, este mês, etc.), assessor e geração de template WhatsApp.
     """
-    now = datetime.now()
-    
-    # Define range de datas
-    computed_start = start_date
-    computed_end = end_date
-    
-    if period == "this_week":
-        # Segunda-feira da semana atual até Domingo
-        monday = now - timedelta(days=now.weekday())
-        sunday = monday + timedelta(days=6)
-        computed_start = monday.strftime("%Y-%m-%d")
-        computed_end = sunday.strftime("%Y-%m-%d")
-    elif period == "next_week":
-        next_monday = now - timedelta(days=now.weekday()) + timedelta(days=7)
-        next_sunday = next_monday + timedelta(days=6)
-        computed_start = next_monday.strftime("%Y-%m-%d")
-        computed_end = next_sunday.strftime("%Y-%m-%d")
-    elif period == "this_month":
-        first_day = now.replace(day=1)
-        # Próximo mês dia 1 - 1 dia
-        if now.month == 12:
-            last_day = now.replace(year=now.year + 1, month=1, day=1) - timedelta(days=1)
-        else:
-            last_day = now.replace(month=now.month + 1, day=1) - timedelta(days=1)
-        computed_start = first_day.strftime("%Y-%m-%d")
-        computed_end = last_day.strftime("%Y-%m-%d")
-    elif period == "next_30_days":
-        computed_start = now.strftime("%Y-%m-%d")
-        computed_end = (now + timedelta(days=30)).strftime("%Y-%m-%d")
-    elif not computed_start and not computed_end and period != "all":
-        # Janela padrão: 30 dias atrás até 90 dias no futuro
-        computed_start = (now - timedelta(days=30)).strftime("%Y-%m-%d")
-        computed_end = (now + timedelta(days=90)).strftime("%Y-%m-%d")
+    try:
+        cal_settings = get_calendar_settings_data()
+        tpl_single = cal_settings.get("whatsapp_single_template") or "{dia_semana} ({data}) {assunto} com {cliente} ({horario})"
+        tpl_header = cal_settings.get("whatsapp_header_template") or "📅 *Agenda de Atendimentos - Robson Vieira & {assessor}*\n"
+        tpl_day = cal_settings.get("whatsapp_day_template") or "🔹 *{dia_semana} ({data})*"
+        tpl_item = cal_settings.get("whatsapp_item_template") or "• {horario} | {assunto} com {cliente}"
+        tpl_footer = cal_settings.get("whatsapp_footer_template", "Qualquer dúvida ou ajuste de horário, estou à disposição! 🚀")
 
-    # Busca organizações (Assessores) cadastradas
-    async with httpx.AsyncClient() as client:
-        orgs_res = await client.get(
-            "https://api.pipedrive.com/v1/organizations",
-            params={"api_token": PIPEDRIVE_API_TOKEN, "limit": 100}
-        )
-        all_orgs = (orgs_res.json().get("data") or []) if orgs_res.status_code == 200 else []
-        assessores_map = {o["id"]: o["name"] for o in all_orgs if o.get("name")}
+        now = datetime.now()
         
-        # Paginação sobre as atividades no Pipedrive (até 500 registros)
-        all_raw_activities = []
-        start_offset = 0
+        # Define range de datas
+        computed_start = start_date
+        computed_end = end_date
         
-        for _ in range(5):
-            query_params = {
-                "api_token": PIPEDRIVE_API_TOKEN,
-                "limit": 100,
-                "start": start_offset,
-                "user_id": 0
-            }
-            if computed_start:
-                query_params["start_date"] = computed_start
-            if computed_end:
-                query_params["end_date"] = computed_end
-            if done is not None:
-                query_params["done"] = 1 if done else 0
+        if period == "this_week":
+            # Segunda-feira da semana atual até Domingo
+            monday = now - timedelta(days=now.weekday())
+            sunday = monday + timedelta(days=6)
+            computed_start = monday.strftime("%Y-%m-%d")
+            computed_end = sunday.strftime("%Y-%m-%d")
+        elif period == "next_week":
+            next_monday = now - timedelta(days=now.weekday()) + timedelta(days=7)
+            next_sunday = next_monday + timedelta(days=6)
+            computed_start = next_monday.strftime("%Y-%m-%d")
+            computed_end = next_sunday.strftime("%Y-%m-%d")
+        elif period == "this_month":
+            first_day = now.replace(day=1)
+            # Próximo mês dia 1 - 1 dia
+            if now.month == 12:
+                last_day = now.replace(year=now.year + 1, month=1, day=1) - timedelta(days=1)
             else:
-                query_params["done"] = 0  # REGRA: Apenas atividades em aberto por padrão
-                
-            res = await client.get("https://api.pipedrive.com/v1/activities", params=query_params)
-            if res.status_code != 200:
-                break
-                
-            data = res.json().get("data") or []
-            if not data:
-                break
-                
-            all_raw_activities.extend(data)
+                last_day = now.replace(month=now.month + 1, day=1) - timedelta(days=1)
+            computed_start = first_day.strftime("%Y-%m-%d")
+            computed_end = last_day.strftime("%Y-%m-%d")
+        elif period == "next_30_days":
+            computed_start = now.strftime("%Y-%m-%d")
+            computed_end = (now + timedelta(days=30)).strftime("%Y-%m-%d")
+        elif not computed_start and not computed_end and period != "all":
+            # Janela padrão: 30 dias atrás até 90 dias no futuro
+            computed_start = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+            computed_end = (now + timedelta(days=90)).strftime("%Y-%m-%d")
+
+        # Busca organizações (Assessores) cadastradas
+        async with httpx.AsyncClient() as client:
+            orgs_res = await client.get(
+                "https://api.pipedrive.com/v1/organizations",
+                params={"api_token": PIPEDRIVE_API_TOKEN, "limit": 100}
+            )
+            all_orgs = (orgs_res.json().get("data") or []) if orgs_res.status_code == 200 else []
+            assessores_map = {o["id"]: o["name"] for o in all_orgs if o.get("name")}
             
-            pagination = res.json().get("additional_data", {}).get("pagination", {})
-            if not pagination.get("more_items_in_collection"):
-                break
-            start_offset = pagination.get("next_start", start_offset + 100)
+            # Paginação sobre as atividades no Pipedrive (até 500 registros)
+            all_raw_activities = []
+            start_offset = 0
             
-        formatted_activities = []
-        assessores_count: Dict[str, Dict[str, Any]] = {}
-        assessores_count: Dict[str, Dict] = {}
-        
-        for a in raw_activities:
-            # Rejeita concluídas
-            if a.get("done") == 1 or a.get("done") is True:
-                continue
-                
-            org_name = a.get("org_name")
-            org_id = a.get("org_id")
-            person_name = a.get("person_name")
-            
-            # Filtro: Apenas com cliente e assessor (organização) definidos
-            if not person_name or not org_name or org_name == "Sem Assessor":
-                continue
-                
-            # Atualiza contagem por assessor
-            if org_name not in assessores_count:
-                assessores_count[org_name] = {
-                    "id": org_id,
-                    "name": org_name,
-                    "count": 0
+            for _ in range(5):
+                query_params = {
+                    "api_token": PIPEDRIVE_API_TOKEN,
+                    "limit": 100,
+                    "start": start_offset,
+                    "user_id": 0
                 }
-            assessores_count[org_name]["count"] += 1
-            
-            # Filtro por período se solicitado
-            act_due = a.get("due_date")
-            if act_due:
-                if computed_start and act_due < computed_start:
-                    continue
-                if computed_end and act_due > computed_end:
-                    continue
+                if computed_start:
+                    query_params["start_date"] = computed_start
+                if computed_end:
+                    query_params["end_date"] = computed_end
+                if done is not None:
+                    query_params["done"] = 1 if done else 0
+                else:
+                    query_params["done"] = 0  # REGRA: Apenas atividades em aberto por padrão
                     
-            # Filtro por assessor selecionado
-            if assessor_name and assessor_name != "all" and org_name != assessor_name:
-                continue
-            if assessor_id and org_id != assessor_id:
-                continue
+                res = await client.get("https://api.pipedrive.com/v1/activities", params=query_params)
+                if res.status_code != 200:
+                    break
+                    
+                data = res.json().get("data") or []
+                if not data:
+                    break
+                    
+                all_raw_activities.extend(data)
                 
-            due_date_str = a.get("due_date") or ""
-            due_time_str = a.get("due_time") or ""
-            duration_str = a.get("duration") or "01:00"
-            
-            time_slot = "Horário a definir"
-            day_name = ""
-            date_display = ""
-            start_fmt = ""
-            end_fmt = ""
-            
-            if due_date_str:
-                try:
-                    dt = datetime.strptime(due_date_str, "%Y-%m-%d")
-                    day_name = DIAS_SEMANA_PT.get(dt.weekday(), "")
-                    date_display = dt.strftime("%d/%m")
-                except Exception:
-                    pass
-                    
-            if due_time_str:
-                try:
-                    start_parts = [int(p) for p in due_time_str.split(":")[:2]]
-                    dur_parts = [int(p) for p in duration_str.split(":")[:2]]
-                    start_min = start_parts[0] * 60 + start_parts[1]
-                    dur_min = dur_parts[0] * 60 + dur_parts[1]
-                    end_min = start_min + dur_min
-                    end_h, end_m = divmod(end_min, 60)
-                    start_fmt = f"{start_parts[0]:02d}:{start_parts[1]:02d}"
-                    end_fmt = f"{end_h:02d}:{end_m:02d}"
-                    time_slot = f"{start_fmt} - {end_fmt}"
-                except Exception:
-                    time_slot = due_time_str
-                    
-            person_id = a.get("person_id")
-            deal_title = a.get("deal_title")
-            deal_id = a.get("deal_id")
-            subj = a.get("subject") or "Reunião"
-            act_type = a.get("type") or "meeting"
-            
-            act_ctx = {
-                "day_name": day_name,
-                "date_display": date_display,
-                "due_date_str": due_date_str,
-                "subject": subj,
-                "person_name": person_name,
-                "time_slot": time_slot,
-                "due_time_str": due_time_str,
-                "duration_str": duration_str,
-                "start_fmt": start_fmt,
-                "end_fmt": end_fmt,
-                "org_name": org_name,
-                "deal_title": deal_title or "",
-                "deal_id": deal_id or "",
-            }
-            
-            # Template WhatsApp linha única formatado dinamicamente
-            wa_template = format_whatsapp_template(tpl_single, act_ctx)
-            
-            formatted_activities.append({
-                "id": str(a.get("id")),
-                "type": act_type,
-                "subject": subj,
-                "due_date": due_date_str,
-                "due_time": due_time_str,
-                "duration": duration_str,
-                "time_slot": time_slot,
-                "day_of_week": day_name,
-                "date_display": date_display,
-                "person_name": person_name,
-                "person_id": str(person_id) if person_id else None,
-                "org_name": org_name,
-                "org_id": org_id,
-                "deal_id": str(deal_id) if deal_id else None,
-                "deal_title": deal_title,
-                "whatsapp_template": wa_template
-            })
-            
-        # Ordena cronologicamente
-        formatted_activities.sort(key=lambda x: (x["due_date"], x["due_time"] or "99:99"))
-        
-        # Gera template consolidado para WhatsApp se filtrado por assessor
-        whatsapp_consolidated = ""
-        target_assessor_label = assessor_name if (assessor_name and assessor_name != "all") else "Geral"
-        if formatted_activities:
-            header_text = format_whatsapp_template(tpl_header, {"assessor": target_assessor_label, "org_name": target_assessor_label})
-            lines = [header_text] if header_text else []
-            
-            by_date: Dict[str, List[Dict]] = {}
-            for act in formatted_activities:
-                d_key = act["due_date"]
-                by_date.setdefault(d_key, []).append(act)
+                pagination = res.json().get("additional_data", {}).get("pagination", {})
+                if not pagination.get("more_items_in_collection"):
+                    break
+                start_offset = pagination.get("next_start", start_offset + 100)
                 
-            for d_date, acts in by_date.items():
-                first_act = acts[0]
-                day_title = format_whatsapp_template(tpl_day, {
-                    "dia_semana": first_act["day_of_week"].capitalize(),
-                    "data": first_act["date_display"],
-                    "data_completa": first_act["due_date"],
-                    "day_of_week": first_act["day_of_week"].capitalize(),
-                    "date_display": first_act["date_display"]
+            formatted_activities = []
+            assessores_count: Dict[str, Dict[str, Any]] = {}
+            
+            for a in all_raw_activities:
+                # Rejeita concluídas
+                if a.get("done") == 1 or a.get("done") is True:
+                    continue
+                    
+                org_name = a.get("org_name") or (assessores_map.get(a.get("org_id")) if a.get("org_id") else None)
+                org_id = a.get("org_id")
+                person_name = a.get("person_name")
+                
+                # Filtro: Apenas com cliente e assessor (organização) definidos
+                if not person_name or not org_name or org_name == "Sem Assessor":
+                    continue
+                    
+                # Atualiza contagem por assessor
+                if org_name not in assessores_count:
+                    assessores_count[org_name] = {
+                        "id": org_id,
+                        "name": org_name,
+                        "count": 0
+                    }
+                assessores_count[org_name]["count"] += 1
+                
+                # Filtro por assessor selecionado
+                if assessor_name and assessor_name != "all" and org_name != assessor_name:
+                    continue
+                if assessor_id and org_id != assessor_id:
+                    continue
+                    
+                due_date_str = a.get("due_date") or ""
+                due_time_str = a.get("due_time") or ""
+                duration_str = a.get("duration") or "01:00"
+                
+                time_slot = "Horário a definir"
+                day_name = ""
+                date_display = ""
+                start_fmt = ""
+                end_fmt = ""
+                
+                if due_date_str:
+                    try:
+                        dt = datetime.strptime(due_date_str, "%Y-%m-%d")
+                        day_name = DIAS_SEMANA_PT.get(dt.weekday(), "")
+                        date_display = dt.strftime("%d/%m")
+                    except Exception:
+                        pass
+                        
+                if due_time_str:
+                    try:
+                        start_parts = [int(p) for p in due_time_str.split(":")[:2]]
+                        dur_parts = [int(p) for p in duration_str.split(":")[:2]]
+                        start_min = start_parts[0] * 60 + start_parts[1]
+                        dur_min = dur_parts[0] * 60 + dur_parts[1]
+                        end_min = start_min + dur_min
+                        end_h, end_m = divmod(end_min, 60)
+                        start_fmt = f"{start_parts[0]:02d}:{start_parts[1]:02d}"
+                        end_fmt = f"{end_h:02d}:{end_m:02d}"
+                        time_slot = f"{start_fmt} - {end_fmt}"
+                    except Exception:
+                        time_slot = due_time_str
+                        
+                person_id = a.get("person_id")
+                deal_title = a.get("deal_title")
+                deal_id = a.get("deal_id")
+                subj = a.get("subject") or "Reunião"
+                act_type = a.get("type") or "meeting"
+                
+                act_ctx = {
+                    "day_name": day_name,
+                    "date_display": date_display,
+                    "due_date_str": due_date_str,
+                    "subject": subj,
+                    "person_name": person_name,
+                    "time_slot": time_slot,
+                    "due_time_str": due_time_str,
+                    "duration_str": duration_str,
+                    "start_fmt": start_fmt,
+                    "end_fmt": end_fmt,
+                    "org_name": org_name,
+                    "deal_title": deal_title or "",
+                    "deal_id": deal_id or "",
+                }
+                
+                # Template WhatsApp linha única formatado dinamicamente
+                wa_template = format_whatsapp_template(tpl_single, act_ctx)
+                
+                formatted_activities.append({
+                    "id": str(a.get("id")),
+                    "type": act_type,
+                    "subject": subj,
+                    "due_date": due_date_str,
+                    "due_time": due_time_str,
+                    "duration": duration_str,
+                    "time_slot": time_slot,
+                    "day_of_week": day_name,
+                    "date_display": date_display,
+                    "person_name": person_name,
+                    "person_id": str(person_id) if person_id else None,
+                    "org_name": org_name,
+                    "org_id": org_id,
+                    "deal_id": str(deal_id) if deal_id else None,
+                    "deal_title": deal_title,
+                    "deal_url": f"https://investimentosblue.pipedrive.com/deal/{deal_id}" if deal_id else None,
+                    "whatsapp_template": wa_template
                 })
-                if day_title:
-                    lines.append(day_title)
-                    
-                for act in acts:
-                    item_text = format_whatsapp_template(tpl_item, {
-                        "horario": act["time_slot"],
-                        "time_slot": act["time_slot"],
-                        "assunto": act["subject"],
-                        "subject": act["subject"],
-                        "cliente": act["person_name"],
-                        "person_name": act["person_name"],
-                        "assessor": act["org_name"],
-                        "deal": act.get("deal_title") or "",
-                        "deal_id": act.get("deal_id") or ""
-                    })
-                    if item_text:
-                        lines.append(item_text)
-                lines.append("")
                 
-            if tpl_footer:
-                lines.append(tpl_footer.strip())
-                
-            whatsapp_consolidated = "\n".join(lines).strip()
+            # Ordena cronologicamente
+            formatted_activities.sort(key=lambda x: (x["due_date"], x["due_time"] or "99:99"))
             
-        # Retorna assessores ordenados por contagem (maiores primeiro)
-        assessores_list = sorted(
-            [a for a in assessores_count.values() if a["count"] > 0],
-            key=lambda x: -x["count"]
-        )
-        
-        return {
-            "activities": formatted_activities,
-            "assessores": assessores_list,
-            "whatsapp_consolidated": whatsapp_consolidated,
-            "templates": {
-                "whatsapp_single_template": tpl_single,
-                "whatsapp_header_template": tpl_header,
-                "whatsapp_day_template": tpl_day,
-                "whatsapp_item_template": tpl_item,
-                "whatsapp_footer_template": tpl_footer
-            },
-            "period": {
-                "start_date": computed_start,
-                "end_date": computed_end,
-            "total": len(formatted_activities)
-        }
+            # Gera template consolidado para WhatsApp se filtrado por assessor
+            whatsapp_consolidated = ""
+            target_assessor_label = assessor_name if (assessor_name and assessor_name != "all") else "Geral"
+            if formatted_activities:
+                header_text = format_whatsapp_template(tpl_header, {"assessor": target_assessor_label, "org_name": target_assessor_label})
+                lines = [header_text] if header_text else []
+                
+                by_date: Dict[str, List[Dict]] = {}
+                for act in formatted_activities:
+                    d_key = act["due_date"]
+                    by_date.setdefault(d_key, []).append(act)
+                    
+                for d_date, acts in by_date.items():
+                    first_act = acts[0]
+                    day_title = format_whatsapp_template(tpl_day, {
+                        "dia_semana": first_act["day_of_week"].capitalize(),
+                        "data": first_act["date_display"],
+                        "data_completa": first_act["due_date"],
+                        "day_of_week": first_act["day_of_week"].capitalize(),
+                        "date_display": first_act["date_display"]
+                    })
+                    if day_title:
+                        lines.append(day_title)
+                        
+                    for act in acts:
+                        item_text = format_whatsapp_template(tpl_item, {
+                            "horario": act["time_slot"],
+                            "time_slot": act["time_slot"],
+                            "assunto": act["subject"],
+                            "subject": act["subject"],
+                            "cliente": act["person_name"],
+                            "person_name": act["person_name"],
+                            "assessor": act["org_name"],
+                            "deal": act.get("deal_title") or "",
+                            "deal_id": act.get("deal_id") or ""
+                        })
+                        if item_text:
+                            lines.append(item_text)
+                    lines.append("")
+                    
+                if tpl_footer:
+                    lines.append(tpl_footer.strip())
+                    
+                whatsapp_consolidated = "\n".join(lines).strip()
+                
+            # Retorna assessores ordenados por contagem (maiores primeiro)
+            assessores_list = sorted(
+                [a for a in assessores_count.values() if a["count"] > 0],
+                key=lambda x: -x["count"]
+            )
+            
+            return {
+                "activities": formatted_activities,
+                "assessores": assessores_list,
+                "whatsapp_consolidated": whatsapp_consolidated,
+                "templates": {
+                    "whatsapp_single_template": tpl_single,
+                    "whatsapp_header_template": tpl_header,
+                    "whatsapp_day_template": tpl_day,
+                    "whatsapp_item_template": tpl_item,
+                    "whatsapp_footer_template": tpl_footer
+                },
+                "period": {
+                    "start_date": computed_start,
+                    "end_date": computed_end,
+                    "period_filter": period or "all"
+                },
+                "total": len(formatted_activities)
+            }
+    except Exception as e:
+        logger.error(f"Erro ao listar atividades do Pipedrive: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro interno ao buscar atividades: {str(e)}")
 
 # ============================================================================
 # PIPELINE COMERCIAL (MONITORAMENTO ATIVO)
