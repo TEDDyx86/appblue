@@ -808,11 +808,14 @@ def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
     return data
 
 def generate_pipedrive_briefing_html(briefing_json: dict, meeting_title: str, client_name: str) -> str:
-    """Gera o HTML rico e formatado para a descrição da atividade / nota no Pipedrive"""
-    resumo_html = f"<p><strong>📝 Resumo Executivo:</strong><br/>{briefing_json.get('resumo_rapido')}</p>" if briefing_json.get("resumo_rapido") else ""
-    
+    """Gera o HTML rico e formatado para a descrição da atividade / nota no Pipedrive com o link no topo"""
     tactiq_url = briefing_json.get("tactiq_link")
-    tactiq_link_html = f"<p><strong>🔗 Gravação & Transcrição no Tactiq:</strong> <a href='{tactiq_url}'>{tactiq_url}</a></p>" if tactiq_url else ""
+    tactiq_link_html = (
+        f"<p style='font-size: 13px;'><strong>🔗 Link da Gravação & Transcrição (Tactiq):</strong><br/>"
+        f"<a href='{tactiq_url}' target='_blank' style='color: #0092FF; font-weight: bold;'>{tactiq_url}</a></p><hr/>"
+    ) if tactiq_url else ""
+
+    resumo_html = f"<p><strong>📝 Resumo Executivo:</strong><br/>{briefing_json.get('resumo_rapido')}</p>" if briefing_json.get("resumo_rapido") else ""
     
     dados_cli = briefing_json.get("dados_cliente", {})
     dados_extras = []
@@ -839,17 +842,15 @@ def generate_pipedrive_briefing_html(briefing_json: dict, meeting_title: str, cl
 
     html = (
         f"<h3>📋 Briefing da Reunião (Origem: Tactiq / Google Drive)</h3>"
+        f"{tactiq_link_html}"
         f"<p><strong>Reunião:</strong> {meeting_title}</p>"
         f"<p><strong>Cliente:</strong> {client_name}</p>"
-        f"{tactiq_link_html}"
         f"{resumo_html}"
         f"{dados_cli_html}"
         f"<h4>📌 Principais Tópicos Abordados:</h4>"
         f"<ul>{topicos_html or '<li>Discussão patrimonial e sucessória.</li>'}</ul>"
         f"{decisoes_section}"
         f"{atencao_section}"
-        f"<h4>🎯 Próxima Ação Sugerida:</h4>"
-        f"<p>{briefing_json.get('proxima_acao', {}).get('descricao', 'Dar continuidade aos alinhamentos')}</p>"
         f"<hr/>"
         f"<p><em>⚡ Sincronizado automaticamente pelo Sistema Robson Tavernard (Investimentos Blue)</em></p>"
     )
