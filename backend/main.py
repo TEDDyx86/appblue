@@ -1409,11 +1409,11 @@ async def list_pipedrive_activities(
             raw_types = (types_res.json().get("data") or []) if types_res.status_code == 200 else []
             types_map = {t["key_string"]: t for t in raw_types if t.get("key_string")}
             
-            # 3. Paginação sobre as atividades no Pipedrive (até 500 registros)
+            # 3. Paginação sobre as atividades no Pipedrive (até 1000 registros)
             all_raw_activities = []
             start_offset = 0
             
-            for _ in range(5):
+            for _ in range(10):
                 query_params = {
                     "api_token": PIPEDRIVE_API_TOKEN,
                     "limit": 100,
@@ -1455,14 +1455,14 @@ async def list_pipedrive_activities(
                 if a.get("done") == 1 or a.get("done") is True:
                     continue
                     
-                org_name = a.get("org_name") or (assessores_map.get(a.get("org_id")) if a.get("org_id") else None)
+                raw_org = a.get("org_name") or (assessores_map.get(a.get("org_id")) if a.get("org_id") else None)
+                org_name = raw_org if raw_org else "Investimentos Blue"
                 org_id = a.get("org_id")
-                person_name = a.get("person_name")
-                raw_act_type = a.get("type") or "meeting"
                 
-                # Filtro: Apenas com cliente e assessor (organização) definidos
-                if not person_name or not org_name or org_name == "Sem Assessor":
-                    continue
+                raw_person = a.get("person_name")
+                raw_subj = a.get("subject") or "Reunião"
+                person_name = raw_person if raw_person else raw_subj
+                raw_act_type = a.get("type") or "meeting"
                     
                 # Mapeia nome legível e ícone da Tag / Tipo
                 t_info = types_map.get(raw_act_type) or DEFAULT_ACTIVITY_TYPES_MAP.get(raw_act_type) or {"name": raw_act_type.capitalize(), "icon_key": "tag"}

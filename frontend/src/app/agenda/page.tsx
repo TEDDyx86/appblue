@@ -316,10 +316,8 @@ export default function AgendaPage() {
   }, [fetchActivities])
 
   useEffect(() => {
-    if (activeTab === 'settings') {
-      fetchSettings()
-    }
-  }, [activeTab, fetchSettings])
+    fetchSettings()
+  }, [fetchSettings])
 
   // Salva configurações no Supabase
   const handleSaveSettings = async (e?: React.FormEvent, customSettings?: CalendarSettingsData) => {
@@ -438,10 +436,11 @@ export default function AgendaPage() {
     setTimeout(() => setCopiedSingleId(null), 2000)
   }
 
-  // Copia mensagem consolidada
+  // Copia mensagem consolidada gerada dinamicamente conforme os filtros aplicados
   const handleCopyConsolidated = () => {
-    if (!whatsappConsolidated) return
-    navigator.clipboard.writeText(whatsappConsolidated)
+    const text = dynamicWhatsappConsolidated || whatsappConsolidated
+    if (!text) return
+    navigator.clipboard.writeText(text)
     setCopiedConsolidated(true)
     setTimeout(() => setCopiedConsolidated(false), 2500)
   }
@@ -537,6 +536,35 @@ export default function AgendaPage() {
     return text
   }
 
+  // Helper para formatar template individual de WhatsApp em tempo real com base nas configurações
+  const formatSingleActivityWhatsapp = useCallback((act: PipedriveActivity) => {
+    const tpl = settings?.whatsapp_single_template || '{dia_semana} ({data}) {assunto} com {cliente} ({horario})'
+    return tpl
+      .replaceAll('{dia_semana}', act.day_of_week ? act.day_of_week.charAt(0).toUpperCase() + act.day_of_week.slice(1) : '')
+      .replaceAll('{dia}', act.day_of_week || '')
+      .replaceAll('{day_of_week}', act.day_of_week || '')
+      .replaceAll('{data}', act.date_display || '')
+      .replaceAll('{date_display}', act.date_display || '')
+      .replaceAll('{data_completa}', act.due_date || '')
+      .replaceAll('{due_date}', act.due_date || '')
+      .replaceAll('{horario}', act.time_slot || act.due_time || '')
+      .replaceAll('{time_slot}', act.time_slot || act.due_time || '')
+      .replaceAll('{horario_inicio}', act.due_time || '')
+      .replaceAll('{duracao}', act.duration || '')
+      .replaceAll('{duration}', act.duration || '')
+      .replaceAll('{assunto}', act.subject || '')
+      .replaceAll('{subject}', act.subject || '')
+      .replaceAll('{cliente}', act.person_name || 'Cliente')
+      .replaceAll('{person_name}', act.person_name || 'Cliente')
+      .replaceAll('{assessor}', act.org_name || 'Investimentos Blue')
+      .replaceAll('{org_name}', act.org_name || 'Investimentos Blue')
+      .replaceAll('{deal}', act.deal_title || '')
+      .replaceAll('{deal_title}', act.deal_title || '')
+      .replaceAll('{deal_id}', act.deal_id || '')
+      .replaceAll('{tipo}', act.type_name || act.type || '')
+      .replaceAll('{type}', act.type_name || act.type || '')
+  }, [settings])
+
   // Filtra, deduplica e ordena atividades (excluindo concluídas/feitas)
   const filteredActivities = useMemo(() => {
     const seen = new Set<string>()
@@ -545,16 +573,31 @@ export default function AgendaPage() {
       seen.add(a.id)
 
       if (a.done) return false
-      if (!a.person_name || !a.org_name || a.org_name === 'Sem Assessor') return false
-      if (selectedTags.length > 0 && !selectedTags.includes(a.type)) return false
 
+      // Filtro de Assessor (Organização)
+      if (selectedAssessor !== 'all') {
+        const actOrg = (a.org_name || '').toLowerCase().trim()
+        const targetOrg = selectedAssessor.toLowerCase().trim()
+        if (actOrg !== targetOrg) return false
+      }
+
+      // Filtro de Tags (multi-seleção)
+      if (selectedTags.length > 0 && !selectedTags.includes(a.type)) {
+        return false
+      }
+
+      // Filtro de Busca de Texto
       if (!activitySearch.trim()) return true
       const q = activitySearch.toLowerCase().trim()
       return (
         (a.person_name || '').toLowerCase().includes(q) ||
         (a.subject || '').toLowerCase().includes(q) ||
         (a.org_name || '').toLowerCase().includes(q) ||
-        (a.deal_title || '').toLowerCase().includes(q)
+        (a.deal_title || '').toLowerCase().includes(q) ||
+        (a.type_name || '').toLowerCase().includes(q) ||
+        (a.date_display || '').toLowerCase().includes(q) ||
+        (a.day_of_week || '').toLowerCase().includes(q) ||
+        (a.time_slot || '').toLowerCase().includes(q)
       )
     })
 
@@ -573,7 +616,90 @@ export default function AgendaPage() {
       }
       return 0
     })
-  }, [activities, activitySearch, activitySortBy, selectedTags])
+  }, [activities, activitySearch, activitySortBy, selectedTags, selectedAssessor])
+
+  // Gera o texto consolidado do WhatsApp dinamicamente conforme os filtros ativos
+  const dynamicWhatsappConsolidated = useMemo(() => {
+    if (filteredActivities.length === 0) return ''
+
+    const tplHeader = settings?.whatsapp_header_template || '📅 *Agenda de Atendimentos - Robson Vieira & {assessor}*\n'
+    const tplDay = settings?.whatsapp_day_template || '🔹 *{dia_semana} ({data})*'
+    const tplItem = settings?.whatsapp_item_template || '• {horario} | {assunto} com {cliente}'
+    const tplFooter = settings?.whatsapp_footer_template !== undefined ? settings.whatsapp_footer_template : 'Qualquer dúvida ou ajuste de horário, estou à disposição! 🚀'
+
+    let assessorLabel = 'Investimentos Blue'
+    if (selectedAssessor !== 'all') {
+      assessorLabel = selectedAssessor
+    } else {
+      const uniqueOrgs = Array.from(new Set(filteredActivities.map((a) => a.org_name).filter(Boolean)))
+      if (uniqueOrgs.length === 1) {
+        assessorLabel = uniqueOrgs[0]
+      }
+    }
+
+    const headerText = tplHeader
+      .replaceAll('{assessor}', assessorLabel)
+      .replaceAll('{org_name}', assessorLabel)
+
+    const lines: string[] = []
+    if (headerText.trim()) {
+      lines.push(headerText.trim())
+    }
+
+    const byDate: Record<string, PipedriveActivity[]> = {}
+    for (const act of filteredActivities) {
+      const key = act.due_date || 'Sem data'
+      if (!byDate[key]) byDate[key] = []
+      byDate[key].push(act)
+    }
+
+    for (const [, acts] of Object.entries(byDate)) {
+      const first = acts[0]
+      const dayTitle = tplDay
+        .replaceAll('{dia_semana}', first.day_of_week ? first.day_of_week.charAt(0).toUpperCase() + first.day_of_week.slice(1) : '')
+        .replaceAll('{dia}', first.day_of_week || '')
+        .replaceAll('{day_of_week}', first.day_of_week || '')
+        .replaceAll('{data}', first.date_display || '')
+        .replaceAll('{date_display}', first.date_display || '')
+        .replaceAll('{data_completa}', first.due_date || '')
+        .replaceAll('{due_date}', first.due_date || '')
+
+      if (dayTitle.trim()) {
+        lines.push(dayTitle.trim())
+      }
+
+      for (const act of acts) {
+        const itemText = tplItem
+          .replaceAll('{horario}', act.time_slot || act.due_time || '')
+          .replaceAll('{time_slot}', act.time_slot || act.due_time || '')
+          .replaceAll('{horario_inicio}', act.due_time || '')
+          .replaceAll('{duracao}', act.duration || '')
+          .replaceAll('{duration}', act.duration || '')
+          .replaceAll('{assunto}', act.subject || '')
+          .replaceAll('{subject}', act.subject || '')
+          .replaceAll('{cliente}', act.person_name || 'Cliente')
+          .replaceAll('{person_name}', act.person_name || 'Cliente')
+          .replaceAll('{assessor}', act.org_name || assessorLabel)
+          .replaceAll('{org_name}', act.org_name || assessorLabel)
+          .replaceAll('{deal}', act.deal_title || '')
+          .replaceAll('{deal_title}', act.deal_title || '')
+          .replaceAll('{deal_id}', act.deal_id || '')
+          .replaceAll('{tipo}', act.type_name || act.type || '')
+          .replaceAll('{type}', act.type_name || act.type || '')
+
+        if (itemText.trim()) {
+          lines.push(itemText.trim())
+        }
+      }
+      lines.push('')
+    }
+
+    if (tplFooter && tplFooter.trim()) {
+      lines.push(tplFooter.trim())
+    }
+
+    return lines.join('\n').trim()
+  }, [filteredActivities, settings, selectedAssessor])
 
   // Agrupa atividades por data para o calendário
   const groupedByDate = useMemo(() => {
@@ -732,14 +858,14 @@ export default function AgendaPage() {
                   </div>
 
                   {/* WhatsApp Consolidated Action Button */}
-                  {whatsappConsolidated && (
+                  {(dynamicWhatsappConsolidated || whatsappConsolidated) && (
                     <button
                       type="button"
                       onClick={handleCopyConsolidated}
                       className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/25 transition-all self-start lg:self-auto"
                     >
                       {copiedConsolidated ? <CheckCheck className="w-4 h-4" /> : <MessageSquare className="w-4 h-4" />}
-                      <span>{copiedConsolidated ? 'Agenda Copiada!' : 'Copiar Agenda p/ WhatsApp do Assessor'}</span>
+                      <span>{copiedConsolidated ? 'Agenda Copiada!' : 'Copiar Agenda p/ WhatsApp'}</span>
                     </button>
                   )}
                 </div>
@@ -1132,13 +1258,13 @@ export default function AgendaPage() {
                                   {/* Copy WhatsApp template button */}
                                   <button
                                     type="button"
-                                    onClick={() => handleCopySingleTemplate(act.id, act.whatsapp_template)}
+                                    onClick={() => handleCopySingleTemplate(act.id, formatSingleActivityWhatsapp(act))}
                                     className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
                                       isCopied
                                         ? 'bg-emerald-600 text-white shadow-xs'
                                         : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/60'
                                     }`}
-                                    title={`Copiar para WhatsApp: "${act.whatsapp_template}"`}
+                                    title={`Copiar para WhatsApp: "${formatSingleActivityWhatsapp(act)}"`}
                                   >
                                     {isCopied ? <Check className="w-3.5 h-3.5" /> : <MessageSquare className="w-3.5 h-3.5" />}
                                     <span>{isCopied ? 'Copiado!' : 'Copiar p/ Whats'}</span>
@@ -1195,10 +1321,10 @@ export default function AgendaPage() {
                       </button>
                     </div>
 
-                    {whatsappConsolidated ? (
+                    {(dynamicWhatsappConsolidated || whatsappConsolidated) ? (
                       <div className="space-y-3">
                         <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] text-xs font-mono text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed max-h-[320px] overflow-y-auto">
-                          {whatsappConsolidated}
+                          {dynamicWhatsappConsolidated || whatsappConsolidated}
                         </div>
 
                         <div className="flex items-center space-x-2">
@@ -1212,7 +1338,7 @@ export default function AgendaPage() {
                           </button>
 
                           <a
-                            href={`https://wa.me/?text=${encodeURIComponent(whatsappConsolidated)}`}
+                            href={`https://wa.me/?text=${encodeURIComponent(dynamicWhatsappConsolidated || whatsappConsolidated)}`}
                             target="_blank"
                             rel="noreferrer"
                             className="p-2.5 rounded-xl bg-slate-100 dark:bg-[#00061A] hover:bg-slate-200 dark:hover:bg-[#002060] text-emerald-600 dark:text-emerald-400 border border-slate-200 dark:border-[#002060] transition-colors"
@@ -1224,7 +1350,7 @@ export default function AgendaPage() {
                       </div>
                     ) : (
                       <div className="py-8 text-center text-xs text-slate-400">
-                        <p>Selecione um assessor acima para gerar o resumo semanal formatado.</p>
+                        <p>Nenhuma atividade encontrada com os filtros selecionados para gerar o resumo.</p>
                       </div>
                     )}
                   </div>
