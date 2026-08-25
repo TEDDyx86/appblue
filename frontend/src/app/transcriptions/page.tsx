@@ -64,6 +64,10 @@ interface BriefingData {
     deal_id?: string | null
     person_url?: string | null
     deal_url?: string | null
+    activity_id?: string | null
+    activity_subject?: string | null
+    activity_type?: string | null
+    activity_date?: string | null
     note_id?: string | null
   }
 }
@@ -106,9 +110,11 @@ export default function TranscriptionsPage() {
   const [dealResults, setDealResults] = useState<any[]>([])
   const [selectedDeal, setSelectedDeal] = useState<any | null>(null)
 
-  const [createNote, setCreateNote] = useState(true)
-  const [deleteOldNote, setDeleteOldNote] = useState(true)
+  // Pipedrive Activity settings in Modal
+  const [activityDate, setActivityDate] = useState('')
+  const [activitySubject, setActivitySubject] = useState('Transcrição Tactiq')
   const [createActivity, setCreateActivity] = useState(true)
+  const [deleteOldActivity, setDeleteOldActivity] = useState(true)
   const [submittingAssign, setSubmittingAssign] = useState(false)
   const [unlinkingId, setUnlinkingId] = useState<string | null>(null)
   const [assignSuccess, setAssignSuccess] = useState(false)
@@ -254,7 +260,13 @@ export default function TranscriptionsPage() {
     setSearchPersonTerm(item.briefing_json?.dados_cliente?.nome || '')
     setSearchDealTerm('')
     setAssignMode('person')
-    setDeleteOldNote(true)
+    
+    // Define data da reunião padrão (ou data de hoje)
+    const defaultDate = item.meeting_date || item.briefing_json?.pipedrive?.activity_date || new Date().toISOString().split('T')[0]
+    setActivityDate(defaultDate)
+    setActivitySubject('Transcrição Tactiq')
+    setCreateActivity(true)
+    setDeleteOldActivity(true)
     setAssignSuccess(false)
   }
 
@@ -278,9 +290,11 @@ export default function TranscriptionsPage() {
           person_id: personIdToAssign ? String(personIdToAssign) : undefined,
           deal_id: dealIdToAssign ? String(dealIdToAssign) : undefined,
           cliente_nome: clientNameToAssign,
-          create_note: createNote,
-          delete_old_note: deleteOldNote,
+          activity_subject: activitySubject || 'Transcrição Tactiq',
+          activity_type: 'tactiq',
+          activity_date: activityDate || undefined,
           create_activity: createActivity,
+          delete_old_activity: deleteOldActivity,
         },
         {
           headers: { Authorization: `Bearer ${token}` },
@@ -324,9 +338,9 @@ export default function TranscriptionsPage() {
   }
 
   const handleUnlinkTranscription = async (item: Transcription) => {
-    const hasNote = Boolean(item.briefing_json?.pipedrive?.note_id)
-    const confirmMsg = hasNote
-      ? `Deseja desvincular a transcrição "${item.meeting_title || 'Reunião'}" do Pipedrive?\n\nA anotação associada no CRM será removida automaticamente.`
+    const hasActivity = Boolean(item.briefing_json?.pipedrive?.activity_id || item.briefing_json?.pipedrive?.note_id)
+    const confirmMsg = hasActivity
+      ? `Deseja desvincular a transcrição "${item.meeting_title || 'Reunião'}" do Pipedrive?\n\nA atividade associada no CRM será removida automaticamente.`
       : `Deseja desvincular a transcrição "${item.meeting_title || 'Reunião'}" do Pipedrive?`
 
     if (!window.confirm(confirmMsg)) return
@@ -338,7 +352,7 @@ export default function TranscriptionsPage() {
         `${API_URL}/api/transcriptions/${item.id}/unlink`,
         {
           headers: { Authorization: `Bearer ${token}` },
-          params: { delete_note: true },
+          params: { delete_activity: true, delete_note: true },
         }
       )
 
@@ -989,38 +1003,73 @@ export default function TranscriptionsPage() {
                 </div>
               )}
 
-              {/* Automation Note Info */}
-              <div className="pt-2 border-t border-slate-100 dark:border-[#002060] text-xs space-y-2.5">
-                <label className="flex items-center space-x-2.5 text-slate-700 dark:text-slate-300 font-medium">
-                  <input
-                    type="checkbox"
-                    checked={createNote}
-                    onChange={(e) => setCreateNote(e.target.checked)}
-                    className="w-4 h-4 rounded text-[#0092FF] focus:ring-[#0092FF]"
-                  />
-                  <span>Criar Anotação Rica com o Briefing e Tópicos na Timeline do Pipedrive</span>
-                </label>
+              {/* Automation Activity Info & Date Picker */}
+              <div className="pt-3 border-t border-slate-100 dark:border-[#002060] text-xs space-y-3 bg-slate-50/60 dark:bg-[#00061A]/50 p-4 rounded-2xl border border-slate-200/80 dark:border-[#002060]">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-bold text-[#0092FF] dark:text-[#00FFFF] tracking-wider flex items-center space-x-1.5">
+                    <span>⚡ Atividade Pipedrive</span>
+                    <span className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 text-[9px] font-extrabold text-[#002060] dark:text-[#00FFFF]">
+                      Tag: Tactiq
+                    </span>
+                  </span>
+                  <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 font-bold">
+                    Nome: &quot;Transcrição Tactiq&quot;
+                  </span>
+                </div>
 
-                {Boolean(assignItem.briefing_json?.pipedrive?.note_id) && (
-                  <label className="flex items-center space-x-2.5 text-rose-700 dark:text-rose-400 font-bold">
+                {/* Seletor de Data da Atividade */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    📅 Data da Reunião / Encerramento da Atividade:
+                  </label>
+                  <input
+                    type="date"
+                    value={activityDate}
+                    onChange={(e) => setActivityDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-[#000D38] border border-slate-200 dark:border-[#002060] font-mono text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                  />
+                  <span className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5 block">
+                    Define a data em que a reunião ocorreu e ficará salva no histórico do Pipedrive.
+                  </span>
+                </div>
+
+                <div className="space-y-2 pt-1 border-t border-slate-200/60 dark:border-[#002060]/60">
+                  <label className="flex items-center space-x-2.5 text-slate-700 dark:text-slate-300 font-medium">
                     <input
                       type="checkbox"
-                      checked={deleteOldNote}
-                      onChange={(e) => setDeleteOldNote(e.target.checked)}
-                      className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500"
+                      checked={createActivity}
+                      onChange={(e) => setCreateActivity(e.target.checked)}
+                      className="w-4 h-4 rounded text-[#0092FF] focus:ring-[#0092FF]"
                     />
-                    <span>Excluir anotação anterior no Pipedrive (Nota #{assignItem.briefing_json?.pipedrive?.note_id})</span>
+                    <span>Criar Atividade Concluída &quot;Transcrição Tactiq&quot; com o Briefing</span>
                   </label>
-                )}
-                
-                <p className="text-[11px] text-slate-400 dark:text-slate-500 pl-6.5">
-                  A nova anotação será adicionada diretamente ao contato e negócio no CRM com os tópicos da reunião e interesse do cliente.
-                </p>
+
+                  {Boolean(assignItem.briefing_json?.pipedrive?.activity_id || assignItem.briefing_json?.pipedrive?.note_id) && (
+                    <label className="flex items-center space-x-2.5 text-rose-700 dark:text-rose-400 font-bold">
+                      <input
+                        type="checkbox"
+                        checked={deleteOldActivity}
+                        onChange={(e) => setDeleteOldActivity(e.target.checked)}
+                        className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500"
+                      />
+                      <span>
+                        Excluir atividade anterior no Pipedrive{' '}
+                        {assignItem.briefing_json?.pipedrive?.activity_id
+                          ? `(Atividade #${assignItem.briefing_json.pipedrive.activity_id})`
+                          : ''}
+                      </span>
+                    </label>
+                  )}
+                  
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 pl-6.5">
+                    O briefing completo (tópicos, dores, interesse e próxima ação) será salvo na descrição da atividade no Pipedrive.
+                  </p>
+                </div>
               </div>
 
               {assignSuccess && (
                 <div className="p-3 rounded-xl bg-emerald-100 text-emerald-800 font-bold text-xs text-center animate-fade-in">
-                  ✅ Transcrição vinculada e anotação sincronizada com sucesso no Pipedrive!
+                  ✅ Transcrição vinculada e Atividade &quot;Transcrição Tactiq&quot; criada com sucesso no Pipedrive!
                 </div>
               )}
             </div>
@@ -1171,9 +1220,9 @@ export default function TranscriptionsPage() {
                           <ArrowUpRight className="w-3.5 h-3.5" />
                         </a>
                       )}
-                      {selectedItem.briefing_json?.pipedrive?.note_id && (
-                        <span className="text-[11px] text-slate-400 font-mono">
-                          (Nota #{selectedItem.briefing_json.pipedrive.note_id})
+                      {(selectedItem.briefing_json?.pipedrive?.activity_id || selectedItem.briefing_json?.pipedrive?.note_id) && (
+                        <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300 font-bold text-xs">
+                          <span>⚡ Atividade Tactiq #{selectedItem.briefing_json.pipedrive.activity_id || selectedItem.briefing_json.pipedrive.note_id}</span>
                         </span>
                       )}
                     </div>
