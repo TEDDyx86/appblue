@@ -36,11 +36,15 @@ import {
 import { useTheme } from '@/context/ThemeContext'
 
 interface BriefingData {
+  resumo_rapido?: string
   principais_topicos?: string[]
   dados_cliente?: {
     nome?: string
     idade?: string
     estado_civil?: string
+    herdeiros_filhos?: string
+    patrimonio_bens?: string
+    seguros_existentes?: string
     filhos?: string
     profissao?: string
     patrimonio_estimado?: string
@@ -49,6 +53,7 @@ interface BriefingData {
     principais_dores?: string[]
     demonstrou_interesse?: string
   }
+  decisoes_proximos_passos?: string[]
   proxima_acao?: {
     descricao?: string
     responsavel?: string
@@ -1125,21 +1130,58 @@ export default function TranscriptionsPage() {
                   {selectedItem.meeting_title || 'Reunião'}
                 </h3>
               </div>
-              <button
-                onClick={() => setSelectedItem(null)}
-                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-[#002060] transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center space-x-2">
+                {selectedItem.google_doc_id && (
+                  <a
+                    href={`https://docs.google.com/document/d/${selectedItem.google_doc_id}/edit`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-800 dark:text-emerald-400 font-semibold text-xs border border-emerald-200 dark:border-emerald-800/60 transition-colors"
+                  >
+                    <span>Google Drive</span>
+                    <ArrowUpRight className="w-3 h-3" />
+                  </a>
+                )}
+                {selectedItem.briefing_json?.tactiq_link && (
+                  <a
+                    href={selectedItem.briefing_json.tactiq_link}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-[#00061A] hover:bg-slate-200 dark:hover:bg-[#002060] text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200 dark:border-[#002060] transition-colors"
+                  >
+                    <span>Tactiq</span>
+                    <ArrowUpRight className="w-3 h-3" />
+                  </a>
+                )}
+                <button
+                  onClick={() => setSelectedItem(null)}
+                  className="p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-[#002060] transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             <div className="p-6 overflow-y-auto space-y-6">
-              {/* Cliente */}
+              {/* Resumo Rápido Executivo se existir */}
+              {selectedItem.briefing_json?.resumo_rapido && (
+                <div className="p-4 rounded-2xl bg-blue-50/70 dark:bg-[#002060]/30 border border-blue-200 dark:border-[#0092FF]/40 text-xs">
+                  <h4 className="text-[11px] font-extrabold uppercase tracking-wider text-[#0092FF] dark:text-[#00FFFF] mb-1.5 flex items-center space-x-1.5">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Resumo Executivo</span>
+                  </h4>
+                  <p className="text-slate-800 dark:text-slate-200 leading-relaxed font-medium">
+                    {selectedItem.briefing_json.resumo_rapido}
+                  </p>
+                </div>
+              )}
+
+              {/* Dados do Cliente */}
               <div>
                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 font-display">
                   Dados do Cliente
                 </h4>
-                <div className="grid grid-cols-2 gap-3 text-xs bg-slate-50 dark:bg-[#00061A]/80 p-4 rounded-xl border border-slate-200 dark:border-[#002060]">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs bg-slate-50 dark:bg-[#00061A]/80 p-4 rounded-2xl border border-slate-200 dark:border-[#002060]">
                   <div>
                     <span className="text-slate-400 block text-[10px]">Nome:</span>
                     <span className="font-bold text-slate-900 dark:text-white">
@@ -1147,8 +1189,42 @@ export default function TranscriptionsPage() {
                     </span>
                   </div>
                   <div>
-                    <span className="text-slate-400 block text-[10px]">Interesse:</span>
-                    <span className="font-medium text-slate-800 dark:text-slate-200 line-clamp-2">
+                    <span className="text-slate-400 block text-[10px]">Idade:</span>
+                    <span className="font-medium text-slate-800 dark:text-slate-200">
+                      {selectedItem.briefing_json?.dados_cliente?.idade || 'Não informado'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Estado Civil:</span>
+                    <span className="font-medium text-slate-800 dark:text-slate-200">
+                      {selectedItem.briefing_json?.dados_cliente?.estado_civil || 'Não informado'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Herdeiros / Filhos:</span>
+                    <span className="font-medium text-slate-800 dark:text-slate-200">
+                      {selectedItem.briefing_json?.dados_cliente?.herdeiros_filhos || selectedItem.briefing_json?.dados_cliente?.filhos || 'Não informado'}
+                    </span>
+                  </div>
+                  {selectedItem.briefing_json?.dados_cliente?.patrimonio_bens && (
+                    <div className="sm:col-span-2">
+                      <span className="text-slate-400 block text-[10px]">Patrimônio / Bens:</span>
+                      <span className="font-medium text-slate-800 dark:text-slate-200">
+                        {selectedItem.briefing_json.dados_cliente.patrimonio_bens}
+                      </span>
+                    </div>
+                  )}
+                  {selectedItem.briefing_json?.dados_cliente?.seguros_existentes && (
+                    <div className="sm:col-span-2">
+                      <span className="text-slate-400 block text-[10px]">Seguros & Previdência Existentes:</span>
+                      <span className="font-medium text-slate-800 dark:text-slate-200">
+                        {selectedItem.briefing_json.dados_cliente.seguros_existentes}
+                      </span>
+                    </div>
+                  )}
+                  <div className="sm:col-span-2">
+                    <span className="text-slate-400 block text-[10px]">Demonstrou Interesse:</span>
+                    <span className="font-medium text-slate-800 dark:text-slate-200">
                       {selectedItem.briefing_json?.dados_cliente?.demonstrou_interesse || 'Não informado'}
                     </span>
                   </div>
@@ -1156,15 +1232,47 @@ export default function TranscriptionsPage() {
               </div>
 
               {/* Tópicos */}
-              {selectedItem.briefing_json?.principais_topicos && (
+              {selectedItem.briefing_json?.principais_topicos && selectedItem.briefing_json.principais_topicos.length > 0 && (
                 <div>
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 font-display">
                     Principais Tópicos Abordados
                   </h4>
-                  <ul className="space-y-1.5 text-xs text-slate-700 dark:text-slate-300 list-disc list-inside bg-slate-50 dark:bg-[#00061A]/80 p-4 rounded-xl border border-slate-200 dark:border-[#002060]">
+                  <ul className="space-y-1.5 text-xs text-slate-700 dark:text-slate-300 list-disc list-inside bg-slate-50 dark:bg-[#00061A]/80 p-4 rounded-2xl border border-slate-200 dark:border-[#002060]">
                     {selectedItem.briefing_json.principais_topicos.map((topico, idx) => (
                       <li key={idx} className="leading-relaxed">
                         {topico}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Decisões e Próximos Passos */}
+              {selectedItem.briefing_json?.decisoes_proximos_passos && selectedItem.briefing_json.decisoes_proximos_passos.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 font-display">
+                    Decisões & Próximos Passos
+                  </h4>
+                  <ul className="space-y-1.5 text-xs text-slate-700 dark:text-slate-300 list-disc list-inside bg-emerald-50/50 dark:bg-emerald-950/20 p-4 rounded-2xl border border-emerald-200 dark:border-emerald-800/50">
+                    {selectedItem.briefing_json.decisoes_proximos_passos.map((decisao, idx) => (
+                      <li key={idx} className="leading-relaxed font-medium">
+                        {decisao}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Pontos de Atenção */}
+              {selectedItem.briefing_json?.pontos_atencao && selectedItem.briefing_json.pontos_atencao.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 font-display">
+                    Pontos de Atenção para a Próxima Reunião
+                  </h4>
+                  <ul className="space-y-1.5 text-xs text-amber-900 dark:text-amber-300 list-disc list-inside bg-amber-50/60 dark:bg-amber-950/25 p-4 rounded-2xl border border-amber-200 dark:border-amber-800/60">
+                    {selectedItem.briefing_json.pontos_atencao.map((ponto, idx) => (
+                      <li key={idx} className="leading-relaxed">
+                        {ponto}
                       </li>
                     ))}
                   </ul>
@@ -1177,13 +1285,13 @@ export default function TranscriptionsPage() {
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 font-display">
                     Próxima Ação & Follow-up
                   </h4>
-                  <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 text-xs">
+                  <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 text-xs">
                     <p className="font-bold text-slate-900 dark:text-white">
                       {selectedItem.briefing_json.proxima_acao.descricao}
                     </p>
                     {selectedItem.briefing_json.proxima_acao.prazo_sugerido && (
-                      <span className="inline-block mt-2 text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 text-[#0092FF] dark:text-[#00FFFF]">
-                        Prazo: {selectedItem.briefing_json.proxima_acao.prazo_sugerido}
+                      <span className="inline-block mt-2 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/60 text-[#0092FF] dark:text-[#00FFFF]">
+                        Prazo Sugerido: {selectedItem.briefing_json.proxima_acao.prazo_sugerido}
                       </span>
                     )}
                   </div>
