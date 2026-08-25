@@ -1455,9 +1455,12 @@ async def list_pipedrive_activities(
                 if a.get("done") == 1 or a.get("done") is True:
                     continue
                     
-                raw_org = a.get("org_name") or (assessores_map.get(a.get("org_id")) if a.get("org_id") else None)
-                org_name = raw_org if raw_org else "Investimentos Blue"
+                org_name = a.get("org_name") or (assessores_map.get(a.get("org_id")) if a.get("org_id") else None)
                 org_id = a.get("org_id")
+                
+                # REGRA CRUCIAL: Ignora atividades sem assessor (organização) definida
+                if not org_name or org_name == "Sem Assessor" or org_name == "None":
+                    continue
                 
                 raw_person = a.get("person_name")
                 raw_subj = a.get("subject") or "Reunião"

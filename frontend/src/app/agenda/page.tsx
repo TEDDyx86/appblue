@@ -202,7 +202,7 @@ export default function AgendaPage() {
   const [selectedAssessor, setSelectedAssessor] = useState<string>('all')
   const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [isTagDropdownOpen, setIsTagDropdownOpen] = useState(false)
-  const [periodFilter, setPeriodFilter] = useState<'next_30_days' | 'this_week' | 'next_week' | 'this_month' | 'all'>('all')
+  const [periodFilter, setPeriodFilter] = useState<'next_30_days' | 'this_week' | 'next_week' | 'this_month' | 'all'>('this_week')
   const [activitySearch, setActivitySearch] = useState('')
   const [activitySortBy, setActivitySortBy] = useState<'date_asc' | 'date_desc' | 'assessor_az' | 'client_az'>('date_asc')
   const [copiedSingleId, setCopiedSingleId] = useState<string | null>(null)
@@ -567,7 +567,7 @@ export default function AgendaPage() {
     const counts: Record<string, { id: string | number; name: string; count: number }> = {}
 
     for (const a of activities) {
-      if (a.done) continue
+      if (a.done || !a.org_name || a.org_name === 'Sem Assessor' || a.org_name === 'None') continue
 
       // Aplica filtro de tags
       if (selectedTags.length > 0 && !selectedTags.includes(a.type)) {
@@ -589,7 +589,7 @@ export default function AgendaPage() {
         if (!matches) continue
       }
 
-      const org = a.org_name || 'Investimentos Blue'
+      const org = a.org_name
       if (!counts[org]) {
         counts[org] = {
           id: a.org_id || org,
@@ -613,7 +613,7 @@ export default function AgendaPage() {
     const counts: Record<string, TagItem> = {}
 
     for (const a of activities) {
-      if (a.done) continue
+      if (a.done || !a.org_name || a.org_name === 'Sem Assessor' || a.org_name === 'None') continue
 
       // Aplica filtro de assessor
       if (selectedAssessor !== 'all') {
@@ -673,14 +673,14 @@ export default function AgendaPage() {
     }
   }, [dynamicTags, selectedTags])
 
-  // Filtra, deduplica e ordena atividades (excluindo concluídas/feitas)
+  // Filtra, deduplica e ordena atividades (excluindo concluídas/feitas e sem assessor)
   const filteredActivities = useMemo(() => {
     const seen = new Set<string>()
     const list = activities.filter((a) => {
       if (!a.id || seen.has(a.id)) return false
       seen.add(a.id)
 
-      if (a.done) return false
+      if (a.done || !a.org_name || a.org_name === 'Sem Assessor' || a.org_name === 'None') return false
 
       // Filtro de Assessor (Organização)
       if (selectedAssessor !== 'all') {
