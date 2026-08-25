@@ -652,17 +652,24 @@ import re
 def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
     """
     Parser para extrair dados estruturados dos Google Docs gerados pelo Tactiq
+    Suporta formato legado e novo formato com Resumo Rápido, Decisões e Pontos de Atenção.
     """
     now = datetime.utcnow()
     data = {
+        "resumo_rapido": "",
         "principais_topicos": [],
         "dados_cliente": {
             "nome": "",
             "idade": "",
             "estado_civil": "",
+            "herdeiros_filhos": "",
+            "patrimonio_bens": "",
+            "seguros_existentes": "",
             "demonstrou_interesse": "",
             "email": ""
         },
+        "decisoes_proximos_passos": [],
+        "pontos_atencao": [],
         "proxima_acao": {
             "descricao": "",
             "prazo_sugerido": (now + timedelta(days=3)).strftime("%Y-%m-%d"),
@@ -679,19 +686,33 @@ def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
         }
     }
     
-    # 1. Participantes
+    # 1. Link Tactiq (busca link app.tactiq.io ou regex flexível)
+    link_match = re.search(r"https?://(?:app\.)?tactiq\.io/[^\s\)\>]+", text, re.IGNORECASE)
+    if link_match:
+        data["tactiq_link"] = link_match.group(0).strip()
+    else:
+        link_fallback = re.search(r"Link da reuni[aã]o.*:\s*(https?://[^\s]+)", text, re.IGNORECASE)
+        if link_fallback:
+            data["tactiq_link"] = link_fallback.group(1).strip()
+        
+    # 2. Participantes
     part_match = re.search(r"PARTICIPANTES_NOME:\s*(.*)", text, re.IGNORECASE)
     if part_match:
         parts = [p.strip() for p in part_match.group(1).split(",") if p.strip()]
         data["participantes"] = parts
+
+    # 3. Resumo Rápido
+    resumo_match = re.search(r"RESUMO R[AÁ]PIDO\s*\n(.*?)(?=(PRINCIPAIS T[ÓO]PICOS|DADOS DO CLIENTE|DECIS[OÕ]ES|====|$))", text, re.IGNORECASE | re.DOTALL)
+    if resumo_match:
+        data["resumo_rapido"] = resumo_match.group(1).strip()
         
-    # 2. Dados do Cliente
+    # 4. Dados do Cliente
     nome_match = re.search(r"\*\s*Nome:\s*(.*)", text, re.IGNORECASE)
     if nome_match and "nao informado" not in nome_match.group(1).lower() and "não informado" not in nome_match.group(1).lower():
         data["dados_cliente"]["nome"] = nome_match.group(1).strip()
     elif data["participantes"]:
         for p in data["participantes"]:
-            if "robson" not in p.lower():
+            if "robson" not in p.lower() and "alexandre" not in p.lower():
                 data["dados_cliente"]["nome"] = p
                 break
 
@@ -703,12 +724,24 @@ def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
     if ec_match:
         data["dados_cliente"]["estado_civil"] = ec_match.group(1).strip()
 
+    herdeiros_match = re.search(r"\*\s*Herdeiros[^\:]*:\s*(.*)", text, re.IGNORECASE)
+    if herdeiros_match:
+        data["dados_cliente"]["herdeiros_filhos"] = herdeiros_match.group(1).strip()
+
+    patrimonio_match = re.search(r"\*\s*Patrim[oô]nio[^\:]*:\s*(.*)", text, re.IGNORECASE)
+    if patrimonio_match:
+        data["dados_cliente"]["patrimonio_bens"] = patrimonio_match.group(1).strip()
+
+    seguros_match = re.search(r"\*\s*Seguros[^\:]*:\s*(.*)", text, re.IGNORECASE)
+    if seguros_match:
+        data["dados_cliente"]["seguros_existentes"] = seguros_match.group(1).strip()
+
     interesse_match = re.search(r"\*\s*Demonstrou interesse:\s*(.*)", text, re.IGNORECASE)
     if interesse_match:
         data["dados_cliente"]["demonstrou_interesse"] = interesse_match.group(1).strip()
         
-    # 3. Principais Tópicos
-    topicos_section = re.search(r"PRINCIPAIS T[ÓO]PICOS\s*\n(.*?)(?=(DADOS DO CLIENTE|Link da reuniao|====|$))", text, re.IGNORECASE | re.DOTALL)
+    # 5. Principais Tópicos
+    topicos_section = re.search(r"PRINCIPAIS T[ÓO]PICOS\s*\n(.*?)(?=(DADOS DO CLIENTE|DECIS[OÕ]ES|PONTOS DE ATEN[CÇ][AÃ]O|Link da reuni[aã]o|====|$))", text, re.IGNORECASE | re.DOTALL)
     if topicos_section:
         raw_topicos = topicos_section.group(1).strip().split("\n")
         topicos = []
@@ -718,15 +751,45 @@ def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
                 topicos.append(line_clean)
         data["principais_topicos"] = topicos
 
-    # 4. Próxima Ação
+    # 6. Decisões e Próximos Passos
+    decisoes_section = re.search(r"DECIS[OÕ]ES E PR[ÓO]XIMOS PASSOS\s*\n(.*?)(?=(PONTOS DE ATEN[CÇ][AÃ]O|DADOS DO CLIENTE|====|$))", text, re.IGNORECASE | re.DOTALL)
+    if decisoes_section:
+        raw_decisoes = decisoes_section.group(1).strip().split("\n")
+        decisoes = []
+        for line in raw_decisoes:
+            line_clean = re.sub(r"^[\*\-\•\d\.]+\s*", "", line).strip()
+            if line_clean and len(line_clean) > 3:
+                decisoes.append(line_clean)
+        data["decisoes_proximos_passos"] = decisoes
+
+    # 7. Pontos de Atenção
+    atencao_section = re.search(r"PONTOS DE ATEN[CÇ][AÃ]O[^\n]*\s*\n(.*?)(?=(DECIS[OÕ]ES|====|$))", text, re.IGNORECASE | re.DOTALL)
+    if atencao_section:
+        raw_atencao = atencao_section.group(1).strip().split("\n")
+        pontos = []
+        for line in raw_atencao:
+            line_clean = re.sub(r"^[\*\-\•\d\.]+\s*", "", line).strip()
+            if line_clean and len(line_clean) > 3:
+                pontos.append(line_clean)
+        data["pontos_atencao"] = pontos
+
+    # 8. Próxima Ação Sugerida
     proxima_acao_desc = ""
-    for t in reversed(data["principais_topicos"]):
-        if any(keyword in t.lower() for keyword in ["agend", "reuni", "propost", "enviar", "apresenta", "retorno", "custo", "avaliar", "estudo"]):
-            proxima_acao_desc = t
+    for d in reversed(data["decisoes_proximos_passos"]):
+        if any(keyword in d.lower() for keyword in ["agend", "reuni", "combinad", "enviar", "apresenta", "propost", "análise", "follow"]):
+            proxima_acao_desc = d
             break
             
     if not proxima_acao_desc:
-        if data["principais_topicos"]:
+        for t in reversed(data["principais_topicos"]):
+            if any(keyword in t.lower() for keyword in ["agend", "reuni", "propost", "enviar", "apresenta", "retorno", "custo", "avaliar", "estudo"]):
+                proxima_acao_desc = t
+                break
+            
+    if not proxima_acao_desc:
+        if data["decisoes_proximos_passos"]:
+            proxima_acao_desc = data["decisoes_proximos_passos"][0]
+        elif data["principais_topicos"]:
             proxima_acao_desc = f"Follow-up: {data['principais_topicos'][-1]}"
         else:
             proxima_acao_desc = f"Follow-up reunião com {data['dados_cliente']['nome'] or file_name}"
@@ -735,19 +798,62 @@ def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
     
     # Prioridade
     interesse = data["dados_cliente"]["demonstrou_interesse"].lower()
-    if "sim" in interesse or "alto" in interesse or "muito" in interesse:
+    if "sim" in interesse or "alto" in interesse or "muito" in interesse or "aprovou" in interesse:
         data["proxima_acao"]["prioridade"] = "alta"
     elif "não" in interesse or "baixo" in interesse or "recus" in interesse:
         data["proxima_acao"]["prioridade"] = "baixa"
     else:
         data["proxima_acao"]["prioridade"] = "média"
         
-    # Link Tactiq
-    link_match = re.search(r"Link da reuniao.*:\s*(https?://[^\s]+)", text, re.IGNORECASE)
-    if link_match:
-        data["tactiq_link"] = link_match.group(1).strip()
-        
     return data
+
+def generate_pipedrive_briefing_html(briefing_json: dict, meeting_title: str, client_name: str) -> str:
+    """Gera o HTML rico e formatado para a descrição da atividade / nota no Pipedrive"""
+    resumo_html = f"<p><strong>📝 Resumo Executivo:</strong><br/>{briefing_json.get('resumo_rapido')}</p>" if briefing_json.get("resumo_rapido") else ""
+    
+    tactiq_url = briefing_json.get("tactiq_link")
+    tactiq_link_html = f"<p><strong>🔗 Gravação & Transcrição no Tactiq:</strong> <a href='{tactiq_url}'>{tactiq_url}</a></p>" if tactiq_url else ""
+    
+    dados_cli = briefing_json.get("dados_cliente", {})
+    dados_extras = []
+    if dados_cli.get("idade"):
+        dados_extras.append(f"<li><strong>Idade:</strong> {dados_cli.get('idade')}</li>")
+    if dados_cli.get("estado_civil"):
+        dados_extras.append(f"<li><strong>Estado Civil:</strong> {dados_cli.get('estado_civil')}</li>")
+    if dados_cli.get("herdeiros_filhos"):
+        dados_extras.append(f"<li><strong>Herdeiros/Filhos:</strong> {dados_cli.get('herdeiros_filhos')}</li>")
+    if dados_cli.get("patrimonio_bens"):
+        dados_extras.append(f"<li><strong>Patrimônio/Bens:</strong> {dados_cli.get('patrimonio_bens')}</li>")
+    if dados_cli.get("seguros_existentes"):
+        dados_extras.append(f"<li><strong>Seguros/Previdência Existentes:</strong> {dados_cli.get('seguros_existentes')}</li>")
+    if dados_cli.get("demonstrou_interesse"):
+        dados_extras.append(f"<li><strong>Interesse:</strong> {dados_cli.get('demonstrou_interesse')}</li>")
+    dados_cli_html = f"<h4>👤 Dados do Cliente:</h4><ul>{''.join(dados_extras)}</ul>" if dados_extras else ""
+
+    topicos_html = "".join([f"<li>{t}</li>" for t in briefing_json.get("principais_topicos", [])])
+    decisoes_html = "".join([f"<li>{d}</li>" for d in briefing_json.get("decisoes_proximos_passos", [])])
+    atencao_html = "".join([f"<li>{a}</li>" for a in briefing_json.get("pontos_atencao", [])])
+
+    decisoes_section = f"<h4>✅ Decisões e Próximos Passos:</h4><ul>{decisoes_html}</ul>" if decisoes_html else ""
+    atencao_section = f"<h4>⚠️ Pontos de Atenção para a Próxima Reunião:</h4><ul>{atencao_html}</ul>" if atencao_html else ""
+
+    html = (
+        f"<h3>📋 Briefing da Reunião (Origem: Tactiq / Google Drive)</h3>"
+        f"<p><strong>Reunião:</strong> {meeting_title}</p>"
+        f"<p><strong>Cliente:</strong> {client_name}</p>"
+        f"{tactiq_link_html}"
+        f"{resumo_html}"
+        f"{dados_cli_html}"
+        f"<h4>📌 Principais Tópicos Abordados:</h4>"
+        f"<ul>{topicos_html or '<li>Discussão patrimonial e sucessória.</li>'}</ul>"
+        f"{decisoes_section}"
+        f"{atencao_section}"
+        f"<h4>🎯 Próxima Ação Sugerida:</h4>"
+        f"<p>{briefing_json.get('proxima_acao', {}).get('descricao', 'Dar continuidade aos alinhamentos')}</p>"
+        f"<hr/>"
+        f"<p><em>⚡ Sincronizado automaticamente pelo Sistema Robson Tavernard (Investimentos Blue)</em></p>"
+    )
+    return html
 
 async def get_person_deals(person_id: str) -> Optional[List[Dict]]:
     """Busca deals associados a uma pessoa no Pipedrive"""
@@ -888,24 +994,11 @@ async def process_new_transcription(user_id: Optional[str] = None) -> Dict[str, 
                             briefing_json["pipedrive"]["deal_id"] = deal_id
                             briefing_json["pipedrive"]["deal_url"] = f"https://investimentosblue.pipedrive.com/deal/{deal_id}"
                         
-                        # Se tiver alta confiança, cria a Atividade do tipo Tactiq concluída no Pipedrive
                         if matching_confidence >= 0.70:
-                            topicos_html = "".join([f"<li>{topico}</li>" for topico in briefing_json.get("principais_topicos", [])])
-                            tactiq_url = briefing_json.get("tactiq_link")
-                            tactiq_link_html = f"<p><strong>🔗 Gravação & Transcrição no Tactiq:</strong> <a href='{tactiq_url}'>{tactiq_url}</a></p>" if tactiq_url else ""
-                            
-                            activity_note_html = (
-                                f"<h3>📋 Briefing da Reunião (Origem: Tactiq / Google Drive)</h3>"
-                                f"<p><strong>Reunião:</strong> {meeting_title}</p>"
-                                f"<p><strong>Cliente:</strong> {cliente_nome}</p>"
-                                f"<p><strong>Interesse:</strong> {briefing_json.get('dados_cliente', {}).get('demonstrou_interesse', 'Não informado')}</p>"
-                                f"{tactiq_link_html}"
-                                f"<h4>Principais Tópicos Abordados:</h4>"
-                                f"<ul>{topicos_html or '<li>Discussão patrimonial e sucessória.</li>'}</ul>"
-                                f"<h4>🎯 Próxima Ação Sugerida:</h4>"
-                                f"<p>{briefing_json.get('proxima_acao', {}).get('descricao', 'Dar continuidade aos alinhamentos')}</p>"
-                                f"<hr/>"
-                                f"<p><em>⚡ Sincronizado automaticamente pelo Sistema Robson Tavernard (Investimentos Blue)</em></p>"
+                            activity_note_html = generate_pipedrive_briefing_html(
+                                briefing_json=briefing_json,
+                                meeting_title=meeting_title,
+                                client_name=cliente_nome
                             )
                             
                             act_res = await create_pipedrive_activity(
@@ -1901,22 +1994,10 @@ async def assign_transcription_to_crm(
     act_date = req.activity_date or t.get("meeting_date") or datetime.now().strftime("%Y-%m-%d")
     
     if req.create_activity:
-        topicos_html = "".join([f"<li>{topico}</li>" for topico in briefing_json.get("principais_topicos", [])])
-        tactiq_url = briefing_json.get("tactiq_link")
-        tactiq_link_html = f"<p><strong>🔗 Gravação & Transcrição no Tactiq:</strong> <a href='{tactiq_url}'>{tactiq_url}</a></p>" if tactiq_url else ""
-        
-        activity_note_html = (
-            f"<h3>📋 Briefing da Reunião (Origem: Tactiq / Google Drive)</h3>"
-            f"<p><strong>Reunião:</strong> {meeting_title}</p>"
-            f"<p><strong>Cliente:</strong> {client_name}</p>"
-            f"<p><strong>Interesse:</strong> {briefing_json.get('dados_cliente', {}).get('demonstrou_interesse', 'Não informado')}</p>"
-            f"{tactiq_link_html}"
-            f"<h4>Principais Tópicos Abordados:</h4>"
-            f"<ul>{topicos_html or '<li>Discussão patrimonial e sucessória.</li>'}</ul>"
-            f"<h4>🎯 Próxima Ação Sugerida:</h4>"
-            f"<p>{briefing_json.get('proxima_acao', {}).get('descricao', 'Dar continuidade aos alinhamentos')}</p>"
-            f"<hr/>"
-            f"<p><em>⚡ Sincronizado automaticamente pelo Sistema Robson Tavernard (Investimentos Blue)</em></p>"
+        activity_note_html = generate_pipedrive_briefing_html(
+            briefing_json=briefing_json,
+            meeting_title=meeting_title,
+            client_name=client_name
         )
         
         act_res = await create_pipedrive_activity(
