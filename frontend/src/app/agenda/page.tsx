@@ -265,9 +265,6 @@ export default function AgendaPage() {
       }
 
       const params: any = { period: periodFilter, done: false }
-      if (selectedAssessor !== 'all') {
-        params.assessor_name = selectedAssessor
-      }
 
       const res = await axios.get(`${API_URL}/api/pipedrive/activities`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -286,7 +283,7 @@ export default function AgendaPage() {
     } finally {
       setLoadingActivities(false)
     }
-  }, [API_URL, router, selectedAssessor, periodFilter])
+  }, [API_URL, router, periodFilter])
 
   // Carrega configurações de booking
   const fetchSettings = useCallback(async () => {
@@ -564,6 +561,117 @@ export default function AgendaPage() {
       .replaceAll('{tipo}', act.type_name || act.type || '')
       .replaceAll('{type}', act.type_name || act.type || '')
   }, [settings])
+
+  // 1. Assessores dinâmicos com contagem atualizada em tempo real conforme os filtros ativos de Tags e Busca
+  const dynamicAssessores = useMemo(() => {
+    const counts: Record<string, { id: string | number; name: string; count: number }> = {}
+
+    for (const a of activities) {
+      if (a.done) continue
+
+      // Aplica filtro de tags
+      if (selectedTags.length > 0 && !selectedTags.includes(a.type)) {
+        continue
+      }
+
+      // Aplica filtro de busca
+      if (activitySearch.trim()) {
+        const q = activitySearch.toLowerCase().trim()
+        const matches =
+          (a.person_name || '').toLowerCase().includes(q) ||
+          (a.subject || '').toLowerCase().includes(q) ||
+          (a.org_name || '').toLowerCase().includes(q) ||
+          (a.deal_title || '').toLowerCase().includes(q) ||
+          (a.type_name || '').toLowerCase().includes(q) ||
+          (a.date_display || '').toLowerCase().includes(q) ||
+          (a.day_of_week || '').toLowerCase().includes(q) ||
+          (a.time_slot || '').toLowerCase().includes(q)
+        if (!matches) continue
+      }
+
+      const org = a.org_name || 'Investimentos Blue'
+      if (!counts[org]) {
+        counts[org] = {
+          id: a.org_id || org,
+          name: org,
+          count: 0,
+        }
+      }
+      counts[org].count += 1
+    }
+
+    return Object.values(counts).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+  }, [activities, selectedTags, activitySearch])
+
+  // Total de atividades para o seletor de assessor
+  const totalAssessorActivities = useMemo(() => {
+    return dynamicAssessores.reduce((acc, a) => acc + a.count, 0)
+  }, [dynamicAssessores])
+
+  // 2. Tags dinâmicas disponíveis com contagem atualizada estritamente com base no Assessor selecionado e Busca
+  const dynamicTags = useMemo(() => {
+    const counts: Record<string, TagItem> = {}
+
+    for (const a of activities) {
+      if (a.done) continue
+
+      // Aplica filtro de assessor
+      if (selectedAssessor !== 'all') {
+        const actOrg = (a.org_name || '').toLowerCase().trim()
+        const targetOrg = selectedAssessor.toLowerCase().trim()
+        if (actOrg !== targetOrg) continue
+      }
+
+      // Aplica filtro de busca
+      if (activitySearch.trim()) {
+        const q = activitySearch.toLowerCase().trim()
+        const matches =
+          (a.person_name || '').toLowerCase().includes(q) ||
+          (a.subject || '').toLowerCase().includes(q) ||
+          (a.org_name || '').toLowerCase().includes(q) ||
+          (a.deal_title || '').toLowerCase().includes(q) ||
+          (a.type_name || '').toLowerCase().includes(q) ||
+          (a.date_display || '').toLowerCase().includes(q) ||
+          (a.day_of_week || '').toLowerCase().includes(q) ||
+          (a.time_slot || '').toLowerCase().includes(q)
+        if (!matches) continue
+      }
+
+      const typeKey = a.type || 'meeting'
+      const typeName = a.type_name || typeKey.toUpperCase()
+      const typeIcon = a.type_icon || 'tag'
+
+      if (!counts[typeKey]) {
+        counts[typeKey] = {
+          key: typeKey,
+          name: typeName,
+          icon: typeIcon,
+          count: 0,
+        }
+      }
+      counts[typeKey].count += 1
+    }
+
+    // Retorna apenas tags que possuem atividades (count > 0) para o assessor selecionado
+    return Object.values(counts)
+      .filter((t) => t.count > 0)
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+  }, [activities, selectedAssessor, activitySearch])
+
+  // Total de atividades para o seletor de tags
+  const totalTagActivities = useMemo(() => {
+    return dynamicTags.reduce((acc, t) => acc + t.count, 0)
+  }, [dynamicTags])
+
+  // Limpa automaticamente tags selecionadas que não estão presentes no assessor atual
+  useEffect(() => {
+    if (selectedTags.length > 0 && dynamicTags.length > 0) {
+      const validTags = selectedTags.filter((st) => dynamicTags.some((dt) => dt.key === st))
+      if (validTags.length !== selectedTags.length) {
+        setSelectedTags(validTags)
+      }
+    }
+  }, [dynamicTags, selectedTags])
 
   // Filtra, deduplica e ordena atividades (excluindo concluídas/feitas)
   const filteredActivities = useMemo(() => {
@@ -885,10 +993,10 @@ export default function AgendaPage() {
                         onChange={(e) => setSelectedAssessor(e.target.value)}
                         className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-[#0092FF] outline-none transition-all"
                       >
-                        <option value="all">🏢 Todos os Assessores ({assessores.reduce((acc, a) => acc + a.count, 0)})</option>
-                        {assessores.map((a) => (
+                        <option value="all">🏢 Todos os Assessores ({totalAssessorActivities})</option>
+                        {dynamicAssessores.map((a) => (
                           <option key={a.name} value={a.name}>
-                            {a.name} ({a.count} {a.count === 1 ? 'em aberto' : 'em aberto'})
+                            {a.name} ({a.count} em aberto)
                           </option>
                         ))}
                       </select>
@@ -908,7 +1016,7 @@ export default function AgendaPage() {
                         >
                           <span className="truncate">
                             {selectedTags.length === 0
-                              ? `🏷️ Todas as Tags (${tags.reduce((acc, t) => acc + t.count, 0)})`
+                              ? `🏷️ Todas as Tags (${totalTagActivities})`
                               : `🏷️ ${selectedTags.length} ${selectedTags.length === 1 ? 'Tag selecionada' : 'Tags selecionadas'}`}
                           </span>
                           <ChevronDown className={`w-3.5 h-3.5 ml-1 text-slate-400 transition-transform ${isTagDropdownOpen ? 'rotate-180' : ''}`} />
@@ -946,10 +1054,10 @@ export default function AgendaPage() {
                                     : 'hover:bg-slate-100 dark:hover:bg-[#002060] text-slate-700 dark:text-slate-300'
                                 }`}
                               >
-                                <span>Todas as Tags</span>
+                                <span>Todas as Tags ({totalTagActivities})</span>
                                 {selectedTags.length === 0 && <Check className="w-3.5 h-3.5 text-[#0092FF]" />}
                               </button>
-                              {tags.map((t) => {
+                              {dynamicTags.map((t) => {
                                 const isChecked = selectedTags.includes(t.key)
                                 return (
                                   <div
@@ -1013,7 +1121,7 @@ export default function AgendaPage() {
                 </div>
 
                 {/* Atalhos de Tags (Multi-seleção Interativa em Pills) */}
-                {tags.length > 0 && (
+                {dynamicTags.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5 pt-2.5 border-t border-slate-100 dark:border-[#002060]/70">
                     <span className="text-[11px] font-bold text-slate-400 mr-1 flex items-center space-x-1">
                       <Tag className="w-3 h-3 text-[#0092FF]" />
@@ -1030,11 +1138,11 @@ export default function AgendaPage() {
                           : 'bg-slate-100 dark:bg-[#00061A] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#002060] hover:bg-slate-200 dark:hover:bg-[#002060]'
                       }`}
                     >
-                      <span>Todas</span>
+                      <span>Todas ({totalTagActivities})</span>
                     </button>
 
                     {/* Pills de cada Tag */}
-                    {tags.map((t) => {
+                    {dynamicTags.map((t) => {
                       const isSelected = selectedTags.includes(t.key)
                       return (
                         <button
@@ -1090,10 +1198,10 @@ export default function AgendaPage() {
                         : 'bg-slate-100 dark:bg-[#00061A] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#002060] hover:bg-slate-200 dark:hover:bg-[#002060]'
                     }`}
                   >
-                    <span>Todos</span>
+                    <span>Todos ({totalAssessorActivities})</span>
                   </button>
 
-                  {assessores.slice(0, 8).map((assessor) => {
+                  {dynamicAssessores.slice(0, 8).map((assessor) => {
                     const isSelected = selectedAssessor === assessor.name
                     return (
                       <button
