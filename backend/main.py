@@ -1164,6 +1164,45 @@ async def list_pipedrive_assessores(user: dict = Depends(require_admin)):
         assessores = [{"id": o.get("id"), "name": o.get("name")} for o in data if o.get("name")]
         return {"assessores": sorted(assessores, key=lambda x: x["name"])}
 
+def format_whatsapp_template(template_str: str, ctx: Dict[str, Any]) -> str:
+    """
+    Substitui tags no formato {tag} em templates de WhatsApp.
+    Suporta mapeamentos em português e inglês.
+    """
+    if not template_str:
+        return ""
+        
+    tag_map = {
+        "cliente": ctx.get("cliente") or ctx.get("person_name") or "",
+        "person_name": ctx.get("cliente") or ctx.get("person_name") or "",
+        "assunto": ctx.get("assunto") or ctx.get("subject") or "Reunião",
+        "subject": ctx.get("assunto") or ctx.get("subject") or "Reunião",
+        "horario": ctx.get("horario") or ctx.get("time_slot") or "",
+        "time_slot": ctx.get("horario") or ctx.get("time_slot") or "",
+        "horario_inicio": ctx.get("horario_inicio") or ctx.get("start_fmt") or "",
+        "start_fmt": ctx.get("horario_inicio") or ctx.get("start_fmt") or "",
+        "horario_fim": ctx.get("horario_fim") or ctx.get("end_fmt") or "",
+        "end_fmt": ctx.get("horario_fim") or ctx.get("end_fmt") or "",
+        "duracao": ctx.get("duracao") or ctx.get("duration_str") or "",
+        "duration_str": ctx.get("duracao") or ctx.get("duration_str") or "",
+        "dia_semana": ctx.get("dia_semana") or ctx.get("day_name") or "",
+        "day_of_week": ctx.get("dia_semana") or ctx.get("day_name") or "",
+        "data": ctx.get("data") or ctx.get("date_display") or "",
+        "date_display": ctx.get("data") or ctx.get("date_display") or "",
+        "data_completa": ctx.get("data_completa") or ctx.get("due_date_str") or "",
+        "due_date_str": ctx.get("data_completa") or ctx.get("due_date_str") or "",
+        "assessor": ctx.get("assessor") or ctx.get("org_name") or "",
+        "org_name": ctx.get("assessor") or ctx.get("org_name") or "",
+        "deal": ctx.get("deal") or ctx.get("deal_title") or "",
+        "deal_title": ctx.get("deal") or ctx.get("deal_title") or "",
+        "deal_id": str(ctx.get("deal_id") or "")
+    }
+    
+    result = template_str
+    for k, v in tag_map.items():
+        result = result.replace(f"{{{k}}}", str(v))
+    return result
+
 @app.get("/api/pipedrive/activities")
 async def list_pipedrive_activities(
     assessor_name: Optional[str] = None,
@@ -2507,19 +2546,25 @@ async def get_available_slots(
 ):
     """Calcula slots livres estilo Calendly baseando-se nas regras e conflitos (acesso público)"""
     # 1. Carrega configurações
+    try:
+        dur_int = int(duration) if str(duration).isdigit() else 60
+    except Exception:
+        dur_int = 60
+    duration = dur_int
+
     settings_res = get_calendar_settings_data()
     weekly_schedule = settings_res.get("weekly_schedule")
     work_days = settings_res.get("work_days", [1, 2, 3, 4, 5])
     start_hour_str = settings_res.get("start_hour", "09:00")
     end_hour_str = settings_res.get("end_hour", "18:00")
     
-    buffer_before = settings_res.get("buffer_before_minutes", 0)
-    buffer_after = settings_res.get("buffer_after_minutes", settings_res.get("buffer_minutes", 0))
-    slot_step = settings_res.get("slot_interval_minutes", 30)
-    min_notice_hrs = settings_res.get("min_notice_hours", 12)
-    max_future_days = settings_res.get("max_future_days", 21)
+    buffer_before = int(settings_res.get("buffer_before_minutes", 0) or 0)
+    buffer_after = int(settings_res.get("buffer_after_minutes", settings_res.get("buffer_minutes", 0)) or 0)
+    slot_step = int(settings_res.get("slot_interval_minutes", 30) or 30)
+    min_notice_hrs = int(settings_res.get("min_notice_hours", 12) or 12)
+    max_future_days = int(settings_res.get("max_future_days", 21) or 21)
     
-    actual_days_count = min(days_count, max_future_days)
+    actual_days_count = min(int(days_count or 30), max_future_days)
     
     # 2. Período de cálculo
     now_utc = datetime.utcnow()
