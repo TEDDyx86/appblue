@@ -891,17 +891,21 @@ async def process_new_transcription(user_id: Optional[str] = None) -> Dict[str, 
                         # Se tiver alta confiança, cria a Atividade do tipo Tactiq concluída no Pipedrive
                         if matching_confidence >= 0.70:
                             topicos_html = "".join([f"<li>{topico}</li>" for topico in briefing_json.get("principais_topicos", [])])
+                            tactiq_url = briefing_json.get("tactiq_link")
+                            tactiq_link_html = f"<p><strong>🔗 Gravação & Transcrição no Tactiq:</strong> <a href='{tactiq_url}'>{tactiq_url}</a></p>" if tactiq_url else ""
+                            
                             activity_note_html = (
                                 f"<h3>📋 Briefing da Reunião (Origem: Tactiq / Google Drive)</h3>"
                                 f"<p><strong>Reunião:</strong> {meeting_title}</p>"
                                 f"<p><strong>Cliente:</strong> {cliente_nome}</p>"
                                 f"<p><strong>Interesse:</strong> {briefing_json.get('dados_cliente', {}).get('demonstrou_interesse', 'Não informado')}</p>"
+                                f"{tactiq_link_html}"
                                 f"<h4>Principais Tópicos Abordados:</h4>"
                                 f"<ul>{topicos_html or '<li>Discussão patrimonial e sucessória.</li>'}</ul>"
                                 f"<h4>🎯 Próxima Ação Sugerida:</h4>"
                                 f"<p>{briefing_json.get('proxima_acao', {}).get('descricao', 'Dar continuidade aos alinhamentos')}</p>"
                                 f"<hr/>"
-                                f"<p><small>⚡ Sincronizado automaticamente pelo Sistema Robson Tavernard (Investimentos Blue)</small></p>"
+                                f"<p><em>⚡ Sincronizado automaticamente pelo Sistema Robson Tavernard (Investimentos Blue)</em></p>"
                             )
                             
                             act_res = await create_pipedrive_activity(
@@ -1802,17 +1806,21 @@ async def assign_transcription_to_crm(
     
     if req.create_activity:
         topicos_html = "".join([f"<li>{topico}</li>" for topico in briefing_json.get("principais_topicos", [])])
+        tactiq_url = briefing_json.get("tactiq_link")
+        tactiq_link_html = f"<p><strong>🔗 Gravação & Transcrição no Tactiq:</strong> <a href='{tactiq_url}'>{tactiq_url}</a></p>" if tactiq_url else ""
+        
         activity_note_html = (
             f"<h3>📋 Briefing da Reunião (Origem: Tactiq / Google Drive)</h3>"
             f"<p><strong>Reunião:</strong> {meeting_title}</p>"
             f"<p><strong>Cliente:</strong> {client_name}</p>"
             f"<p><strong>Interesse:</strong> {briefing_json.get('dados_cliente', {}).get('demonstrou_interesse', 'Não informado')}</p>"
+            f"{tactiq_link_html}"
             f"<h4>Principais Tópicos Abordados:</h4>"
             f"<ul>{topicos_html or '<li>Discussão patrimonial e sucessória.</li>'}</ul>"
             f"<h4>🎯 Próxima Ação Sugerida:</h4>"
             f"<p>{briefing_json.get('proxima_acao', {}).get('descricao', 'Dar continuidade aos alinhamentos')}</p>"
             f"<hr/>"
-            f"<p><small>⚡ Sincronizado automaticamente pelo Sistema Robson Tavernard (Investimentos Blue)</small></p>"
+            f"<p><em>⚡ Sincronizado automaticamente pelo Sistema Robson Tavernard (Investimentos Blue)</em></p>"
         )
         
         act_res = await create_pipedrive_activity(
