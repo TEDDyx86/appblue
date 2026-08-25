@@ -32,6 +32,7 @@ import {
   Unlink,
   Trash2,
   Edit3,
+  Video,
 } from 'lucide-react'
 import { useTheme } from '@/context/ThemeContext'
 
@@ -753,14 +754,15 @@ export default function TranscriptionsPage() {
                         )}
                       </div>
 
-                      {/* Próxima Ação */}
-                      {briefing?.proxima_acao?.descricao && !isIgnored && (
+                      {/* Resumo Rápido Executivo se existir */}
+                      {briefing?.resumo_rapido && !isIgnored && (
                         <div className="mt-2.5 p-2.5 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/60 text-xs">
-                          <span className="text-[10px] uppercase font-bold text-[#002060] dark:text-[#0092FF] block mb-0.5">
-                            Próxima Ação:
+                          <span className="text-[10px] uppercase font-bold text-[#002060] dark:text-[#0092FF] mb-0.5 flex items-center space-x-1">
+                            <Sparkles className="w-3 h-3 text-[#0092FF]" />
+                            <span>Resumo:</span>
                           </span>
-                          <p className="text-slate-800 dark:text-slate-200 line-clamp-2 text-[11px]">
-                            {briefing.proxima_acao.descricao}
+                          <p className="text-slate-800 dark:text-slate-200 line-clamp-2 text-[11px] leading-relaxed">
+                            {briefing.resumo_rapido}
                           </p>
                         </div>
                       )}
@@ -1163,6 +1165,40 @@ export default function TranscriptionsPage() {
             </div>
 
             <div className="p-6 overflow-y-auto space-y-6">
+              {/* Link da Reunião no Tactiq em Destaque no Topo */}
+              {selectedItem.briefing_json?.tactiq_link && (
+                <div className="p-4 rounded-2xl bg-slate-900 text-white dark:bg-[#00061A] border border-slate-800 dark:border-[#0092FF]/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+                  <div className="flex items-center space-x-3 min-w-0">
+                    <div className="p-2.5 rounded-xl bg-[#0092FF]/20 text-[#0092FF] dark:text-[#00FFFF] flex-shrink-0">
+                      <Video className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
+                        Gravação & Transcrição no Tactiq
+                      </span>
+                      <a
+                        href={selectedItem.briefing_json.tactiq_link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs font-bold text-white hover:text-[#00FFFF] truncate block transition-colors font-mono"
+                        title={selectedItem.briefing_json.tactiq_link}
+                      >
+                        {selectedItem.briefing_json.tactiq_link}
+                      </a>
+                    </div>
+                  </div>
+                  <a
+                    href={selectedItem.briefing_json.tactiq_link}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center justify-center space-x-2 px-4 py-2.5 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white font-bold text-xs shadow-md transition-all self-stretch sm:self-auto whitespace-nowrap"
+                  >
+                    <span>Abrir Gravação no Tactiq</span>
+                    <ArrowUpRight className="w-4 h-4" />
+                  </a>
+                </div>
+              )}
+
               {/* Resumo Rápido Executivo se existir */}
               {selectedItem.briefing_json?.resumo_rapido && (
                 <div className="p-4 rounded-2xl bg-blue-50/70 dark:bg-[#002060]/30 border border-blue-200 dark:border-[#0092FF]/40 text-xs">
@@ -1276,25 +1312,6 @@ export default function TranscriptionsPage() {
                       </li>
                     ))}
                   </ul>
-                </div>
-              )}
-
-              {/* Próxima Ação */}
-              {selectedItem.briefing_json?.proxima_acao && (
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 font-display">
-                    Próxima Ação & Follow-up
-                  </h4>
-                  <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 text-xs">
-                    <p className="font-bold text-slate-900 dark:text-white">
-                      {selectedItem.briefing_json.proxima_acao.descricao}
-                    </p>
-                    {selectedItem.briefing_json.proxima_acao.prazo_sugerido && (
-                      <span className="inline-block mt-2 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/60 text-[#0092FF] dark:text-[#00FFFF]">
-                        Prazo Sugerido: {selectedItem.briefing_json.proxima_acao.prazo_sugerido}
-                      </span>
-                    )}
-                  </div>
                 </div>
               )}
 
