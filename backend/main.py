@@ -11,11 +11,12 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple
 from functools import wraps
 
-from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 import jwt
 import bcrypt
+import pymupdf
 from google.oauth2.service_account import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
 from googleapiclient.discovery import build
@@ -2877,6 +2878,438 @@ async def get_calendar_meeting_types(user: Optional[dict] = Depends(get_current_
         "meeting_types": settings_dict.get("meeting_types", []),
         "timezone": settings_dict.get("timezone", "America/Sao_Paulo")
     }
+
+# ============================================================================
+# PARSER & IMPORTAÇÃO DE FICHA CADASTRAL (PDF XP INVESTIMENTOS / OUTROS)
+# ============================================================================
+
+PIPEDRIVE_PERSON_CUSTOM_FIELDS = {
+    "cpf": "bccf793f30f8882dc987634461f65fcefe04c116",
+    "data_nascimento": "c5f06bfce880ed2c3618d10b40eab28c4b31dd1c",
+    "profissao": "079e39aaa3b5ec6782cdea922a29682f165d3953",
+    "estado_civil": "14a3f171ae02abe5a3e89333c707ed6f74df8837",
+    "nome_conjuge": "dad66a725f4cce02a26669d26e4929cb1c816150",
+    "renda": "3b4aea4bd2e89b7859117ade965123b8580d2173",
+    "link_pasta": "7a4456cb975aa8b0decb9e1842eed3039a47e415",
+}
+
+def parse_xp_ficha_cadastral(doc_bytes_or_path) -> Dict[str, Any]:
+    """
+    Parser avançado para extrair dados estruturados de Fichas Cadastrais (ex: XP Investimentos)
+    usando análise espacial por coordenadas e blocos de texto do PyMuPDF.
+    """
+    if isinstance(doc_bytes_or_path, bytes):
+        doc = pymupdf.open(stream=doc_bytes_or_path, filetype="pdf")
+    else:
+        doc = pymupdf.open(doc_bytes_or_path)
+        
+    page1 = doc[0]
+    blocks = page1.get_text("blocks")
+    
+    extracted = {
+        "nome_completo": None,
+        "cpf": None,
+        "nome_mae": None,
+        "nome_pai": None,
+        "data_nascimento": None,
+        "data_nascimento_iso": None,
+        "nacionalidade": None,
+        "naturalidade": None,
+        "sexo": None,
+        "estado_civil": None,
+        "estado_civil_id": None,
+        "regime_casamento": None,
+        "regime_casamento_id": None,
+        "nome_conjuge": None,
+        "cpf_conjuge": None,
+        "documento_identidade": None,
+        "email": None,
+        "telefone": None,
+        "celular": None,
+        "logradouro": None,
+        "bairro": None,
+        "cidade": None,
+        "uf": None,
+        "cep": None,
+        "endereco_completo": None,
+        "profissao": None,
+        "ocupacao": None,
+        "empresa_nome": None,
+        "empresa_cnpj": None,
+        "renda_mensal": None,
+        "renda_mensal_fmt": None,
+        "codigo_xp": None,
+        "dados_bancarios": None
+    }
+    
+    for b in blocks:
+        txt = b[4].strip()
+        if not txt:
+            continue
+        y = b[1]
+        x = b[0]
+        
+        # Codigo XP
+        if 80 <= y <= 115 and x > 150:
+            xp_m = re.search(r"(\d{7,8}-\d|\d{7,9})", txt)
+            if xp_m:
+                extracted["codigo_xp"] = xp_m.group(1)
+                
+        # Nome e CPF
+        if 140 <= y <= 165 and x < 100:
+            lines = txt.split("\n")
+            for l in lines:
+                cpf_m = re.search(r"(\d{3}\.\d{3}\.\d{3}-\d{2})", l)
+                if cpf_m:
+                    extracted["cpf"] = cpf_m.group(1)
+                    nome = l.replace(cpf_m.group(1), "").strip()
+                    if nome:
+                        extracted["nome_completo"] = nome
+                elif not extracted["nome_completo"] and len(l) > 5 and not any(k in l.lower() for k in ["ficha", "dados", "nome"]):
+                    extracted["nome_completo"] = l.strip()
+                    
+        # Mae / Pai
+        if 170 <= y <= 195:
+            if not any(k in txt.lower() for k in ["nome", "pai", "mae", "mãe"]):
+                extracted["nome_mae"] = txt.replace("\n", " ").strip()
+                
+        # Nasc, Nacionalidade, Naturalidade
+        if 195 <= y <= 218:
+            nasc_m = re.search(r"(\d{2})/(\d{2})/(\d{4})", txt)
+            if nasc_m:
+                extracted["data_nascimento"] = f"{nasc_m.group(1)}/{nasc_m.group(2)}/{nasc_m.group(3)}"
+                extracted["data_nascimento_iso"] = f"{nasc_m.group(3)}-{nasc_m.group(2)}-{nasc_m.group(1)}"
+            if "brasileir" in txt.lower():
+                extracted["nacionalidade"] = "Brasileiro(a)"
+            cleaned_nat = re.sub(r"\d{2}/\d{2}/\d{4}|brasileiro\(a\)|brasileiro|nato", "", txt, flags=re.I).strip()
+            if cleaned_nat:
+                extracted["naturalidade"] = cleaned_nat
+                
+        # Estado Civil & Conjuge
+        if 215 <= y <= 245:
+            if "casado" in txt.lower():
+                extracted["estado_civil"] = "Casado(a)"
+                extracted["estado_civil_id"] = 53
+            elif "solteiro" in txt.lower():
+                extracted["estado_civil"] = "Solteiro(a)"
+                extracted["estado_civil_id"] = 52
+            elif "uniao estavel" in txt.lower() or "união" in txt.lower():
+                extracted["estado_civil"] = "União Estável"
+                extracted["estado_civil_id"] = 54
+            elif "divorciado" in txt.lower():
+                extracted["estado_civil"] = "Divorciado(a)"
+                
+            if x > 300 and not any(k in txt.lower() for k in ["sexo", "estado", "nome", "cpf", "000."]):
+                extracted["nome_conjuge"] = txt.replace("\n", " ").strip()
+            cpf_c_m = re.search(r"(\d{3}\.\d{3}\.\d{3}-\d{2})", txt)
+            if cpf_c_m and cpf_c_m.group(1) != extracted.get("cpf"):
+                extracted["cpf_conjuge"] = cpf_c_m.group(1)
+                
+        # Documento RG/CNH
+        if 250 <= y <= 272 and x < 100:
+            extracted["documento_identidade"] = txt.replace("\n", " ").strip()
+            
+        # Telefones e E-mail
+        if 275 <= y <= 305 and x < 100:
+            emails = re.findall(r"[\w\.-]+@[\w\.-]+", txt)
+            if emails:
+                extracted["email"] = emails[0].lower()
+            phones = re.findall(r"\(\d{2}\)\s*\d{8,9}", txt)
+            if phones:
+                extracted["telefone"] = phones[0]
+                extracted["celular"] = phones[-1]
+                
+        # Endereco
+        if 335 <= y <= 360 and x < 100:
+            extracted["logradouro"] = txt.replace("\n", " ").strip()
+        if 360 <= y <= 385 and x < 100:
+            cep_m = re.search(r"(\d{5}-\d{3})", txt)
+            if cep_m:
+                extracted["cep"] = cep_m.group(1)
+            parts = txt.replace(extracted.get("cep") or "", "").strip().split()
+            if len(parts) >= 3:
+                extracted["bairro"] = " ".join(parts[:-2])
+                extracted["cidade"] = parts[-2]
+                extracted["uf"] = parts[-1]
+                
+        # Profissao
+        if 500 <= y <= 525 and x < 100:
+            p_words = [w.strip() for w in txt.split() if len(w.strip()) > 2]
+            if p_words:
+                extracted["profissao"] = p_words[0]
+                extracted["ocupacao"] = p_words[-1]
+                
+        # Entidade / CNPJ
+        if 525 <= y <= 555:
+            cnpj_m = re.search(r"(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})", txt)
+            if cnpj_m:
+                extracted["empresa_cnpj"] = cnpj_m.group(1)
+            elif x < 100 and not any(k in txt.lower() for k in ["entidade", "dados"]):
+                extracted["empresa_nome"] = txt.replace("\n", " ").strip()
+                
+        # Renda
+        if 570 <= y <= 590 and x > 400:
+            val_clean = txt.replace("R$", "").replace(".", "").replace(",", ".").strip()
+            try:
+                val_num = float(val_clean)
+                extracted["renda_mensal"] = val_num
+                extracted["renda_mensal_fmt"] = f"R$ {val_num:,.2f}"
+            except Exception:
+                extracted["renda_mensal_fmt"] = txt.strip()
+                
+        # Dados bancarios
+        if 710 <= y <= 745 and x > 50:
+            if not extracted["dados_bancarios"]:
+                extracted["dados_bancarios"] = txt.replace("\n", " ").strip()
+
+    # Formatar endereco completo
+    end_parts = [extracted["logradouro"], extracted["bairro"], f"{extracted['cidade']} - {extracted['uf']}" if extracted["cidade"] and extracted["uf"] else extracted["cidade"], f"CEP: {extracted['cep']}" if extracted["cep"] else None]
+    extracted["endereco_completo"] = ", ".join([p for p in end_parts if p])
+    
+    return extracted
+
+
+async def find_pipedrive_person_match(cpf: Optional[str] = None, email: Optional[str] = None, name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Busca pessoa no Pipedrive por CPF, Email ou Nome"""
+    if not PIPEDRIVE_API_TOKEN:
+        return None
+        
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        # 1. Busca por Nome / Termo
+        search_terms = []
+        if cpf:
+            search_terms.append(cpf)
+        if email:
+            search_terms.append(email)
+        if name:
+            search_terms.append(name)
+            
+        for term in search_terms:
+            try:
+                res = await client.get(
+                    f"{PIPEDRIVE_BASE_URL}/persons/search",
+                    params={"api_token": PIPEDRIVE_API_TOKEN, "term": term, "limit": 5}
+                )
+                if res.status_code == 200:
+                    items = res.json().get("data", {}).get("items", [])
+                    if items:
+                        first_item = items[0].get("item", {})
+                        person_id = first_item.get("id")
+                        if person_id:
+                            # Busca dados completos da pessoa
+                            detail_res = await client.get(
+                                f"{PIPEDRIVE_BASE_URL}/persons/{person_id}",
+                                params={"api_token": PIPEDRIVE_API_TOKEN}
+                            )
+                            if detail_res.status_code == 200:
+                                p_data = detail_res.json().get("data", {})
+                                
+                                # Extrai valores dos campos customizados
+                                return {
+                                    "id": str(p_data.get("id")),
+                                    "name": p_data.get("name"),
+                                    "email": p_data.get("primary_email") or (p_data.get("email", [{}])[0].get("value") if p_data.get("email") else None),
+                                    "phone": (p_data.get("phone", [{}])[0].get("value") if p_data.get("phone") else None),
+                                    "cpf": p_data.get(PIPEDRIVE_PERSON_CUSTOM_FIELDS["cpf"]),
+                                    "data_nascimento": p_data.get(PIPEDRIVE_PERSON_CUSTOM_FIELDS["data_nascimento"]),
+                                    "profissao": p_data.get(PIPEDRIVE_PERSON_CUSTOM_FIELDS["profissao"]),
+                                    "estado_civil_id": p_data.get(PIPEDRIVE_PERSON_CUSTOM_FIELDS["estado_civil"]),
+                                    "nome_conjuge": p_data.get(PIPEDRIVE_PERSON_CUSTOM_FIELDS["nome_conjuge"]),
+                                    "renda": p_data.get(PIPEDRIVE_PERSON_CUSTOM_FIELDS["renda"]),
+                                    "person_url": f"https://investimentosblue.pipedrive.com/person/{person_id}",
+                                    "raw_data": p_data
+                                }
+            except Exception as e:
+                logger.warning(f"Erro ao buscar pessoa no Pipedrive para termo '{term}': {e}")
+                
+    return None
+
+
+class SyncPersonFichaRequest(BaseModel):
+    person_id: Optional[str] = None
+    create_new: bool = False
+    nome_completo: str
+    cpf: Optional[str] = None
+    data_nascimento_iso: Optional[str] = None
+    email: Optional[str] = None
+    telefone: Optional[str] = None
+    celular: Optional[str] = None
+    profissao: Optional[str] = None
+    estado_civil_id: Optional[int] = None
+    nome_conjuge: Optional[str] = None
+    renda_mensal: Optional[float] = None
+    endereco_completo: Optional[str] = None
+    empresa_nome: Optional[str] = None
+    empresa_cnpj: Optional[str] = None
+    codigo_xp: Optional[str] = None
+    dados_bancarios: Optional[str] = None
+    create_history_activity: bool = True
+
+
+@app.post("/api/pdf/parse-ficha-cadastral")
+async def parse_ficha_cadastral_endpoint(
+    file: UploadFile = File(...),
+    user: dict = Depends(require_admin)
+):
+    """
+    Recebe um arquivo PDF de Ficha Cadastral (ex: XP), extrai todos os dados cadastrais
+    e verifica se já existe uma pessoa correspondente no Pipedrive CRM.
+    """
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Por favor envie um arquivo em formato PDF (.pdf)")
+        
+    try:
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Arquivo PDF vazio")
+            
+        # 1. Extração estruturada dos dados da ficha
+        extracted = parse_xp_ficha_cadastral(content)
+        
+        # 2. Busca match no Pipedrive
+        matched_person = await find_pipedrive_person_match(
+            cpf=extracted.get("cpf"),
+            email=extracted.get("email"),
+            name=extracted.get("nome_completo")
+        )
+        
+        return {
+            "status": "success",
+            "file_name": file.filename,
+            "file_size": len(content),
+            "extracted_data": extracted,
+            "matched_person": matched_person,
+            "has_match": bool(matched_person)
+        }
+    except Exception as e:
+        logger.error(f"Erro ao processar PDF de Ficha Cadastral: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao processar PDF: {str(e)}")
+
+
+@app.post("/api/pipedrive/sync-person-ficha")
+async def sync_person_ficha_endpoint(
+    req: SyncPersonFichaRequest,
+    user: dict = Depends(require_admin)
+):
+    """
+    Atualiza uma Pessoa existente no Pipedrive (ou cadastra uma nova)
+    com os dados extraídos da Ficha Cadastral (CPF, Nascimento, Profissão, Renda, etc.).
+    """
+    if not PIPEDRIVE_API_TOKEN:
+        raise HTTPException(status_code=500, detail="PIPEDRIVE_API_TOKEN não configurado")
+        
+    payload: Dict[str, Any] = {
+        "name": req.nome_completo
+    }
+    
+    if req.email:
+        payload["email"] = [{"value": req.email, "primary": True, "label": "work"}]
+        
+    phone_val = req.celular or req.telefone
+    if phone_val:
+        payload["phone"] = [{"value": phone_val, "primary": True, "label": "mobile"}]
+        
+    if req.cpf:
+        payload[PIPEDRIVE_PERSON_CUSTOM_FIELDS["cpf"]] = req.cpf
+    if req.data_nascimento_iso:
+        payload[PIPEDRIVE_PERSON_CUSTOM_FIELDS["data_nascimento"]] = req.data_nascimento_iso
+    if req.profissao:
+        payload[PIPEDRIVE_PERSON_CUSTOM_FIELDS["profissao"]] = req.profissao
+    if req.estado_civil_id:
+        payload[PIPEDRIVE_PERSON_CUSTOM_FIELDS["estado_civil"]] = req.estado_civil_id
+    if req.nome_conjuge:
+        payload[PIPEDRIVE_PERSON_CUSTOM_FIELDS["nome_conjuge"]] = req.nome_conjuge
+    if req.renda_mensal is not None:
+        payload[PIPEDRIVE_PERSON_CUSTOM_FIELDS["renda"]] = float(req.renda_mensal)
+        
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            target_id = req.person_id
+            
+            # 1. Atualiza ou Cria Pessoa no Pipedrive
+            if target_id and not req.create_new:
+                res = await client.put(
+                    f"{PIPEDRIVE_BASE_URL}/persons/{target_id}",
+                    params={"api_token": PIPEDRIVE_API_TOKEN},
+                    json=payload
+                )
+                action_label = "atualizada"
+            else:
+                res = await client.post(
+                    f"{PIPEDRIVE_BASE_URL}/persons",
+                    params={"api_token": PIPEDRIVE_API_TOKEN},
+                    json=payload
+                )
+                action_label = "criada"
+                
+            if res.status_code not in [200, 201]:
+                logger.error(f"Erro ao sincronizar pessoa no Pipedrive: {res.status_code} - {res.text}")
+                raise HTTPException(status_code=res.status_code, detail=f"Erro Pipedrive: {res.text}")
+                
+            person_data = res.json().get("data", {})
+            saved_person_id = str(person_data.get("id"))
+            person_url = f"https://investimentosblue.pipedrive.com/person/{saved_person_id}"
+            
+            # 2. Se solicitado, cria uma Atividade no Histórico registrando a importação da Ficha
+            activity_id = None
+            if req.create_history_activity:
+                hist_html = (
+                    f"<h3>📑 Ficha Cadastral Importada via PDF</h3>"
+                    f"<p><strong>Cliente:</strong> {req.nome_completo}</p>"
+                    f"<p><strong>CPF:</strong> {req.cpf or 'N/A'}</p>"
+                    f"<p><strong>Data de Nascimento:</strong> {req.data_nascimento_iso or 'N/A'}</p>"
+                    f"<p><strong>Profissão:</strong> {req.profissao or 'N/A'}</p>"
+                    f"<p><strong>Cônjuge:</strong> {req.nome_conjuge or 'N/A'}</p>"
+                    f"<p><strong>Renda Mensal:</strong> {f'R$ {req.renda_mensal:,.2f}' if req.renda_mensal else 'N/A'}</p>"
+                    f"<p><strong>Endereço:</strong> {req.endereco_completo or 'N/A'}</p>"
+                    f"<p><strong>Código XP:</strong> {req.codigo_xp or 'N/A'}</p>"
+                    f"<hr/>"
+                    f"<p><small>⚡ Dados extraídos e validados automaticamente pelo Sistema Robson Tavernard</small></p>"
+                )
+                act_res = await create_pipedrive_activity(
+                    subject="Ficha Cadastral XP Importada",
+                    activity_type="tactiq",
+                    done=True,
+                    person_id=saved_person_id,
+                    note_content=hist_html
+                )
+                if act_res:
+                    activity_id = str(act_res.get("id"))
+                    
+            # 3. Log de Auditoria
+            log_audit_event(
+                action="PERSON_ENRICHED_FROM_FICHA",
+                resource_type="person",
+                resource_id=saved_person_id,
+                user_id=user.get("id", user.get("sub")),
+                details={
+                    "cliente_nome": req.nome_completo,
+                    "cpf": req.cpf,
+                    "person_id": saved_person_id,
+                    "person_url": person_url,
+                    "profissao": req.profissao,
+                    "renda": req.renda_mensal,
+                    "activity_id": activity_id,
+                    "action_type": action_label,
+                    "summary": f"Ficha cadastral de '{req.nome_completo}' importada com sucesso: dados {action_label}s no Pipedrive (Pessoa #{saved_person_id})."
+                }
+            )
+            
+            return {
+                "status": "success",
+                "message": f"Dados do cliente {action_label}s com sucesso no Pipedrive!",
+                "person_id": saved_person_id,
+                "person_url": person_url,
+                "action_type": action_label,
+                "activity_id": activity_id,
+                "person_data": person_data
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erro ao sincronizar ficha no Pipedrive: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
 # ============================================================================
 # MAIN

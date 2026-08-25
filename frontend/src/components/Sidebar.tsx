@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   Zap,
   Activity,
+  UserCheck,
 } from 'lucide-react'
 
 interface SidebarProps {
@@ -36,6 +37,7 @@ export default function Sidebar({
   const navItems = [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/transcriptions', label: 'Transcrições', icon: FileText, badge: 'Auto' },
+    { href: '/cadastros', label: 'Ficha Cadastral', icon: UserCheck, badge: 'PDF' },
     { href: '/agenda', label: 'Agenda', icon: Calendar, badge: 'Pipedrive' },
     { href: '/logs', label: 'Logs & Auditoria', icon: Activity, badge: 'Live' },
     { href: '/alerts', label: 'Alertas', icon: AlertTriangle },
