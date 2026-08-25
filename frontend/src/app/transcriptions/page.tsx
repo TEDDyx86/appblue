@@ -123,6 +123,7 @@ export default function TranscriptionsPage() {
   const [deleteOldActivity, setDeleteOldActivity] = useState(true)
   const [submittingAssign, setSubmittingAssign] = useState(false)
   const [unlinkingId, setUnlinkingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [assignSuccess, setAssignSuccess] = useState(false)
   const [togglingIgnoreId, setTogglingIgnoreId] = useState<string | null>(null)
 
@@ -390,11 +391,40 @@ export default function TranscriptionsPage() {
     }
   }
 
+  const handleDeleteTranscription = async (item: Transcription) => {
+    if (
+      !window.confirm(
+        `Tem certeza que deseja excluir a transcrição "${item.meeting_title || 'Reunião'}"? Esta ação removerá a atividade associada no Pipedrive.`
+      )
+    ) {
+      return
+    }
+
+    try {
+      setDeletingId(item.id)
+      const token = localStorage.getItem('access_token')
+      await axios.delete(`${API_URL}/api/transcriptions/${item.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+
+      setTranscriptions((prev) => prev.filter((t) => t.id !== item.id))
+      if (selectedItem?.id === item.id) {
+        setSelectedItem(null)
+      }
+    } catch (err: any) {
+      alert('Erro ao excluir transcrição: ' + (err.response?.data?.detail || err.message))
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   const filteredTranscriptions = useMemo(() => {
     const list = transcriptions.filter((t) => {
       if (statusFilter !== 'all' && t.processing_status !== statusFilter) return false
 
-      const isIgnored = t.briefing_json?.observacoes?.includes('[IGNORADA')
+      const isIgnored = Boolean(
+        t.briefing_json?.is_ignored || t.briefing_json?.observacoes?.includes('[IGNORADA')
+      )
       const isLinked = Boolean(
         t.briefing_json?.pipedrive?.deal_id || t.briefing_json?.pipedrive?.person_id
       )
@@ -1411,6 +1441,16 @@ export default function TranscriptionsPage() {
                       <span>Marcar como Reunião Interna</span>
                     </>
                   )}
+                </button>
+
+                <button
+                  onClick={() => handleDeleteTranscription(selectedItem)}
+                  disabled={deletingId === selectedItem.id}
+                  className="inline-flex items-center space-x-1.5 px-3 py-2 rounded-xl border border-rose-200 dark:border-rose-900/60 text-rose-500 hover:text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 font-bold text-xs transition-colors"
+                  title="Excluir do painel e remover do Pipedrive"
+                >
+                  <Trash2 className={`w-3.5 h-3.5 ${deletingId === selectedItem.id ? 'animate-spin' : ''}`} />
+                  <span>{deletingId === selectedItem.id ? 'Excluindo...' : 'Excluir'}</span>
                 </button>
               </div>
 
