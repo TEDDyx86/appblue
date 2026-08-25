@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import axios from 'axios'
 import Sidebar from '@/components/Sidebar'
@@ -30,6 +30,8 @@ import {
   Layers,
   Search,
   CheckCheck,
+  Sliders,
+  Settings,
 } from 'lucide-react'
 import { useTheme } from '@/context/ThemeContext'
 
@@ -84,6 +86,14 @@ interface MatchedPerson {
   raw_data?: any
 }
 
+interface PipedriveField {
+  key: string
+  name: string
+  field_type: string
+  is_custom: boolean
+  options?: Array<{ id: number | string; label: string }>
+}
+
 export default function CadastrosPage() {
   const router = useRouter()
   const { theme, isDark, toggleTheme } = useTheme()
@@ -106,6 +116,26 @@ export default function CadastrosPage() {
   const [createNewPerson, setCreateNewPerson] = useState(false)
   const [createHistoryActivity, setCreateHistoryActivity] = useState(true)
 
+  // Dynamic Pipedrive Person Fields & Mapping
+  const [personFields, setPersonFields] = useState<PipedriveField[]>([])
+  const [loadingFields, setLoadingFields] = useState(false)
+  const [showMappingModal, setShowMappingModal] = useState(false)
+  const [customMapping, setCustomMapping] = useState<Record<string, string>>({
+    cpf: 'bccf793f30f8882dc987634461f65fcefe04c116',
+    data_nascimento: 'c5f06bfce880ed2c3618d10b40eab28c4b31dd1c',
+    profissao: '079e39aaa3b5ec6782cdea922a29682f165d3953',
+    estado_civil: '14a3f171ae02abe5a3e89333c707ed6f74df8837',
+    regime_casamento: '011f47eeeffdcd9977e52c2dd706e969a7d76abe',
+    nome_conjuge: 'dad66a725f4cce02a26669d26e4929cb1c816150',
+    renda: '3b4aea4bd2e89b7859117ade965123b8580d2173',
+    endereco_completo: 'none',
+    empresa_nome: 'none',
+    codigo_xp: 'none',
+    documento_identidade: 'none',
+    nome_mae: 'none',
+    naturalidade: 'none',
+  })
+
   // Sync state
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<{
@@ -116,6 +146,27 @@ export default function CadastrosPage() {
   } | null>(null)
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
+  useEffect(() => {
+    const fetchPersonFields = async () => {
+      try {
+        setLoadingFields(true)
+        const token = localStorage.getItem('access_token')
+        if (!token) return
+        const res = await axios.get(`${API_URL}/api/pipedrive/person-fields`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        if (res.data?.fields) {
+          setPersonFields(res.data.fields)
+        }
+      } catch (err) {
+        console.warn('Não foi possível obter campos do Pipedrive:', err)
+      } finally {
+        setLoadingFields(false)
+      }
+    }
+    fetchPersonFields()
+  }, [API_URL])
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
@@ -217,6 +268,7 @@ export default function CadastrosPage() {
         celular: editFields.celular || undefined,
         profissao: editFields.profissao || undefined,
         estado_civil_id: editFields.estado_civil_id || undefined,
+        regime_casamento_id: editFields.regime_casamento_id || undefined,
         nome_conjuge: editFields.nome_conjuge || undefined,
         renda_mensal: editFields.renda_mensal || undefined,
         endereco_completo: editFields.endereco_completo || undefined,
@@ -225,6 +277,7 @@ export default function CadastrosPage() {
         codigo_xp: editFields.codigo_xp || undefined,
         dados_bancarios: editFields.dados_bancarios || undefined,
         create_history_activity: createHistoryActivity,
+        custom_field_mapping: customMapping,
       }
 
       const res = await axios.post(`${API_URL}/api/pipedrive/sync-person-ficha`, payload, {
@@ -244,6 +297,32 @@ export default function CadastrosPage() {
     } finally {
       setSyncing(false)
     }
+  }
+
+  const renderFieldMapper = (fieldKey: string, fallbackKey: string) => {
+    const currentVal = customMapping[fieldKey] !== undefined ? customMapping[fieldKey] : fallbackKey
+    return (
+      <div className="flex items-center space-x-1 flex-shrink-0">
+        <span className="text-[10px] text-slate-400 font-bold hidden sm:inline">➔ Pipedrive:</span>
+        <select
+          value={currentVal}
+          onChange={(e) => setCustomMapping((prev) => ({ ...prev, [fieldKey]: e.target.value }))}
+          className="text-[10px] font-bold bg-blue-50 dark:bg-[#002060]/70 border border-blue-200 dark:border-[#0092FF]/40 text-[#0092FF] dark:text-[#00FFFF] rounded-md px-1.5 py-0.5 max-w-[145px] truncate focus:outline-hidden cursor-pointer hover:border-[#0092FF] transition-colors"
+          title="Selecione o campo do Pipedrive onde este valor será gravado"
+        >
+          <option value="none">🚫 Não salvar no campo</option>
+          {personFields.length === 0 ? (
+            <option value={currentVal}>Campo Padrão CRM</option>
+          ) : (
+            personFields.map((f) => (
+              <option key={f.key} value={f.key}>
+                {f.name} {f.is_custom ? '★' : ''}
+              </option>
+            ))
+          )}
+        </select>
+      </div>
+    )
   }
 
   const handleReset = () => {
@@ -470,13 +549,23 @@ export default function CadastrosPage() {
                 </div>
 
                 {/* Match Action Selection */}
-                <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowMappingModal(true)}
+                    className="px-3.5 py-2.5 rounded-xl bg-slate-100 dark:bg-[#00061A] hover:bg-slate-200 dark:hover:bg-[#002060] text-slate-700 dark:text-slate-300 text-xs font-bold transition-colors flex items-center space-x-1.5 border border-slate-200 dark:border-[#002060]"
+                    title="Ver e configurar o mapeamento de campos Pipedrive"
+                  >
+                    <Sliders className="w-3.5 h-3.5 text-[#0092FF]" />
+                    <span>Mapeamento CRM</span>
+                  </button>
+
                   {hasMatch && matchedPerson && (
                     <a
                       href={matchedPerson.person_url}
                       target="_blank"
                       rel="noreferrer"
-                      className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-[#00061A] hover:bg-slate-200 dark:hover:bg-[#002060] text-slate-700 dark:text-slate-300 text-xs font-bold transition-colors flex items-center space-x-1"
+                      className="px-3.5 py-2.5 rounded-xl bg-slate-100 dark:bg-[#00061A] hover:bg-slate-200 dark:hover:bg-[#002060] text-slate-700 dark:text-slate-300 text-xs font-bold transition-colors flex items-center space-x-1 border border-slate-200 dark:border-[#002060]"
                       title="Ver cadastro atual no Pipedrive"
                     >
                       <span>Ver no Pipedrive</span>
@@ -543,18 +632,25 @@ export default function CadastrosPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* 1. DADOS PESSOAIS & DOCUMENTOS */}
                 <div className="p-5 rounded-2xl bg-white dark:bg-[#000D38] border border-slate-200/80 dark:border-[#002060] shadow-xs space-y-4">
-                  <div className="flex items-center space-x-2 border-b border-slate-100 dark:border-[#002060] pb-3">
-                    <User className="w-4 h-4 text-[#0092FF]" />
-                    <h4 className="font-bold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300 font-display">
-                      Dados Pessoais & Documentos
-                    </h4>
+                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-[#002060] pb-3">
+                    <div className="flex items-center space-x-2">
+                      <User className="w-4 h-4 text-[#0092FF]" />
+                      <h4 className="font-bold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300 font-display">
+                        Dados Pessoais & Documentos
+                      </h4>
+                    </div>
                   </div>
 
                   <div className="space-y-3 text-xs">
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                        Nome Completo
-                      </label>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                          Nome Completo
+                        </label>
+                        <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800/60">
+                          ➔ Pipedrive: Nome (Padrão)
+                        </span>
+                      </div>
                       <input
                         type="text"
                         value={editFields.nome_completo || ''}
@@ -565,9 +661,12 @@ export default function CadastrosPage() {
 
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                          CPF
-                        </label>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                            CPF
+                          </label>
+                          {renderFieldMapper('cpf', 'bccf793f30f8882dc987634461f65fcefe04c116')}
+                        </div>
                         <input
                           type="text"
                           value={editFields.cpf || ''}
@@ -576,9 +675,12 @@ export default function CadastrosPage() {
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                          Data de Nascimento
-                        </label>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                            Data de Nascimento
+                          </label>
+                          {renderFieldMapper('data_nascimento', 'c5f06bfce880ed2c3618d10b40eab28c4b31dd1c')}
+                        </div>
                         <input
                           type="date"
                           value={editFields.data_nascimento_iso || ''}
@@ -596,9 +698,12 @@ export default function CadastrosPage() {
                     </div>
 
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                        Documento de Identidade
-                      </label>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                          Documento de Identidade (RG/CNH)
+                        </label>
+                        {renderFieldMapper('documento_identidade', 'none')}
+                      </div>
                       <input
                         type="text"
                         value={editFields.documento_identidade || ''}
@@ -609,9 +714,12 @@ export default function CadastrosPage() {
 
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                          Nome da Mãe
-                        </label>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                            Nome da Mãe
+                          </label>
+                          {renderFieldMapper('nome_mae', 'none')}
+                        </div>
                         <input
                           type="text"
                           value={editFields.nome_mae || ''}
@@ -620,9 +728,12 @@ export default function CadastrosPage() {
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                          Nacionalidade / Naturalidade
-                        </label>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                            Nacionalidade / Naturalidade
+                          </label>
+                          {renderFieldMapper('naturalidade', 'none')}
+                        </div>
                         <input
                           type="text"
                           value={editFields.naturalidade || editFields.nacionalidade || ''}
@@ -636,18 +747,25 @@ export default function CadastrosPage() {
 
                 {/* 2. CONTATOS & ENDEREÇO RESIDENCIAL */}
                 <div className="p-5 rounded-2xl bg-white dark:bg-[#000D38] border border-slate-200/80 dark:border-[#002060] shadow-xs space-y-4">
-                  <div className="flex items-center space-x-2 border-b border-slate-100 dark:border-[#002060] pb-3">
-                    <Phone className="w-4 h-4 text-[#0092FF]" />
-                    <h4 className="font-bold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300 font-display">
-                      Contatos & Endereço Residencial
-                    </h4>
+                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-[#002060] pb-3">
+                    <div className="flex items-center space-x-2">
+                      <Phone className="w-4 h-4 text-[#0092FF]" />
+                      <h4 className="font-bold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300 font-display">
+                        Contatos & Endereço Residencial
+                      </h4>
+                    </div>
                   </div>
 
                   <div className="space-y-3 text-xs">
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                        E-mail Principal
-                      </label>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                          E-mail Principal
+                        </label>
+                        <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800/60">
+                          ➔ Pipedrive: E-mail (Padrão)
+                        </span>
+                      </div>
                       <input
                         type="email"
                         value={editFields.email || ''}
@@ -658,9 +776,14 @@ export default function CadastrosPage() {
 
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                          Celular / WhatsApp
-                        </label>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                            Celular / WhatsApp
+                          </label>
+                          <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800/60">
+                            ➔ Pipedrive: Telefone (Padrão)
+                          </span>
+                        </div>
                         <input
                           type="text"
                           value={editFields.celular || editFields.telefone || ''}
@@ -669,9 +792,12 @@ export default function CadastrosPage() {
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                          CEP
-                        </label>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                            CEP
+                          </label>
+                          {renderFieldMapper('endereco_completo', 'none')}
+                        </div>
                         <input
                           type="text"
                           value={editFields.cep || ''}
@@ -733,19 +859,24 @@ export default function CadastrosPage() {
 
                 {/* 3. DADOS PROFISSIONAIS & FINANCEIROS */}
                 <div className="p-5 rounded-2xl bg-white dark:bg-[#000D38] border border-slate-200/80 dark:border-[#002060] shadow-xs space-y-4">
-                  <div className="flex items-center space-x-2 border-b border-slate-100 dark:border-[#002060] pb-3">
-                    <Briefcase className="w-4 h-4 text-[#0092FF]" />
-                    <h4 className="font-bold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300 font-display">
-                      Profissão & Situação Financeira
-                    </h4>
+                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-[#002060] pb-3">
+                    <div className="flex items-center space-x-2">
+                      <Briefcase className="w-4 h-4 text-[#0092FF]" />
+                      <h4 className="font-bold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300 font-display">
+                        Profissão & Situação Financeira
+                      </h4>
+                    </div>
                   </div>
 
                   <div className="space-y-3 text-xs">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                          Profissão
-                        </label>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                            Profissão
+                          </label>
+                          {renderFieldMapper('profissao', '079e39aaa3b5ec6782cdea922a29682f165d3953')}
+                        </div>
                         <input
                           type="text"
                           value={editFields.profissao || ''}
@@ -754,9 +885,12 @@ export default function CadastrosPage() {
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                          Renda Mensal (R$)
-                        </label>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                            Renda Mensal (R$)
+                          </label>
+                          {renderFieldMapper('renda', '3b4aea4bd2e89b7859117ade965123b8580d2173')}
+                        </div>
                         <input
                           type="number"
                           step="1000"
@@ -768,9 +902,12 @@ export default function CadastrosPage() {
                     </div>
 
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                        Empresa / Entidade Onde Trabalha
-                      </label>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                          Empresa / Entidade Onde Trabalha
+                        </label>
+                        {renderFieldMapper('empresa_nome', 'none')}
+                      </div>
                       <input
                         type="text"
                         value={editFields.empresa_nome || ''}
@@ -780,9 +917,12 @@ export default function CadastrosPage() {
                     </div>
 
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                        CNPJ da Empresa
-                      </label>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                          CNPJ da Empresa
+                        </label>
+                        {renderFieldMapper('empresa_cnpj', 'none')}
+                      </div>
                       <input
                         type="text"
                         value={editFields.empresa_cnpj || ''}
@@ -795,19 +935,24 @@ export default function CadastrosPage() {
 
                 {/* 4. FAMÍLIA & DADOS BANCÁRIOS */}
                 <div className="p-5 rounded-2xl bg-white dark:bg-[#000D38] border border-slate-200/80 dark:border-[#002060] shadow-xs space-y-4">
-                  <div className="flex items-center space-x-2 border-b border-slate-100 dark:border-[#002060] pb-3">
-                    <Heart className="w-4 h-4 text-[#0092FF]" />
-                    <h4 className="font-bold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300 font-display">
-                      Família & Dados Bancários XP
-                    </h4>
+                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-[#002060] pb-3">
+                    <div className="flex items-center space-x-2">
+                      <Heart className="w-4 h-4 text-[#0092FF]" />
+                      <h4 className="font-bold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300 font-display">
+                        Família & Dados Bancários XP
+                      </h4>
+                    </div>
                   </div>
 
                   <div className="space-y-3 text-xs">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                          Estado Civil
-                        </label>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                            Estado Civil
+                          </label>
+                          {renderFieldMapper('estado_civil', '14a3f171ae02abe5a3e89333c707ed6f74df8837')}
+                        </div>
                         <select
                           value={editFields.estado_civil_id || 53}
                           onChange={(e) => handleFieldChange('estado_civil_id', parseInt(e.target.value))}
@@ -820,9 +965,12 @@ export default function CadastrosPage() {
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                          Código de Conta XP
-                        </label>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                            Código de Conta XP
+                          </label>
+                          {renderFieldMapper('codigo_xp', 'none')}
+                        </div>
                         <input
                           type="text"
                           value={editFields.codigo_xp || ''}
@@ -833,9 +981,12 @@ export default function CadastrosPage() {
                     </div>
 
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                        Nome do(a) Cônjuge
-                      </label>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                          Nome do(a) Cônjuge
+                        </label>
+                        {renderFieldMapper('nome_conjuge', 'dad66a725f4cce02a26669d26e4929cb1c816150')}
+                      </div>
                       <input
                         type="text"
                         value={editFields.nome_conjuge || ''}
@@ -845,9 +996,12 @@ export default function CadastrosPage() {
                     </div>
 
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                        Dados Bancários Cadastrados
-                      </label>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                          Dados Bancários Cadastrados
+                        </label>
+                        {renderFieldMapper('dados_bancarios', 'none')}
+                      </div>
                       <input
                         type="text"
                         value={editFields.dados_bancarios || ''}
@@ -904,6 +1058,133 @@ export default function CadastrosPage() {
           )}
         </div>
       </main>
-    </div>
-  )
-}
+
+        {/* CRM MAPPING MODAL */}
+        {showMappingModal && (
+          <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-[#000D38] rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col shadow-2xl animate-scale-in border border-slate-200/80 dark:border-[#002060]">
+              <div className="p-5 border-b border-slate-200 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] flex items-center justify-between">
+                <div className="flex items-center space-x-2.5">
+                  <div className="p-2 bg-[#0092FF]/10 text-[#0092FF] dark:text-[#00FFFF] rounded-xl">
+                    <Sliders className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white font-display">
+                      Mapeamento de Atribuição no Pipedrive
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Defina para qual campo da Pessoa no CRM cada dado da ficha será salvo.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowMappingModal(false)}
+                  className="p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-[#002060] transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-6 overflow-y-auto space-y-4">
+                <div className="text-xs text-slate-600 dark:text-slate-300 bg-blue-50/60 dark:bg-[#002060]/30 p-3.5 rounded-xl border border-blue-200/80 dark:border-[#0092FF]/30">
+                  <p className="font-semibold text-slate-800 dark:text-slate-200">
+                    💡 Dica: Todos os dados extraídos também são salvos no <strong>Histórico de Atividades</strong> da Pessoa, mesmo se você optar por não gravar em um campo específico.
+                  </p>
+                </div>
+
+                <div className="divide-y divide-slate-100 dark:divide-[#002060] text-xs">
+                  {[
+                    { label: 'Nome Completo', key: 'nome_completo', isDefaultFixed: true, defaultTarget: 'Nome (name)' },
+                    { label: 'CPF do Cliente', key: 'cpf', defaultFallback: 'bccf793f30f8882dc987634461f65fcefe04c116' },
+                    { label: 'Data de Nascimento', key: 'data_nascimento', defaultFallback: 'c5f06bfce880ed2c3618d10b40eab28c4b31dd1c' },
+                    { label: 'Profissão', key: 'profissao', defaultFallback: '079e39aaa3b5ec6782cdea922a29682f165d3953' },
+                    { label: 'Estado Civil', key: 'estado_civil', defaultFallback: '14a3f171ae02abe5a3e89333c707ed6f74df8837' },
+                    { label: 'Regime de Casamento', key: 'regime_casamento', defaultFallback: '011f47eeeffdcd9977e52c2dd706e969a7d76abe' },
+                    { label: 'Nome do Cônjuge', key: 'nome_conjuge', defaultFallback: 'dad66a725f4cce02a26669d26e4929cb1c816150' },
+                    { label: 'Renda Mensal', key: 'renda', defaultFallback: '3b4aea4bd2e89b7859117ade965123b8580d2173' },
+                    { label: 'E-mail Principal', key: 'email', isDefaultFixed: true, defaultTarget: 'E-mail (email)' },
+                    { label: 'Telefone / WhatsApp', key: 'celular', isDefaultFixed: true, defaultTarget: 'Telefone (phone)' },
+                    { label: 'Endereço / CEP', key: 'endereco_completo', defaultFallback: 'none' },
+                    { label: 'Empresa Onde Trabalha', key: 'empresa_nome', defaultFallback: 'none' },
+                    { label: 'CNPJ da Empresa', key: 'empresa_cnpj', defaultFallback: 'none' },
+                    { label: 'Código de Conta XP', key: 'codigo_xp', defaultFallback: 'none' },
+                    { label: 'Documento (RG/CNH)', key: 'documento_identidade', defaultFallback: 'none' },
+                    { label: 'Nome da Mãe', key: 'nome_mae', defaultFallback: 'none' },
+                    { label: 'Naturalidade / Nacionalidade', key: 'naturalidade', defaultFallback: 'none' },
+                  ].map((row) => (
+                    <div key={row.key} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <span className="font-bold text-slate-800 dark:text-slate-200 block">
+                          {row.label}
+                        </span>
+                        {editFields && (editFields as any)[row.key] && (
+                          <span className="text-[11px] text-slate-400 font-mono truncate max-w-xs block">
+                            Valor: {String((editFields as any)[row.key])}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex-shrink-0">
+                        {row.isDefaultFixed ? (
+                          <span className="inline-block px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300 font-bold text-xs">
+                            ➔ Pipedrive: {row.defaultTarget}
+                          </span>
+                        ) : (
+                          <select
+                            value={customMapping[row.key] !== undefined ? customMapping[row.key] : (row.defaultFallback || 'none')}
+                            onChange={(e) => setCustomMapping((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                            className="w-full sm:w-64 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                          >
+                            <option value="none">🚫 Não salvar no campo (apenas Histórico)</option>
+                            {personFields.map((f) => (
+                              <option key={f.key} value={f.key}>
+                                {f.name} {f.is_custom ? '★' : ''}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-4 border-t border-slate-200 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomMapping({
+                      cpf: 'bccf793f30f8882dc987634461f65fcefe04c116',
+                      data_nascimento: 'c5f06bfce880ed2c3618d10b40eab28c4b31dd1c',
+                      profissao: '079e39aaa3b5ec6782cdea922a29682f165d3953',
+                      estado_civil: '14a3f171ae02abe5a3e89333c707ed6f74df8837',
+                      regime_casamento: '011f47eeeffdcd9977e52c2dd706e969a7d76abe',
+                      nome_conjuge: 'dad66a725f4cce02a26669d26e4929cb1c816150',
+                      renda: '3b4aea4bd2e89b7859117ade965123b8580d2173',
+                      endereco_completo: 'none',
+                      empresa_nome: 'none',
+                      codigo_xp: 'none',
+                      documento_identidade: 'none',
+                      nome_mae: 'none',
+                      naturalidade: 'none',
+                    })
+                  }}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-colors"
+                >
+                  Restaurar Padrões
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowMappingModal(false)}
+                  className="px-5 py-2 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white font-bold text-xs shadow-md transition-all"
+                >
+                  Concluir & Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }

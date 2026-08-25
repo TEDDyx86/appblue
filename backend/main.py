@@ -3308,6 +3308,7 @@ class SyncPersonFichaRequest(BaseModel):
     celular: Optional[str] = None
     profissao: Optional[str] = None
     estado_civil_id: Optional[int] = None
+    regime_casamento_id: Optional[int] = None
     nome_conjuge: Optional[str] = None
     renda_mensal: Optional[float] = None
     endereco_completo: Optional[str] = None
@@ -3316,6 +3317,43 @@ class SyncPersonFichaRequest(BaseModel):
     codigo_xp: Optional[str] = None
     dados_bancarios: Optional[str] = None
     create_history_activity: bool = True
+    custom_field_mapping: Optional[Dict[str, Optional[str]]] = None
+
+
+@app.get("/api/pipedrive/person-fields")
+async def get_pipedrive_person_fields_endpoint(user: dict = Depends(require_admin)):
+    """Retorna todos os campos (padrões e personalizados) de Pessoa do Pipedrive"""
+    if not PIPEDRIVE_API_TOKEN:
+        raise HTTPException(status_code=500, detail="PIPEDRIVE_API_TOKEN não configurado")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.get(
+                "https://api.pipedrive.com/v1/personFields",
+                params={"api_token": PIPEDRIVE_API_TOKEN}
+            )
+            if res.status_code != 200:
+                raise HTTPException(status_code=res.status_code, detail="Erro ao buscar campos no Pipedrive")
+            
+            raw_fields = res.json().get("data", [])
+            fields = []
+            for f in raw_fields:
+                key = f.get("key")
+                # Ignora campos de sistema não editáveis
+                if key in ["id", "add_time", "update_time", "open_deals_count", "won_deals_count", "lost_deals_count", "closed_deals_count", "activities_count", "done_activities_count", "undone_activities_count", "email_messages_count", "picture_id", "last_incoming_mail_time", "last_outgoing_mail_time"]:
+                    continue
+                fields.append({
+                    "key": key,
+                    "name": f.get("name"),
+                    "field_type": f.get("field_type"),
+                    "is_custom": bool(f.get("is_subfield", False) or f.get("edit_flag", True)),
+                    "options": f.get("options")
+                })
+            return {"status": "success", "fields": fields}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erro ao buscar campos de pessoa do Pipedrive: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/pdf/parse-ficha-cadastral")
@@ -3381,18 +3419,42 @@ async def sync_person_ficha_endpoint(
     if phone_val:
         payload["phone"] = [{"value": phone_val, "primary": True, "label": "mobile"}]
         
-    if req.cpf:
-        payload[PIPEDRIVE_PERSON_CUSTOM_FIELDS["cpf"]] = req.cpf
-    if req.data_nascimento_iso:
-        payload[PIPEDRIVE_PERSON_CUSTOM_FIELDS["data_nascimento"]] = req.data_nascimento_iso
-    if req.profissao:
-        payload[PIPEDRIVE_PERSON_CUSTOM_FIELDS["profissao"]] = req.profissao
-    if req.estado_civil_id:
-        payload[PIPEDRIVE_PERSON_CUSTOM_FIELDS["estado_civil"]] = req.estado_civil_id
-    if req.nome_conjuge:
-        payload[PIPEDRIVE_PERSON_CUSTOM_FIELDS["nome_conjuge"]] = req.nome_conjuge
-    if req.renda_mensal is not None:
-        payload[PIPEDRIVE_PERSON_CUSTOM_FIELDS["renda"]] = float(req.renda_mensal)
+    mapping = req.custom_field_mapping or {}
+    
+    # Mapeamento dinâmico ou fallback padrão
+    cpf_key = mapping.get("cpf", PIPEDRIVE_PERSON_CUSTOM_FIELDS["cpf"])
+    nascimento_key = mapping.get("data_nascimento", PIPEDRIVE_PERSON_CUSTOM_FIELDS["data_nascimento"])
+    profissao_key = mapping.get("profissao", PIPEDRIVE_PERSON_CUSTOM_FIELDS["profissao"])
+    estado_civil_key = mapping.get("estado_civil", PIPEDRIVE_PERSON_CUSTOM_FIELDS["estado_civil"])
+    regime_casamento_key = mapping.get("regime_casamento", "011f47eeeffdcd9977e52c2dd706e969a7d76abe")
+    nome_conjuge_key = mapping.get("nome_conjuge", PIPEDRIVE_PERSON_CUSTOM_FIELDS["nome_conjuge"])
+    renda_key = mapping.get("renda", PIPEDRIVE_PERSON_CUSTOM_FIELDS["renda"])
+
+    if req.cpf and cpf_key and cpf_key != "none":
+        payload[cpf_key] = req.cpf
+    if req.data_nascimento_iso and nascimento_key and nascimento_key != "none":
+        payload[nascimento_key] = req.data_nascimento_iso
+    if req.profissao and profissao_key and profissao_key != "none":
+        payload[profissao_key] = req.profissao
+    if req.estado_civil_id and estado_civil_key and estado_civil_key != "none":
+        payload[estado_civil_key] = req.estado_civil_id
+    if req.regime_casamento_id and regime_casamento_key and regime_casamento_key != "none":
+        payload[regime_casamento_key] = req.regime_casamento_id
+    if req.nome_conjuge and nome_conjuge_key and nome_conjuge_key != "none":
+        payload[nome_conjuge_key] = req.nome_conjuge
+    if req.renda_mensal is not None and renda_key and renda_key != "none":
+        payload[renda_key] = float(req.renda_mensal)
+        
+    # Mapeamentos adicionais configurados pelo usuário
+    extra_field_mappings = {
+        "endereco_completo": req.endereco_completo,
+        "empresa_nome": req.empresa_nome,
+        "codigo_xp": req.codigo_xp,
+    }
+    for field_name, field_val in extra_field_mappings.items():
+        target_k = mapping.get(field_name)
+        if target_k and target_k != "none" and field_val:
+            payload[target_k] = field_val
         
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
