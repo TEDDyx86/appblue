@@ -2327,8 +2327,27 @@ def generate_daily_alerts():
     except Exception as e:
         logger.error(f"Erro no job diário do Funil Comercial: {e}")
 
-# Agenda job para rodar diariamente às 7h
-scheduler.add_job(generate_daily_alerts, "cron", hour=7, minute=0, timezone="America/Sao_Paulo")
+def sync_drive_transcriptions_job():
+    """Job periódico de sincronização automática de transcrições do Google Drive (a cada 5 minutos)"""
+    import asyncio
+    try:
+        logger.info("🔄 [Auto-Sync] Verificando novas transcrições no Google Drive...")
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        stats = loop.run_until_complete(process_new_transcription())
+        loop.close()
+        if stats.get("processed_new", 0) > 0:
+            logger.info(f"✨ [Auto-Sync] {stats['processed_new']} nova(s) transcrição(ões) sincronizada(s) com sucesso!")
+        else:
+            logger.info(f"💤 [Auto-Sync] Verificação concluída ({stats.get('total_files', 0)} arquivos no Drive, 0 novos).")
+    except Exception as e:
+        logger.error(f"⚠️ [Auto-Sync] Erro na verificação periódica do Drive: {e}")
+
+# Agenda job para rodar diariamente às 7h (Alertas Comerciais)
+scheduler.add_job(generate_daily_alerts, "cron", hour=7, minute=0, timezone="America/Sao_Paulo", id="daily_comercial_alerts", replace_existing=True)
+
+# Agenda job para checagem automática de novas transcrições a cada 5 minutos
+scheduler.add_job(sync_drive_transcriptions_job, "interval", minutes=5, id="auto_sync_drive_transcriptions", replace_existing=True)
 
 # ============================================================================
 # HEALTH CHECK & SYSTEM STATUS
