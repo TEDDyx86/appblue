@@ -652,11 +652,13 @@ import re
 def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
     """
     Parser para extrair dados estruturados dos Google Docs gerados pelo Tactiq
-    Suporta formato legado e novo formato com Resumo Rápido, Decisões e Pontos de Atenção.
+    Suporta formato legado e novo formato com Resumo Rápido, Decisões, Data/Hora e Pontos de Atenção.
     """
     now = datetime.utcnow()
     data = {
         "resumo_rapido": "",
+        "data_reuniao": "",
+        "hora_reuniao": "",
         "principais_topicos": [],
         "dados_cliente": {
             "nome": "",
@@ -680,6 +682,7 @@ def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
         "pipedrive": {
             "person_id": None,
             "deal_id": None,
+            "note_id": None,
             "activity_id": None,
             "person_url": None,
             "deal_url": None
@@ -773,7 +776,16 @@ def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
                 pontos.append(line_clean)
         data["pontos_atencao"] = pontos
 
-    # 8. Próxima Ação Sugerida
+    # 8. Extração de Data e Horário da Reunião (quando presente no documento)
+    date_match = re.search(r"(?:Data|Data da reuni[aã]o|Data do atendimento|Data/Hora|DATA):\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})", text, re.IGNORECASE)
+    if date_match:
+        data["data_reuniao"] = date_match.group(1).strip()
+        
+    time_match = re.search(r"(?:Hora|Hor[aá]rio|Hora da reuni[aã]o|HORA):\s*(\d{1,2}:\d{2}(?::\d{2})?)", text, re.IGNORECASE)
+    if time_match:
+        data["hora_reuniao"] = time_match.group(1).strip()
+
+    # 9. Próxima Ação Sugerida
     proxima_acao_desc = ""
     for d in reversed(data["decisoes_proximos_passos"]):
         if any(keyword in d.lower() for keyword in ["agend", "reuni", "combinad", "enviar", "apresenta", "propost", "análise", "follow"]):
@@ -808,12 +820,27 @@ def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
     return data
 
 def generate_pipedrive_briefing_html(briefing_json: dict, meeting_title: str, client_name: str) -> str:
-    """Gera o HTML rico e formatado para a descrição da atividade / nota no Pipedrive com o link no topo"""
+    """
+    Gera o HTML rico e formatado para a nota no Pipedrive conforme especificação:
+    Reunião: [Título]
+    Cliente: [Nome]
+    🔗 Link da Gravação - [Link]
+    
+    📝 Resumo Executivo:
+    ...
+    """
     tactiq_url = briefing_json.get("tactiq_link")
-    tactiq_link_html = (
-        f"<p style='font-size: 13px;'><strong>🔗 Link da Gravação & Transcrição (Tactiq):</strong><br/>"
-        f"<a href='{tactiq_url}' target='_blank' style='color: #0092FF; font-weight: bold;'>{tactiq_url}</a></p><hr/>"
+    tactiq_line_html = (
+        f"<p><strong>🔗 Link da Gravação -</strong> <a href='{tactiq_url}' target='_blank' style='color: #0092FF;'>{tactiq_url}</a></p>"
     ) if tactiq_url else ""
+
+    data_reuniao = briefing_json.get("data_reuniao")
+    hora_reuniao = briefing_json.get("hora_reuniao")
+    data_hora_line = ""
+    if data_reuniao and hora_reuniao:
+        data_hora_line = f"<p><strong>Data & Horário:</strong> {data_reuniao} às {hora_reuniao}</p>"
+    elif data_reuniao:
+        data_hora_line = f"<p><strong>Data:</strong> {data_reuniao}</p>"
 
     resumo_html = f"<p><strong>📝 Resumo Executivo:</strong><br/>{briefing_json.get('resumo_rapido')}</p>" if briefing_json.get("resumo_rapido") else ""
     
@@ -841,10 +868,10 @@ def generate_pipedrive_briefing_html(briefing_json: dict, meeting_title: str, cl
     atencao_section = f"<h4>⚠️ Pontos de Atenção para a Próxima Reunião:</h4><ul>{atencao_html}</ul>" if atencao_html else ""
 
     html = (
-        f"<h3>📋 Briefing da Reunião (Origem: Tactiq / Google Drive)</h3>"
-        f"{tactiq_link_html}"
         f"<p><strong>Reunião:</strong> {meeting_title}</p>"
         f"<p><strong>Cliente:</strong> {client_name}</p>"
+        f"{data_hora_line}"
+        f"{tactiq_line_html}"
         f"{resumo_html}"
         f"{dados_cli_html}"
         f"<h4>📌 Principais Tópicos Abordados:</h4>"
@@ -1017,28 +1044,22 @@ async def process_new_transcription(user_id: Optional[str] = None) -> Dict[str, 
                             briefing_json["pipedrive"]["deal_url"] = f"https://investimentosblue.pipedrive.com/deal/{deal_id}"
                         
                         if matching_confidence >= 0.70:
-                            activity_note_html = generate_pipedrive_briefing_html(
+                            briefing_note_html = generate_pipedrive_briefing_html(
                                 briefing_json=briefing_json,
                                 meeting_title=meeting_title,
                                 client_name=cliente_nome
                             )
                             
-                            act_res = await create_pipedrive_activity(
-                                subject="Transcrição Tactiq",
-                                activity_type="tactiq",
-                                due_date=meeting_date_str,
-                                done=True,
-                                deal_id=deal_id,
+                            note_res = await create_pipedrive_note(
+                                content=briefing_note_html,
                                 person_id=person_id,
-                                note_content=activity_note_html
+                                deal_id=deal_id
                             )
-                            if act_res:
-                                activity_id = str(act_res.get("id"))
-                                briefing_json["pipedrive"]["activity_id"] = activity_id
-                                briefing_json["pipedrive"]["activity_subject"] = "Transcrição Tactiq"
-                                briefing_json["pipedrive"]["activity_type"] = "tactiq"
-                                briefing_json["pipedrive"]["activity_date"] = meeting_date_str
-                                logger.info(f"Atividade Pipedrive criada com sucesso: #{activity_id} para {cliente_nome}")
+                            if note_res:
+                                note_id = str(note_res.get("id"))
+                                briefing_json["pipedrive"]["note_id"] = note_id
+                                briefing_json["pipedrive"]["activity_id"] = None
+                                logger.info(f"Nota Pipedrive criada com sucesso: #{note_id} para {cliente_nome}")
                 
                 # Atualiza transcrição para completed com o briefing real
                 supabase.table("transcriptions").update({
@@ -1052,7 +1073,8 @@ async def process_new_transcription(user_id: Optional[str] = None) -> Dict[str, 
                 is_linked = bool(deal_id or person_id)
                 if is_linked:
                     action_type = "DRIVE_DOC_LINKED"
-                    summary_text = f"Arquivo '{meeting_title}' recebido do Google Drive e vinculado com sucesso ao cliente '{cliente_nome or 'Identificado'}'" + (f" e Deal #{deal_id}" if deal_id else "") + " no Pipedrive com tarefa agendada."
+                    note_id_str = briefing_json.get("pipedrive", {}).get("note_id")
+                    summary_text = f"Arquivo '{meeting_title}' recebido do Google Drive e vinculado com sucesso ao cliente '{cliente_nome or 'Identificado'}'" + (f" e Deal #{deal_id}" if deal_id else "") + (f" no Pipedrive com nota (#{note_id_str}) sincronizada." if note_id_str else " no Pipedrive.")
                 else:
                     action_type = "DRIVE_DOC_UNLINKED"
                     if cliente_nome and cliente_nome.lower() != "cliente":
@@ -1232,8 +1254,51 @@ async def delete_pipedrive_activity(activity_id: str) -> bool:
         logger.error(f"Erro ao excluir atividade {activity_id} no Pipedrive: {e}")
         return False
 
+async def create_pipedrive_note(
+    content: str,
+    person_id: Optional[str] = None,
+    deal_id: Optional[str] = None
+) -> Optional[Dict]:
+    """Cria uma Nota no Pipedrive vinculada à Pessoa e/ou ao Negócio"""
+    if not PIPEDRIVE_API_TOKEN:
+        logger.warning("PIPEDRIVE_API_TOKEN não configurado.")
+        return None
+    try:
+        payload: Dict[str, Any] = {
+            "content": content,
+            "pinned_to_deal_flag": 0,
+            "pinned_to_person_flag": 0
+        }
+        if person_id:
+            try:
+                payload["person_id"] = int(person_id)
+            except (ValueError, TypeError):
+                payload["person_id"] = person_id
+        if deal_id:
+            try:
+                payload["deal_id"] = int(deal_id)
+            except (ValueError, TypeError):
+                payload["deal_id"] = deal_id
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            res = await client.post(
+                f"{PIPEDRIVE_BASE_URL}/notes",
+                params={"api_token": PIPEDRIVE_API_TOKEN},
+                json=payload
+            )
+            if res.status_code in [200, 201]:
+                data = res.json().get("data") or {}
+                logger.info(f"Nota #{data.get('id')} criada com sucesso no Pipedrive para person_id={person_id}, deal_id={deal_id}.")
+                return data
+            else:
+                logger.error(f"Falha ao criar nota no Pipedrive: {res.status_code} - {res.text}")
+                return None
+    except Exception as e:
+        logger.error(f"Exceção ao criar nota no Pipedrive: {e}")
+        return None
+
 async def delete_pipedrive_note(note_id: str) -> bool:
-    """Exclui uma nota legada existente no Pipedrive (para fins de limpeza)"""
+    """Exclui uma nota existente no Pipedrive"""
     if not note_id or not PIPEDRIVE_API_TOKEN:
         return False
     try:
@@ -1243,7 +1308,7 @@ async def delete_pipedrive_note(note_id: str) -> bool:
                 params={"api_token": PIPEDRIVE_API_TOKEN}
             )
             if res.status_code in [200, 204]:
-                logger.info(f"Nota legada #{note_id} excluída com sucesso no Pipedrive.")
+                logger.info(f"Nota #{note_id} excluída com sucesso no Pipedrive.")
                 return True
             else:
                 return False
@@ -2016,37 +2081,23 @@ async def assign_transcription_to_crm(
     briefing_json["pipedrive"]["person_url"] = f"https://investimentosblue.pipedrive.com/person/{person_id}" if person_id else None
     briefing_json["pipedrive"]["deal_url"] = f"https://investimentosblue.pipedrive.com/deal/{deal_id}" if deal_id else None
     
-    # 6. Cria Atividade no Pipedrive (Tipo 'tactiq', nome padrão 'Transcrição Tactiq')
-    activity_id = None
-    act_subject = req.activity_subject or "Transcrição Tactiq"
-    act_type = req.activity_type or "tactiq"
-    act_date = req.activity_date or t.get("meeting_date") or datetime.now().strftime("%Y-%m-%d")
-    
-    if req.create_activity:
-        activity_note_html = generate_pipedrive_briefing_html(
+    # 6. Cria Nota no Pipedrive com o Briefing
+    note_id = None
+    if req.create_activity or getattr(req, "create_note", True):
+        briefing_note_html = generate_pipedrive_briefing_html(
             briefing_json=briefing_json,
             meeting_title=meeting_title,
             client_name=client_name
         )
-        
-        act_res = await create_pipedrive_activity(
-            subject=act_subject,
-            activity_type=act_type,
-            due_date=act_date,
-            due_time=req.activity_time,
-            duration=req.duration,
-            done=req.done,
-            deal_id=deal_id,
+        note_res = await create_pipedrive_note(
+            content=briefing_note_html,
             person_id=person_id,
-            note_content=activity_note_html
+            deal_id=deal_id
         )
-        if act_res:
-            activity_id = str(act_res.get("id"))
-            briefing_json["pipedrive"]["activity_id"] = activity_id
-            briefing_json["pipedrive"]["activity_subject"] = act_subject
-            briefing_json["pipedrive"]["activity_type"] = act_type
-            briefing_json["pipedrive"]["activity_date"] = act_date
-            briefing_json["pipedrive"]["note_id"] = None
+        if note_res:
+            note_id = str(note_res.get("id"))
+            briefing_json["pipedrive"]["note_id"] = note_id
+            briefing_json["pipedrive"]["activity_id"] = None
             
     # 7. Atualiza registro da Transcrição
     supabase.table("transcriptions").update({
@@ -2065,27 +2116,26 @@ async def assign_transcription_to_crm(
             "cliente_nome": client_name,
             "pipedrive_person_id": person_id,
             "pipedrive_deal_id": deal_id,
-            "pipedrive_activity_id": activity_id,
-            "activity_subject": act_subject,
-            "activity_type": act_type,
-            "activity_date": act_date,
+            "pipedrive_note_id": note_id,
             "old_activity_id": old_activity_id,
             "old_activity_deleted": old_act_deleted,
+            "old_note_id": old_note_id,
+            "old_note_deleted": old_note_deleted,
             "deal_url": briefing_json["pipedrive"].get("deal_url"),
             "person_url": briefing_json["pipedrive"].get("person_url"),
             "proxima_acao": briefing_json.get("proxima_acao", {}).get("descricao"),
             "is_linked_to_crm": True,
             "assigned_manually": True,
-            "summary": f"Transcrição '{meeting_title}' " + (f"reatribuída (atividade antiga #{old_activity_id} removida) para '{client_name}'" if old_activity_id else f"vinculada ao cliente '{client_name}'") + (f" (Deal #{deal_id})" if deal_id else "") + f" no Pipedrive por Robson com atividade '{act_subject}' (#{activity_id}) sincronizada."
+            "summary": f"Transcrição '{meeting_title}' " + (f"reatribuída (registro anterior removido) para '{client_name}'" if (old_activity_id or old_note_id) else f"vinculada ao cliente '{client_name}'") + (f" (Deal #{deal_id})" if deal_id else "") + (f" no Pipedrive com nota (#{note_id}) sincronizada." if note_id else " no Pipedrive.")
         }
     )
     
     return {
         "status": "success",
-        "message": f"Transcrição vinculada com sucesso ao Pipedrive com Atividade '{act_subject}'!" + (" (Atividade anterior substituída)" if old_act_deleted else ""),
+        "message": f"Transcrição vinculada com sucesso ao Pipedrive com Nota no cliente '{client_name}'!" + (" (Registro anterior substituído)" if (old_act_deleted or old_note_deleted) else ""),
         "person_id": person_id,
         "deal_id": deal_id,
-        "activity_id": activity_id,
+        "note_id": note_id,
         "person_url": briefing_json["pipedrive"].get("person_url"),
         "deal_url": briefing_json["pipedrive"].get("deal_url"),
         "briefing_json": briefing_json
@@ -2099,7 +2149,7 @@ async def unlink_transcription_from_crm(
     delete_note: bool = True,
     user: dict = Depends(require_admin)
 ):
-    """Desvincula uma transcrição do Pipedrive, exclui a atividade associada no CRM e impede reenvio automático"""
+    """Desvincula uma transcrição do Pipedrive, exclui a nota/atividade associada no CRM e impede reenvio automático"""
     t_res = supabase.table("transcriptions").select("*").eq("id", transcription_id).execute()
     if not t_res.data:
         raise HTTPException(status_code=404, detail="Transcrição não encontrada")
@@ -2118,7 +2168,7 @@ async def unlink_transcription_from_crm(
     if delete_activity and old_activity_id:
         act_deleted = await delete_pipedrive_activity(old_activity_id)
         
-    # 2. Apaga nota legada se existir
+    # 2. Apaga nota se existir
     note_deleted = False
     if delete_note and old_note_id:
         note_deleted = await delete_pipedrive_note(old_note_id)
@@ -2151,14 +2201,16 @@ async def unlink_transcription_from_crm(
             "old_client": old_person,
             "old_deal_id": old_deal,
             "old_activity_id": old_activity_id,
+            "old_note_id": old_note_id,
             "activity_deleted_from_crm": act_deleted,
-            "summary": f"Transcrição '{meeting_title}' desvinculada do Pipedrive por Robson" + (f" (atividade #{old_activity_id} removida do CRM)." if act_deleted else ".")
+            "note_deleted_from_crm": note_deleted,
+            "summary": f"Transcrição '{meeting_title}' desvinculada do Pipedrive por Robson" + (f" (nota/atividade #{old_note_id or old_activity_id} removida do CRM)." if (act_deleted or note_deleted) else ".")
         }
     )
     
     return {
         "status": "success",
-        "message": "Transcrição desvinculada com sucesso" + (" e atividade removida do Pipedrive." if act_deleted else "."),
+        "message": "Transcrição desvinculada com sucesso" + (" e registros removidos do Pipedrive." if (act_deleted or note_deleted) else "."),
         "activity_deleted": act_deleted,
         "note_deleted": note_deleted,
         "briefing_json": briefing_json
@@ -2169,7 +2221,7 @@ async def toggle_ignore_transcription(
     transcription_id: str,
     user: dict = Depends(require_admin)
 ):
-    """Alterna o status de ignorada/reunião interna de uma transcrição, removendo atividade do Pipedrive se marcada como ignorada"""
+    """Alterna o status de ignorada/reunião interna de uma transcrição, removendo nota/atividade do Pipedrive se marcada como ignorada"""
     t_res = supabase.table("transcriptions").select("*").eq("id", transcription_id).execute()
     if not t_res.data:
         raise HTTPException(status_code=404, detail="Transcrição não encontrada")
@@ -2179,21 +2231,27 @@ async def toggle_ignore_transcription(
     meeting_title = t.get("meeting_title") or "Reunião"
     pipe_info = briefing_json.get("pipedrive") or {}
     old_activity_id = pipe_info.get("activity_id")
+    old_note_id = pipe_info.get("note_id")
     
     current_ignored = briefing_json.get("is_ignored", False)
     new_ignored = not current_ignored
     briefing_json["is_ignored"] = new_ignored
     
     act_deleted = False
+    note_deleted = False
     if new_ignored:
-        # Se for marcada como ignorada / reunião interna, remove a atividade existente do Pipedrive para não poluir o CRM
+        # Se for marcada como ignorada / reunião interna, remove nota/atividade existente do Pipedrive para não poluir o CRM
         if old_activity_id:
             act_deleted = await delete_pipedrive_activity(old_activity_id)
-            if "pipedrive" in briefing_json:
-                briefing_json["pipedrive"]["activity_id"] = None
-                briefing_json["pipedrive"]["activity_subject"] = None
-                briefing_json["pipedrive"]["activity_type"] = None
-                briefing_json["pipedrive"]["activity_date"] = None
+        if old_note_id:
+            note_deleted = await delete_pipedrive_note(old_note_id)
+            
+        if "pipedrive" in briefing_json:
+            briefing_json["pipedrive"]["activity_id"] = None
+            briefing_json["pipedrive"]["activity_subject"] = None
+            briefing_json["pipedrive"]["activity_type"] = None
+            briefing_json["pipedrive"]["activity_date"] = None
+            briefing_json["pipedrive"]["note_id"] = None
     
     supabase.table("transcriptions").update({
         "processing_status": "completed",
@@ -2211,8 +2269,10 @@ async def toggle_ignore_transcription(
             "doc_title": meeting_title,
             "is_ignored": new_ignored,
             "old_activity_id": old_activity_id,
+            "old_note_id": old_note_id,
             "activity_deleted_from_crm": act_deleted,
-            "summary": f"Transcrição '{meeting_title}' {action_text} por Robson" + (f" (atividade #{old_activity_id} removida do Pipedrive)." if act_deleted else ".")
+            "note_deleted_from_crm": note_deleted,
+            "summary": f"Transcrição '{meeting_title}' {action_text} por Robson" + (f" (registros removidos do Pipedrive)." if (act_deleted or note_deleted) else ".")
         }
     )
     
@@ -2220,7 +2280,8 @@ async def toggle_ignore_transcription(
         "status": "success",
         "is_ignored": new_ignored,
         "activity_deleted": act_deleted,
-        "message": f"Transcrição {action_text} com sucesso" + (" e atividade removida do Pipedrive." if act_deleted else "."),
+        "note_deleted": note_deleted,
+        "message": f"Transcrição {action_text} com sucesso" + (" e registros removidos do Pipedrive." if (act_deleted or note_deleted) else "."),
         "briefing_json": briefing_json
     }
 
@@ -2229,7 +2290,7 @@ async def delete_transcription_endpoint(
     transcription_id: str,
     user: dict = Depends(require_admin)
 ):
-    """Exclui/oculta uma transcrição e remove sua atividade associada no Pipedrive com proteção contra reimportação do Google Drive"""
+    """Exclui/oculta uma transcrição e remove sua nota/atividade associada no Pipedrive com proteção contra reimportação do Google Drive"""
     t_res = supabase.table("transcriptions").select("*").eq("id", transcription_id).execute()
     if not t_res.data:
         raise HTTPException(status_code=404, detail="Transcrição não encontrada")
@@ -2239,11 +2300,16 @@ async def delete_transcription_endpoint(
     meeting_title = t.get("meeting_title") or "Reunião"
     pipe_info = briefing_json.get("pipedrive") or {}
     activity_id = pipe_info.get("activity_id")
+    note_id = pipe_info.get("note_id")
     
-    # 1. Apaga do Pipedrive se houver atividade
+    # 1. Apaga do Pipedrive se houver atividade ou nota
     act_deleted = False
     if activity_id:
         act_deleted = await delete_pipedrive_activity(activity_id)
+        
+    note_deleted = False
+    if note_id:
+        note_deleted = await delete_pipedrive_note(note_id)
         
     # 2. Marca flags de controle para não exibir no painel e não ser re-sincronizado pelo auto-sync
     briefing_json["is_deleted"] = True
@@ -2271,7 +2337,8 @@ async def delete_transcription_endpoint(
         details={
             "doc_title": meeting_title,
             "activity_deleted": act_deleted,
-            "summary": f"Transcrição '{meeting_title}' excluída do painel por Robson" + (f" (atividade #{activity_id} removida do Pipedrive)." if act_deleted else ".")
+            "note_deleted": note_deleted,
+            "summary": f"Transcrição '{meeting_title}' excluída do painel por Robson" + (f" (nota/atividade removida do Pipedrive)." if (act_deleted or note_deleted) else ".")
         }
     )
     
