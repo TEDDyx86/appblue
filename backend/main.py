@@ -536,6 +536,7 @@ async def create_pipedrive_activity(
     org_id: Optional[Union[str, int]] = None,
     location: Optional[str] = None,
     conference_meeting_url: Optional[str] = None,
+    conference_meeting_client: Optional[str] = None,
     done: bool = True
 ) -> Optional[Dict]:
     """
@@ -562,6 +563,8 @@ async def create_pipedrive_activity(
         payload["location"] = location
     if conference_meeting_url:
         payload["conference_meeting_url"] = conference_meeting_url
+    if conference_meeting_client:
+        payload["conference_meeting_client"] = conference_meeting_client
         
     if deal_id:
         try:
@@ -2699,6 +2702,8 @@ class CalendarSettings(BaseModel):
     min_notice_hours: int = 12        # Prazo de entrega mínimo (12 horas)
     max_future_days: int = 21         # Prazo de entrega máximo (21 dias)
     timezone: str = "America/Sao_Paulo"
+    teams_meeting_url: Optional[str] = None
+    meet_meeting_url: Optional[str] = None
     whatsapp_single_template: Optional[str] = "{dia_semana} ({data}) {assunto} com {cliente} ({horario})"
     whatsapp_header_template: Optional[str] = "📅 *Agenda de Atendimentos - Robson Vieira & {assessor}*\n"
     whatsapp_day_template: Optional[str] = "🔹 *{dia_semana} ({data})*"
@@ -3136,6 +3141,18 @@ async def book_meeting(booking: BookingRequest, user: Optional[dict] = Depends(g
         )
         
         platform_location = "Microsoft Teams" if booking.platform == "teams" else ("Google Meet" if booking.platform == "meet" else "Presencial")
+        conference_client = "teams" if booking.platform == "teams" else ("google_meet" if booking.platform == "meet" else None)
+        
+        # Busca URL de videoconferência padrão se configurada nas opções de agenda
+        conf_meeting_url = None
+        try:
+            cfg_res = await get_calendar_settings()
+            if booking.platform == "teams":
+                conf_meeting_url = cfg_res.get("teams_meeting_url")
+            elif booking.platform == "meet":
+                conf_meeting_url = cfg_res.get("meet_meeting_url")
+        except Exception:
+            pass
         
         # Mapeamento do tipo de reunião para a Tag/Tipo correspondente no Pipedrive:
         # 'meeting' -> Tag R1
@@ -3173,6 +3190,8 @@ async def book_meeting(booking: BookingRequest, user: Optional[dict] = Depends(g
             due_time=utc_due_time,
             duration=dur_str,
             location=platform_location,
+            conference_meeting_url=conf_meeting_url,
+            conference_meeting_client=conference_client,
             note=note_content,
             activity_type=pipedrive_activity_type,
             done=False
