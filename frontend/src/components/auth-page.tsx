@@ -55,7 +55,7 @@ export function AuthPage() {
 				</div>
 
 				{/* Animated Vector Paths (Fixed without flickering) */}
-				<div className="absolute inset-0 opacity-80 pointer-events-none">
+				<div className="absolute inset-0 opacity-80 pointer-events-none isolate transform-gpu">
 					<FloatingPaths position={1} />
 					<FloatingPaths position={-1} />
 				</div>
