@@ -1040,33 +1040,17 @@ export default function TranscriptionsPage() {
                 </div>
               )}
 
-              {/* Automation Activity Info & Date Picker */}
+              {/* Automation Note Info */}
               <div className="pt-3 border-t border-slate-100 dark:border-[#002060] text-xs space-y-3 bg-slate-50/60 dark:bg-[#00061A]/50 p-4 rounded-2xl border border-slate-200/80 dark:border-[#002060]">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] uppercase font-bold text-[#0092FF] dark:text-[#00FFFF] tracking-wider flex items-center space-x-1.5">
-                    <span>⚡ Atividade Pipedrive</span>
+                    <span>📝 Nota Pipedrive</span>
                     <span className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 text-[9px] font-extrabold text-[#002060] dark:text-[#00FFFF]">
-                      Tag: Tactiq
+                      Briefing Reunião
                     </span>
                   </span>
                   <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 font-bold">
-                    Nome: &quot;Transcrição Tactiq&quot;
-                  </span>
-                </div>
-
-                {/* Seletor de Data da Atividade */}
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    📅 Data da Reunião / Encerramento da Atividade:
-                  </label>
-                  <input
-                    type="date"
-                    value={activityDate}
-                    onChange={(e) => setActivityDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-[#000D38] border border-slate-200 dark:border-[#002060] font-mono text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
-                  />
-                  <span className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5 block">
-                    Define a data em que a reunião ocorreu e ficará salva no histórico do Pipedrive.
+                    Origem: Transcrição Tactiq
                   </span>
                 </div>
 
@@ -1078,7 +1062,7 @@ export default function TranscriptionsPage() {
                       onChange={(e) => setCreateActivity(e.target.checked)}
                       className="w-4 h-4 rounded text-[#0092FF] focus:ring-[#0092FF]"
                     />
-                    <span>Criar Atividade Concluída &quot;Transcrição Tactiq&quot; com o Briefing</span>
+                    <span>Criar Nota no Pipedrive com o Briefing da Reunião</span>
                   </label>
 
                   {Boolean(assignItem.briefing_json?.pipedrive?.activity_id || assignItem.briefing_json?.pipedrive?.note_id) && (
@@ -1090,8 +1074,10 @@ export default function TranscriptionsPage() {
                         className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500"
                       />
                       <span>
-                        Excluir atividade anterior no Pipedrive{' '}
-                        {assignItem.briefing_json?.pipedrive?.activity_id
+                        Excluir registro anterior no Pipedrive{' '}
+                        {assignItem.briefing_json?.pipedrive?.note_id
+                          ? `(Nota #${assignItem.briefing_json.pipedrive.note_id})`
+                          : assignItem.briefing_json?.pipedrive?.activity_id
                           ? `(Atividade #${assignItem.briefing_json.pipedrive.activity_id})`
                           : ''}
                       </span>
@@ -1099,14 +1085,14 @@ export default function TranscriptionsPage() {
                   )}
                   
                   <p className="text-[11px] text-slate-400 dark:text-slate-500 pl-6.5">
-                    O briefing completo (tópicos, dores, interesse e próxima ação) será salvo na descrição da atividade no Pipedrive.
+                    O briefing completo (resumo executivo, tópicos, dados do cliente, decisões e link de gravação) será adicionado como nota no perfil do cliente/negócio.
                   </p>
                 </div>
               </div>
 
               {assignSuccess && (
                 <div className="p-3 rounded-xl bg-emerald-100 text-emerald-800 font-bold text-xs text-center animate-fade-in">
-                  ✅ Transcrição vinculada e Atividade &quot;Transcrição Tactiq&quot; criada com sucesso no Pipedrive!
+                  ✅ Transcrição vinculada e Nota criada com sucesso no Pipedrive!
                 </div>
               )}
             </div>
@@ -1375,9 +1361,14 @@ export default function TranscriptionsPage() {
                           <ArrowUpRight className="w-3.5 h-3.5" />
                         </a>
                       )}
-                      {(selectedItem.briefing_json?.pipedrive?.activity_id || selectedItem.briefing_json?.pipedrive?.note_id) && (
+                      {selectedItem.briefing_json?.pipedrive?.note_id && (
                         <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300 font-bold text-xs">
-                          <span>⚡ Atividade Tactiq #{selectedItem.briefing_json.pipedrive.activity_id || selectedItem.briefing_json.pipedrive.note_id}</span>
+                          <span>📝 Nota Briefing #{selectedItem.briefing_json.pipedrive.note_id}</span>
+                        </span>
+                      )}
+                      {!selectedItem.briefing_json?.pipedrive?.note_id && selectedItem.briefing_json?.pipedrive?.activity_id && (
+                        <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300 font-bold text-xs">
+                          <span>⚡ Atividade Tactiq #{selectedItem.briefing_json.pipedrive.activity_id}</span>
                         </span>
                       )}
                     </div>
