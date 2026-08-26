@@ -276,7 +276,7 @@ GOOGLE_DRIVE_WEBHOOK_URL=https://seu-dominio.com/api/webhooks/google-drive
 **O prompt que você compartilhou** será executado **direto na transcrição** (não no resumo) para extrair:
 
 ```
-Contexto: Robson Vieira é o planejador financeiro e sucessório da Blue3 Investimentos — ele NUNCA é o cliente, mesmo que apareça como participante. O CLIENTE é sempre o outro participante.
+Contexto: Robson Vieira é o planejador financeiro e sucessório — ele NUNCA é o cliente, mesmo que apareça como participante. O CLIENTE é sempre o outro participante.
 
 A partir da TRANSCRIÇÃO COMPLETA abaixo, gere um BRIEFING DO CLIENTE com esta estrutura em JSON:
 

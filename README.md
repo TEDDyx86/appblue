@@ -1,4 +1,4 @@
-# Blue3 Advisory Hub 🚀
+# Robson Tavernard — Advisory Hub 🚀
 
 > **Plataforma de Gestão Operacional, Inteligência de Atendimentos e Integração de CRM**  
 > Desenvolvida para apoiar o planejamento financeiro e sucessório, unificando inteligência artificial, automação de transcrições e gestão de relacionamento.
@@ -7,7 +7,7 @@
 
 ## 📌 Visão Geral
 
-O **Blue3 Advisory Hub** centraliza e automatiza a rotina operacional de atendimentos patrimoniais. A plataforma conecta reuniões realizadas com clientes e assessores, processa briefings através de Inteligência Artificial e sincroniza registros estratégicos diretamente no **Pipedrive CRM**, garantindo controle de funil e follow-up contínuo.
+O **Advisory Hub** centraliza e automatiza a rotina operacional de atendimentos patrimoniais. A plataforma conecta reuniões realizadas com clientes e assessores, processa briefings através de Inteligência Artificial e sincroniza registros estratégicos diretamente no **Pipedrive CRM**, garantindo controle de funil e follow-up contínuo.
 
 ---
 
@@ -83,5 +83,5 @@ appblue/
 ---
 
 <p align="center">
-  <sub>Blue3 Investimentos &bull; Plataforma de Uso Interno</sub>
+  <sub>Robson Tavernard &bull; Plataforma de Uso Interno</sub>
 </p>

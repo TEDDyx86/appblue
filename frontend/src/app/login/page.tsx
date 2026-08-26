@@ -95,7 +95,7 @@ export default function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full pl-10 pr-4 py-2.5 bg-[#00061A] border border-[#002060] rounded-xl text-xs text-white placeholder:text-slate-600 focus:ring-2 focus:ring-[#0092FF] focus:border-[#0092FF] outline-none transition-all"
-                  placeholder="seu.nome@investimentosblue.com.br"
+                  placeholder="seu.email@exemplo.com"
                   required
                 />
               </div>
@@ -138,7 +138,7 @@ export default function LoginPage() {
           {/* Access notice */}
           <div className="mt-6 pt-4 border-t border-[#002060] text-center">
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              🔒 <span className="font-semibold text-slate-300">Acesso Restrito à Equipe Blue3.</span>
+              🔒 <span className="font-semibold text-slate-300">Acesso Restrito e Autorizado.</span>
               <br />
               A criação de novas contas é gerenciada exclusivamente pelo administrador do sistema.
             </p>

@@ -459,7 +459,7 @@ export default function SettingsPage() {
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                    {status?.pipedrive?.detail || 'Robson Vieira Tavernard (Investimentos Blue)'}
+                    {status?.pipedrive?.detail || 'Robson Vieira Tavernard'}
                   </p>
                 </div>
               </div>
@@ -650,7 +650,7 @@ export default function SettingsPage() {
                     type="email"
                     value={newEmail}
                     onChange={(e) => setNewEmail(e.target.value)}
-                    placeholder="nome@investimentosblue.com.br"
+                    placeholder="nome@email.com"
                     className="w-full pl-9 pr-4 py-2.5 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:bg-white focus:ring-2 focus:ring-[#0092FF] outline-none"
                     required
                   />

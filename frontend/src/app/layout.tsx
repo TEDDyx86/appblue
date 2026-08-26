@@ -25,7 +25,7 @@ const jetbrains = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Robson Tavernard — Blue3 Automação & CRM',
+  title: 'Robson Tavernard — Automação & CRM',
   description: 'Plataforma de inteligência pós-reunião, CRM e agendamento de Robson Vieira Tavernard',
   icons: {
     icon: [

@@ -262,7 +262,7 @@ export default function DashboardPage() {
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
         onLogout={handleLogout}
         userName={user?.full_name || 'Robson Vieira'}
-        userEmail={user?.email || 'robson.vieira@investimentosblue.com.br'}
+        userEmail={user?.email || 'robson.vieira@email.com'}
       />
 
       {/* Main Content Area */}
@@ -614,7 +614,7 @@ export default function DashboardPage() {
             {/* Modal Footer */}
             <div className="p-4 border-t border-slate-200 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] flex items-center justify-between">
               <span className="text-xs text-slate-500 dark:text-slate-400">
-                Pipedrive Blue3 &bull; Funil Comercial
+                Pipedrive CRM &bull; Funil Comercial
               </span>
               <button
                 type="button"
