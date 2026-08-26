@@ -51,6 +51,19 @@
   background: linear-gradient(180deg, #000D38 0%, #00061A 100%);
 }
 
+/* O autofill do Chrome pinta o campo de branco e ignora as classes utilitarias.
+   Esta classe devolve a paleta escura sem afetar os formularios existentes. */
+.campo-escuro:-webkit-autofill,
+.campo-escuro:-webkit-autofill:hover,
+.campo-escuro:-webkit-autofill:focus,
+.campo-escuro:-webkit-autofill:active {
+  -webkit-text-fill-color: #ffffff;
+  -webkit-box-shadow: 0 0 0 1000px #000D38 inset;
+  caret-color: #ffffff;
+  /* A transicao longa impede o flash branco do Chrome antes do box-shadow valer. */
+  transition: background-color 9999s ease-in-out 0s;
+}
+
 /* Custom adaptive scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
