@@ -571,9 +571,10 @@ async def create_pipedrive_activity(
             
     if person_id:
         try:
-            payload["participants"] = [{"person_id": int(person_id), "primary": True}]
+            payload["person_id"] = int(person_id)
+            payload["participants"] = [{"person_id": int(person_id), "primary_flag": True}]
         except (ValueError, TypeError):
-            pass
+            payload["person_id"] = person_id
             
     if org_id:
         try:
@@ -584,7 +585,7 @@ async def create_pipedrive_activity(
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(
-                f"{PIPEDRIVE_BASE_URL}/activities",
+                "https://api.pipedrive.com/v1/activities",
                 params={"api_token": PIPEDRIVE_API_TOKEN},
                 json=payload
             )
@@ -602,17 +603,17 @@ async def create_pipedrive_activity(
 
 async def update_pipedrive_activity(activity_id: str, updates: Dict) -> Optional[Dict]:
     """
-    Atualiza Activity no Pipedrive usando API v2.
+    Atualiza Activity no Pipedrive usando API v1.
     """
-    async with httpx.AsyncClient() as client:
-        response = await client.patch(
-            f"{PIPEDRIVE_BASE_URL}/activities/{activity_id}",
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.put(
+            f"https://api.pipedrive.com/v1/activities/{activity_id}",
             params={"api_token": PIPEDRIVE_API_TOKEN},
             json=updates
         )
         
         if response.status_code != 200:
-            logger.error(f"Erro ao atualizar Activity: {response.text}")
+            logger.error(f"Erro ao atualizar Activity {activity_id}: {response.text}")
             return None
         
         data = response.json()
@@ -1247,7 +1248,7 @@ async def delete_pipedrive_activity(activity_id: str) -> bool:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             res = await client.delete(
-                f"{PIPEDRIVE_BASE_URL}/activities/{activity_id}",
+                f"https://api.pipedrive.com/v1/activities/{activity_id}",
                 params={"api_token": PIPEDRIVE_API_TOKEN}
             )
             if res.status_code in [200, 204]:
@@ -3085,6 +3086,21 @@ async def book_meeting(booking: BookingRequest, user: Optional[dict] = Depends(g
         
         platform_location = "Microsoft Teams" if booking.platform == "teams" else ("Google Meet" if booking.platform == "meet" else "Presencial")
         
+        # Mapeamento do tipo de reunião para a Tag/Tipo correspondente no Pipedrive:
+        # 'meeting' -> Tag R1
+        # 'reuniao_2' -> Tag R2
+        # 'r3' -> Tag R3
+        pipedrive_activity_type = "meeting"  # Tag R1 por padrão
+        type_combined = f"{booking.meeting_type_id} {booking.meeting_type_name}".lower()
+        if "r2" in type_combined or "gestão patrimonial" in type_combined:
+            pipedrive_activity_type = "reuniao_2"
+        elif "r3" in type_combined:
+            pipedrive_activity_type = "r3"
+        elif "teams" in type_combined:
+            pipedrive_activity_type = "teams"
+        elif "call" in type_combined or "chamada" in type_combined:
+            pipedrive_activity_type = "call"
+        
         # 4. Cria Activity no Pipedrive (em aberto)
         activity = await create_pipedrive_activity(
             person_id=person_id,
@@ -3096,7 +3112,7 @@ async def book_meeting(booking: BookingRequest, user: Optional[dict] = Depends(g
             duration=dur_str,
             location=platform_location,
             note=note_content,
-            activity_type="meeting",
+            activity_type=pipedrive_activity_type,
             done=False
         )
         
