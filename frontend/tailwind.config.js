@@ -71,6 +71,18 @@ module.exports = {
         'card-light': '0 2px 12px rgba(0, 29, 153, 0.04), 0 1px 3px rgba(0, 0, 0, 0.02)',
         'card-dark': '0 4px 20px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0, 32, 96, 0.8)',
       },
+      keyframes: {
+        // Usado no banner de erro do login. A classe era referenciada no codigo
+        // desde antes, mas nunca chegou a ser definida — o banner nao tremia.
+        shake: {
+          '0%, 100%': { transform: 'translateX(0)' },
+          '20%, 60%': { transform: 'translateX(-5px)' },
+          '40%, 80%': { transform: 'translateX(5px)' },
+        },
+      },
+      animation: {
+        shake: 'shake 0.4s ease-in-out',
+      },
       fontFamily: {
         sans: ['var(--font-sans)', 'Inter', 'system-ui', 'sans-serif'],
         display: ['var(--font-display)', 'Plus Jakarta Sans', 'system-ui', 'sans-serif'],
