@@ -533,11 +533,13 @@ async def create_pipedrive_activity(
     note: Optional[str] = None,
     deal_id: Optional[str] = None,
     person_id: Optional[str] = None,
-    org_id: Optional[str] = None,
+    org_id: Optional[Union[str, int]] = None,
+    location: Optional[str] = None,
+    conference_meeting_url: Optional[str] = None,
     done: bool = True
 ) -> Optional[Dict]:
     """
-    Cria Activity no Pipedrive com suporte a tipo, notas ricas e vinculação de participantes.
+    Cria Activity no Pipedrive com suporte a tipo, notas ricas, assessor e link de videoconferência.
     """
     if not PIPEDRIVE_API_TOKEN:
         logger.warning("PIPEDRIVE_API_TOKEN não configurado")
@@ -556,6 +558,10 @@ async def create_pipedrive_activity(
         payload["due_time"] = due_time
     if duration:
         payload["duration"] = duration
+    if location:
+        payload["location"] = location
+    if conference_meeting_url:
+        payload["conference_meeting_url"] = conference_meeting_url
         
     if deal_id:
         try:
@@ -1330,19 +1336,26 @@ DIAS_SEMANA_PT = {
     6: "domingo"
 }
 
+@app.get("/api/calendar/assessores")
 @app.get("/api/pipedrive/assessores")
-async def list_pipedrive_assessores(user: dict = Depends(require_admin)):
+async def list_pipedrive_assessores(user: Optional[dict] = Depends(get_current_user_optional)):
     """Lista todas as Organizações (Assessores) cadastradas no Pipedrive"""
-    async with httpx.AsyncClient() as client:
-        res = await client.get(
-            "https://api.pipedrive.com/v1/organizations",
-            params={"api_token": PIPEDRIVE_API_TOKEN, "limit": 100}
-        )
-        if res.status_code != 200:
-            return {"assessores": []}
-        data = res.json().get("data") or []
-        assessores = [{"id": o.get("id"), "name": o.get("name")} for o in data if o.get("name")]
-        return {"assessores": sorted(assessores, key=lambda x: x["name"])}
+    if not PIPEDRIVE_API_TOKEN:
+        return {"assessores": []}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.get(
+                "https://api.pipedrive.com/v1/organizations",
+                params={"api_token": PIPEDRIVE_API_TOKEN, "limit": 100}
+            )
+            if res.status_code != 200:
+                return {"assessores": []}
+            data = res.json().get("data") or []
+            assessores = [{"id": o.get("id"), "name": o.get("name")} for o in data if o.get("name")]
+            return {"assessores": sorted(assessores, key=lambda x: x["name"])}
+    except Exception as e:
+        logger.error(f"Erro ao buscar assessores no Pipedrive: {e}")
+        return {"assessores": []}
 
 def format_whatsapp_template(template_str: str, ctx: Dict[str, Any]) -> str:
     """
@@ -2680,6 +2693,8 @@ class BookingRequest(BaseModel):
     client_name: str
     client_email: Optional[str] = None
     client_phone: Optional[str] = None
+    org_id: Optional[Union[int, str]] = None
+    org_name: Optional[str] = None
     person_id: Optional[str] = None
     deal_id: Optional[str] = None
     platform: str = "teams"  # "teams" | "meet" | "presencial"
@@ -3053,10 +3068,14 @@ async def book_meeting(booking: BookingRequest, user: Optional[dict] = Depends(g
         dur_m = booking.duration_minutes % 60
         dur_str = f"{dur_h:02d}:{dur_m:02d}"
         
-        subject = f"[{booking.meeting_type_name}] {booking.client_name}"
+        assessor_suffix = f" - {booking.org_name}" if booking.org_name else ""
+        subject = f"[{booking.meeting_type_name}] {booking.client_name}{assessor_suffix}"
+        
+        assessor_line = f"🏢 Assessor / Organização: {booking.org_name}\n" if booking.org_name else ""
         note_content = (
             f"🎯 Tipo: {booking.meeting_type_name}\n"
             f"👤 Cliente: {booking.client_name}\n"
+            f"{assessor_line}"
             f"📱 Telefone: {booking.client_phone or 'Não informado'}\n"
             f"📧 E-mail: {booking.client_email or 'Não informado'}\n"
             f"💻 Plataforma: {booking.platform.upper()}\n"
@@ -3064,26 +3083,27 @@ async def book_meeting(booking: BookingRequest, user: Optional[dict] = Depends(g
             f"⚡ Agendado via Sistema Robson Blue3"
         )
         
-        # 4. Cria Activity no Pipedrive
+        platform_location = "Microsoft Teams" if booking.platform == "teams" else ("Google Meet" if booking.platform == "meet" else "Presencial")
+        
+        # 4. Cria Activity no Pipedrive (em aberto)
         activity = await create_pipedrive_activity(
             person_id=person_id,
             deal_id=deal_id,
+            org_id=booking.org_id,
             subject=subject,
             due_date=booking.date,
+            due_time=booking.time,
+            duration=dur_str,
+            location=platform_location,
             note=note_content,
-            activity_type="meeting"
+            activity_type="meeting",
+            done=False
         )
         
         if not activity:
             raise HTTPException(status_code=500, detail="Erro ao criar atividade no Pipedrive")
             
         activity_id = str(activity.get("id"))
-        
-        # Atualiza horário e duração na Activity
-        await update_pipedrive_activity(activity_id, {
-            "due_time": booking.time,
-            "duration": dur_str
-        })
         
         person_url = f"https://investimentosblue.pipedrive.com/person/{person_id}" if person_id else None
         deal_url = f"https://investimentosblue.pipedrive.com/deal/{deal_id}" if deal_id else None

@@ -57,11 +57,16 @@ export default function AuthenticatedBookingPage() {
   const [meetingTypes, setMeetingTypes] = useState<MeetingType[]>([])
   const [selectedMeetingType, setSelectedMeetingType] = useState<MeetingType | null>(null)
 
+  // Assessores / Organizações
+  const [assessores, setAssessores] = useState<{ id: number; name: string }[]>([])
+  const [selectedAssessorId, setSelectedAssessorId] = useState<string | number>('')
+
   // Booking slots
   const [availableDays, setAvailableDays] = useState<DayData[]>([])
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [selectedDate, setSelectedDate] = useState<string>('')
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null)
+  const [lastUpdatedTime, setLastUpdatedTime] = useState<string>('')
 
   // Step flow
   const [step, setStep] = useState<'type' | 'datetime' | 'form' | 'success'>('type')
@@ -77,9 +82,9 @@ export default function AuthenticatedBookingPage() {
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
-  // Carregamento inicial de tipos de reunião
+  // Carregamento inicial de tipos de reunião e assessores
   useEffect(() => {
-    async function loadTypes() {
+    async function loadInitialData() {
       try {
         const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
         const headers: Record<string, string> = {}
@@ -87,22 +92,35 @@ export default function AuthenticatedBookingPage() {
           headers['Authorization'] = `Bearer ${token}`
         }
 
-        const res = await axios.get(`${API_URL}/api/calendar/types`, { headers })
-        setPlannerInfo({
-          planner_name: res.data.planner_name || 'Robson Vieira Tavernard',
-          planner_role: res.data.planner_role || 'Planejamento Financeiro e Sucessório',
-          company: res.data.company || 'Blue3 Investimentos',
-        })
-        const types = res.data.meeting_types || []
-        setMeetingTypes(types)
-        if (types.length > 0) {
-          setSelectedMeetingType(types[0])
+        const [typesRes, assessoresRes] = await Promise.allSettled([
+          axios.get(`${API_URL}/api/calendar/types`, { headers }),
+          axios.get(`${API_URL}/api/calendar/assessores`, { headers }),
+        ])
+
+        if (typesRes.status === 'fulfilled') {
+          const res = typesRes.value
+          setPlannerInfo({
+            planner_name: res.data.planner_name || 'Robson Vieira Tavernard',
+            planner_role: res.data.planner_role || 'Planejamento Financeiro e Sucessório',
+            company: res.data.company || 'Blue3 Investimentos',
+          })
+          const types = res.data.meeting_types || []
+          setMeetingTypes(types)
+          if (types.length > 0) {
+            setSelectedMeetingType(types[0])
+          }
+        }
+
+        if (assessoresRes.status === 'fulfilled') {
+          const raw = assessoresRes.value.data
+          const list = Array.isArray(raw) ? raw : raw?.assessores || []
+          setAssessores(list)
         }
       } catch (err: any) {
-        console.error('Erro ao carregar tipos de reunião:', err)
+        console.error('Erro ao carregar dados iniciais:', err)
       }
     }
-    loadTypes()
+    loadInitialData()
   }, [API_URL])
 
   // Carrega slots quando o tipo de reunião mudar
@@ -122,6 +140,9 @@ export default function AuthenticatedBookingPage() {
         })
         const days: DayData[] = res.data.days || []
         setAvailableDays(days)
+        setLastUpdatedTime(
+          new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        )
         const firstWithSlots = days.find((d) => d.has_slots)
         if (firstWithSlots) {
           setSelectedDate(firstWithSlots.date)
@@ -144,6 +165,11 @@ export default function AuthenticatedBookingPage() {
   const selectedDayObject = useMemo(() => {
     return availableDays.find((d) => d.date === selectedDate)
   }, [availableDays, selectedDate])
+
+  const selectedAssessorObj = useMemo(() => {
+    if (!selectedAssessorId) return null
+    return assessores.find((a) => String(a.id) === String(selectedAssessorId)) || null
+  }, [assessores, selectedAssessorId])
 
   const formatDateDisplay = (dateStr: string) => {
     if (!dateStr) return ''
@@ -179,6 +205,8 @@ export default function AuthenticatedBookingPage() {
         client_name: clientName.trim(),
         client_email: clientEmail.trim() || undefined,
         client_phone: clientPhone.trim() || undefined,
+        org_id: selectedAssessorId ? Number(selectedAssessorId) : undefined,
+        org_name: selectedAssessorObj?.name || undefined,
         platform,
         notes: notes.trim() || undefined,
       }
@@ -296,16 +324,38 @@ export default function AuthenticatedBookingPage() {
             {/* Left: Meeting Summary & Calendar */}
             <div className="lg:col-span-7 p-6 sm:p-8 flex flex-col justify-between">
               <div>
-                <div className="mb-5">
-                  <span className="text-[10px] uppercase font-bold text-[#0092FF] block">
-                    {selectedMeetingType?.duration} minutos de reunião
-                  </span>
-                  <h3 className="text-base font-bold text-slate-900 mt-0.5">
-                    {selectedMeetingType?.name}
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Selecione uma das datas disponíveis abaixo
-                  </p>
+                <div className="mb-5 flex items-start justify-between gap-2">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-[#0092FF] block">
+                      {selectedMeetingType?.duration} minutos de reunião
+                    </span>
+                    <h3 className="text-base font-bold text-slate-900 mt-0.5">
+                      {selectedMeetingType?.name}
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Selecione uma das datas disponíveis abaixo
+                    </p>
+                  </div>
+
+                  {/* Botão de Atualizar e Horário da Última Atualização */}
+                  <div className="flex flex-col sm:flex-row items-end sm:items-center gap-1.5 flex-shrink-0">
+                    {lastUpdatedTime && (
+                      <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold shadow-xs">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                        <span>Atualizado às {lastUpdatedTime}</span>
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => selectedMeetingType && loadSlots(selectedMeetingType.duration)}
+                      disabled={loadingSlots}
+                      className="px-2.5 py-1 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 hover:text-[#0092FF] transition-all flex items-center space-x-1 text-xs font-bold shadow-xs active:scale-95 disabled:opacity-50"
+                      title="Atualizar horários em tempo real com o Pipedrive"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${loadingSlots ? 'animate-spin text-[#0092FF]' : ''}`} />
+                      <span className="hidden sm:inline">Atualizar</span>
+                    </button>
+                  </div>
                 </div>
 
                 {loadingSlots ? (
@@ -463,7 +513,7 @@ export default function AuthenticatedBookingPage() {
             {/* Name */}
             <div>
               <label className="text-[11px] font-bold text-slate-700 uppercase block mb-1">
-                Nome Completo *
+                Nome do Cliente *
               </label>
               <div className="relative">
                 <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -472,10 +522,36 @@ export default function AuthenticatedBookingPage() {
                   required
                   value={clientName}
                   onChange={(e) => setClientName(e.target.value)}
-                  placeholder="Seu nome completo"
+                  placeholder="Nome completo do cliente"
                   className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#0092FF] outline-none"
                 />
               </div>
+            </div>
+
+            {/* Assessor / Organização */}
+            <div>
+              <label className="text-[11px] font-bold text-slate-700 uppercase block mb-1">
+                🏢 Assessor Responsável (Organização) *
+              </label>
+              <div className="relative">
+                <Building2 className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                <select
+                  required
+                  value={selectedAssessorId}
+                  onChange={(e) => setSelectedAssessorId(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#0092FF] outline-none transition-all cursor-pointer"
+                >
+                  <option value="">Selecione o Assessor / Organização...</option>
+                  {assessores.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <span className="text-[10px] text-slate-400 mt-0.5 block">
+                Vincula o agendamento diretamente à organização do assessor no Pipedrive.
+              </span>
             </div>
 
             {/* Email & Phone */}
@@ -491,7 +567,7 @@ export default function AuthenticatedBookingPage() {
                     required
                     value={clientEmail}
                     onChange={(e) => setClientEmail(e.target.value)}
-                    placeholder="seu@email.com"
+                    placeholder="cliente@email.com"
                     className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#0092FF] outline-none"
                   />
                 </div>
@@ -551,7 +627,7 @@ export default function AuthenticatedBookingPage() {
                 rows={2}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="Ex: Gostaria de falar sobre sucessão patrimonial, seguros..."
+                placeholder="Ex: Reunião R1 de planejamento sucessório..."
                 className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#0092FF] outline-none"
               />
             </div>
@@ -586,7 +662,7 @@ export default function AuthenticatedBookingPage() {
             <div>
               <h2 className="text-xl font-bold text-slate-900">Reunião Agendada com Sucesso!</h2>
               <p className="text-xs text-slate-500 mt-1">
-                Um convite com o link da reunião foi reservado na agenda do Robson.
+                A atividade foi criada na agenda do Pipedrive com status em aberto.
               </p>
             </div>
 
@@ -595,6 +671,12 @@ export default function AuthenticatedBookingPage() {
                 <span className="text-slate-400">Cliente:</span>
                 <span className="font-bold text-slate-900">{clientName}</span>
               </div>
+              {selectedAssessorObj && (
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Assessor:</span>
+                  <span className="font-bold text-[#0092FF]">{selectedAssessorObj.name}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-slate-400">Data:</span>
                 <span className="font-bold text-slate-900">{formatDateDisplay(selectedDate)}</span>
