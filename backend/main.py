@@ -3128,18 +3128,6 @@ async def book_meeting(booking: BookingRequest, user: Optional[dict] = Depends(g
         assessor_suffix = f" - {booking.org_name}" if booking.org_name else ""
         subject = f"[{booking.meeting_type_name}] {booking.client_name}{assessor_suffix}"
         
-        assessor_line = f"🏢 Assessor / Organização: {booking.org_name}\n" if booking.org_name else ""
-        note_content = (
-            f"🎯 Tipo: {booking.meeting_type_name}\n"
-            f"👤 Cliente: {booking.client_name}\n"
-            f"{assessor_line}"
-            f"📱 Telefone: {booking.client_phone or 'Não informado'}\n"
-            f"📧 E-mail: {booking.client_email or 'Não informado'}\n"
-            f"💻 Plataforma: {booking.platform.upper()}\n"
-            f"📝 Observações: {booking.notes or 'Nenhuma'}\n"
-            f"⚡ Agendado via Sistema Robson Tavernard"
-        )
-        
         platform_location = "Microsoft Teams" if booking.platform == "teams" else ("Google Meet" if booking.platform == "meet" else "Presencial")
         conference_client = "teams" if booking.platform == "teams" else ("google_meet" if booking.platform == "meet" else None)
         
@@ -3153,6 +3141,20 @@ async def book_meeting(booking: BookingRequest, user: Optional[dict] = Depends(g
                 conf_meeting_url = cfg_res.get("meet_meeting_url")
         except Exception:
             pass
+
+        assessor_line = f"🏢 Assessor / Organização: {booking.org_name}\n" if booking.org_name else ""
+        conf_link_line = f"🔗 Sala Virtual ({platform_location}): {conf_meeting_url}\n" if conf_meeting_url else ""
+        note_content = (
+            f"🎯 Tipo: {booking.meeting_type_name}\n"
+            f"👤 Cliente: {booking.client_name}\n"
+            f"{assessor_line}"
+            f"📱 Telefone: {booking.client_phone or 'Não informado'}\n"
+            f"📧 E-mail: {booking.client_email or 'Não informado'}\n"
+            f"💻 Plataforma: {platform_location}\n"
+            f"{conf_link_line}"
+            f"📝 Observações: {booking.notes or 'Nenhuma'}\n"
+            f"⚡ Agendado via Sistema Robson Tavernard"
+        )
         
         # Mapeamento do tipo de reunião para a Tag/Tipo correspondente no Pipedrive:
         # 'meeting' -> Tag R1

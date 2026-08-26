@@ -126,6 +126,8 @@ interface CalendarSettingsData {
   whatsapp_day_template?: string
   whatsapp_item_template?: string
   whatsapp_footer_template?: string
+  teams_meeting_url?: string
+  meet_meeting_url?: string
 }
 
 const DEFAULT_SCHEDULE: Record<string, DaySchedule> = {
@@ -1950,6 +1952,42 @@ export default function AgendaPage() {
                               />
                               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">dias</span>
                             </div>
+                          </div>
+                        </div>
+
+                        {/* Videoconferência & Salas Virtuais */}
+                        <div className="pt-3 mt-3 border-t border-slate-100 dark:border-[#002060]/50 space-y-3">
+                          <p className="text-[11px] font-bold uppercase tracking-wider text-[#0092FF] dark:text-[#00FFFF] font-display">
+                            Salas Virtuais & Videoconferência (Pipedrive)
+                          </p>
+
+                          <div>
+                            <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                              Link da Sala Microsoft Teams (Lobby / Reunião Padrão)
+                            </label>
+                            <input
+                              type="url"
+                              value={settings.teams_meeting_url || ''}
+                              onChange={(e) => setSettings({ ...settings, teams_meeting_url: e.target.value })}
+                              placeholder="https://teams.microsoft.com/l/meetup-join/..."
+                              className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-800 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-[#0092FF]"
+                            />
+                            <p className="text-[10px] text-slate-400 mt-1">
+                              Injetado automaticamente no botão "Entrar no Teams" e nas anotações da atividade criada no Pipedrive.
+                            </p>
+                          </div>
+
+                          <div>
+                            <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                              Link do Google Meet (Opcional)
+                            </label>
+                            <input
+                              type="url"
+                              value={settings.meet_meeting_url || ''}
+                              onChange={(e) => setSettings({ ...settings, meet_meeting_url: e.target.value })}
+                              placeholder="https://meet.google.com/..."
+                              className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-800 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-[#0092FF]"
+                            />
                           </div>
                         </div>
                       </div>
