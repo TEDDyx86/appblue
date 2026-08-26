@@ -36,10 +36,10 @@ export default function Sidebar({
 
   const navItems = [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { href: '/transcriptions', label: 'Transcrições', icon: FileText, badge: 'Auto' },
-    { href: '/cadastros', label: 'Ficha Cadastral', icon: UserCheck, badge: 'PDF' },
-    { href: '/agenda', label: 'Agenda', icon: Calendar, badge: 'Pipedrive' },
-    { href: '/logs', label: 'Logs & Auditoria', icon: Activity, badge: 'Live' },
+    { href: '/transcriptions', label: 'Transcrições', icon: FileText },
+    { href: '/cadastros', label: 'Ficha Cadastral', icon: UserCheck },
+    { href: '/agenda', label: 'Agenda', icon: Calendar },
+    { href: '/logs', label: 'Logs & Auditoria', icon: Activity },
     { href: '/alerts', label: 'Alertas', icon: AlertTriangle },
     { href: '/settings', label: 'Configurações', icon: Settings },
   ]
@@ -111,14 +111,9 @@ export default function Sidebar({
                 }`}
               />
               {!collapsed && (
-                <div className="flex items-center justify-between flex-1">
-                  <span className={isActive ? 'font-bold text-white' : ''}>{item.label}</span>
-                  {item.badge && (
-                    <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-[#0092FF]/30 text-[#00FFFF] border border-[#0092FF]/50 shadow-[0_0_8px_rgba(0,255,255,0.2)]">
-                      {item.badge}
-                    </span>
-                  )}
-                </div>
+                <span className={`flex-1 ${isActive ? 'font-bold text-white' : ''}`}>
+                  {item.label}
+                </span>
               )}
             </Link>
           )
