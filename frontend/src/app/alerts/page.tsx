@@ -422,7 +422,7 @@ export default function AlertsPage() {
                     key={alert.id}
                     className={`bg-white dark:bg-[#000D38] rounded-2xl border p-5 shadow-sm transition-all hover:border-slate-300 dark:hover:border-[#0092FF] ${
                       alert.severity === 'high' && !alert.is_resolved
-                        ? 'border-l-4 border-l-rose-500 border-slate-200 dark:border-[#002060]'
+                        ? 'border-rose-300 dark:border-rose-900/60 bg-rose-50/20 dark:bg-rose-950/10'
                         : 'border-slate-200/90 dark:border-[#002060]'
                     }`}
                   >

@@ -1305,7 +1305,7 @@ export default function TranscriptionsPage() {
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 font-display">
                     Decisões & Próximos Passos
                   </h4>
-                  <ul className="space-y-1.5 text-xs text-slate-700 dark:text-slate-300 list-disc list-inside bg-emerald-50/50 dark:bg-emerald-950/20 p-4 rounded-2xl border border-emerald-200 dark:border-emerald-800/50">
+                  <ul className="space-y-1.5 text-xs text-emerald-950 dark:text-emerald-200 list-disc list-inside bg-emerald-50/60 dark:bg-emerald-950/25 p-4 rounded-2xl border border-emerald-200 dark:border-emerald-800/60">
                     {selectedItem.briefing_json.decisoes_proximos_passos.map((decisao, idx) => (
                       <li key={idx} className="leading-relaxed font-medium">
                         {decisao}

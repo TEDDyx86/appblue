@@ -328,7 +328,7 @@ export default function SettingsPage() {
                             type="button"
                             onClick={() => handleDeleteUser(u.id, u.full_name)}
                             disabled={deletingUserId === u.id}
-                            className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+                            className="p-2 rounded-xl text-slate-500 hover:text-rose-600 hover:bg-rose-50/80 dark:hover:bg-rose-950/40 transition-colors"
                             title="Remover acesso"
                           >
                             <Trash2 className="w-4 h-4" />
