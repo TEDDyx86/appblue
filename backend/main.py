@@ -784,13 +784,34 @@ def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
         data["pontos_atencao"] = pontos
 
     # 8. Extração de Data e Horário da Reunião (quando presente no documento)
-    date_match = re.search(r"(?:Data|Data da reuni[aã]o|Data do atendimento|Data/Hora|DATA):\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})", text, re.IGNORECASE)
-    if date_match:
-        data["data_reuniao"] = date_match.group(1).strip()
-        
-    time_match = re.search(r"(?:Hora|Hor[aá]rio|Hora da reuni[aã]o|HORA):\s*(\d{1,2}:\d{2}(?::\d{2})?)", text, re.IGNORECASE)
-    if time_match:
-        data["hora_reuniao"] = time_match.group(1).strip()
+    # 8.1 Padrão combinado (ex: "Data e horário da reunião: 25/08/2026 às 00:00" ou "Data e Hora: 25/08/2026 14:30")
+    combined_date_match = re.search(
+        r"Data\s*(?:e|/)?\s*(?:hor[aá]rio|hora)[^\:]*:\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})(?:\s*(?:[aàá]s|at|-|,)?\s*(\d{1,2}:\d{2}(?::\d{2})?))?",
+        text,
+        re.IGNORECASE
+    )
+    if combined_date_match:
+        data["data_reuniao"] = combined_date_match.group(1).strip()
+        if combined_date_match.group(2):
+            data["hora_reuniao"] = combined_date_match.group(2).strip()
+
+    if not data["data_reuniao"]:
+        date_match = re.search(
+            r"(?:Data(?:\s*da\s*reuni[aã]o|\s*do\s*atendimento)?|DATA):\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})",
+            text,
+            re.IGNORECASE
+        )
+        if date_match:
+            data["data_reuniao"] = date_match.group(1).strip()
+
+    if not data["hora_reuniao"]:
+        time_match = re.search(
+            r"(?:Hora(?:\s*da\s*reuni[aã]o|\s*do\s*atendimento)?|Hor[aá]rio|HORA):\s*(\d{1,2}:\d{2}(?::\d{2})?)",
+            text,
+            re.IGNORECASE
+        )
+        if time_match:
+            data["hora_reuniao"] = time_match.group(1).strip()
 
     # 9. Próxima Ação Sugerida
     proxima_acao_desc = ""
@@ -1010,6 +1031,18 @@ async def process_new_transcription(user_id: Optional[str] = None) -> Dict[str, 
                 cliente_nome = briefing_json["dados_cliente"]["nome"]
                 cliente_email = briefing_json["dados_cliente"].get("email")
                 
+                # Garante que data e hora estejam sempre preenchidas mesmo se ausentes no texto do doc
+                if created_time:
+                    try:
+                        dt_utc = datetime.fromisoformat(created_time.replace("Z", "+00:00"))
+                        dt_sp = dt_utc - timedelta(hours=3)
+                        if not briefing_json.get("data_reuniao"):
+                            briefing_json["data_reuniao"] = dt_sp.strftime("%d/%m/%Y")
+                        if not briefing_json.get("hora_reuniao"):
+                            briefing_json["hora_reuniao"] = dt_sp.strftime("%H:%M")
+                    except Exception:
+                        pass
+
                 # Preserva flags de controle prévias caso existam
                 if existing_record and existing_record.get("briefing_json"):
                     prev_b = existing_record["briefing_json"]
@@ -2095,6 +2128,27 @@ async def assign_transcription_to_crm(
     briefing_json["pipedrive"]["person_url"] = f"https://investimentosblue.pipedrive.com/person/{person_id}" if person_id else None
     briefing_json["pipedrive"]["deal_url"] = f"https://investimentosblue.pipedrive.com/deal/{deal_id}" if deal_id else None
     
+    # 5.1 Garante extração de data e hora do texto ou da data do registro
+    if not briefing_json.get("data_reuniao") or not briefing_json.get("hora_reuniao"):
+        trans_txt = t.get("transcription_text") or ""
+        if trans_txt:
+            parsed_dates = parse_tactiq_doc(trans_txt, meeting_title)
+            if parsed_dates.get("data_reuniao") and not briefing_json.get("data_reuniao"):
+                briefing_json["data_reuniao"] = parsed_dates["data_reuniao"]
+            if parsed_dates.get("hora_reuniao") and not briefing_json.get("hora_reuniao"):
+                briefing_json["hora_reuniao"] = parsed_dates["hora_reuniao"]
+
+    if not briefing_json.get("data_reuniao") and (t.get("meeting_date") or t.get("created_at")):
+        raw_dt_str = t.get("meeting_date") or t.get("created_at")
+        try:
+            dt_utc = datetime.fromisoformat(str(raw_dt_str).replace("Z", "+00:00"))
+            dt_sp = dt_utc - timedelta(hours=3)
+            briefing_json["data_reuniao"] = dt_sp.strftime("%d/%m/%Y")
+            if not briefing_json.get("hora_reuniao"):
+                briefing_json["hora_reuniao"] = dt_sp.strftime("%H:%M")
+        except Exception:
+            pass
+
     # 6. Cria Nota no Pipedrive com o Briefing
     note_id = None
     if req.create_activity or getattr(req, "create_note", True):
