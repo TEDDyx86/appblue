@@ -60,6 +60,7 @@ export default function AuthenticatedBookingPage() {
   // Assessores / Organizações
   const [assessores, setAssessores] = useState<{ id: number; name: string }[]>([])
   const [selectedAssessorId, setSelectedAssessorId] = useState<string | number>('')
+  const [loadingAssessores, setLoadingAssessores] = useState(false)
 
   // Booking slots
   const [availableDays, setAvailableDays] = useState<DayData[]>([])
@@ -82,6 +83,26 @@ export default function AuthenticatedBookingPage() {
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
+  const loadAssessores = useCallback(async () => {
+    try {
+      setLoadingAssessores(true)
+      const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
+      const headers: Record<string, string> = {}
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`
+      }
+
+      const res = await axios.get(`${API_URL}/api/calendar/assessores`, { headers })
+      const raw = res.data
+      const list = Array.isArray(raw) ? raw : raw?.assessores || []
+      setAssessores(list)
+    } catch (err: any) {
+      console.error('Erro ao carregar assessores:', err)
+    } finally {
+      setLoadingAssessores(false)
+    }
+  }, [API_URL])
+
   // Carregamento inicial de tipos de reunião e assessores
   useEffect(() => {
     async function loadInitialData() {
@@ -92,36 +113,31 @@ export default function AuthenticatedBookingPage() {
           headers['Authorization'] = `Bearer ${token}`
         }
 
-        const [typesRes, assessoresRes] = await Promise.allSettled([
-          axios.get(`${API_URL}/api/calendar/types`, { headers }),
-          axios.get(`${API_URL}/api/calendar/assessores`, { headers }),
-        ])
-
-        if (typesRes.status === 'fulfilled') {
-          const res = typesRes.value
-          setPlannerInfo({
-            planner_name: res.data.planner_name || 'Robson Vieira Tavernard',
-            planner_role: res.data.planner_role || 'Planejamento Financeiro e Sucessório',
-            company: res.data.company || 'Blue3 Investimentos',
-          })
-          const types = res.data.meeting_types || []
-          setMeetingTypes(types)
-          if (types.length > 0) {
-            setSelectedMeetingType(types[0])
-          }
-        }
-
-        if (assessoresRes.status === 'fulfilled') {
-          const raw = assessoresRes.value.data
-          const list = Array.isArray(raw) ? raw : raw?.assessores || []
-          setAssessores(list)
+        const res = await axios.get(`${API_URL}/api/calendar/types`, { headers })
+        setPlannerInfo({
+          planner_name: res.data.planner_name || 'Robson Vieira Tavernard',
+          planner_role: res.data.planner_role || 'Planejamento Financeiro e Sucessório',
+          company: res.data.company || 'Blue3 Investimentos',
+        })
+        const types = res.data.meeting_types || []
+        setMeetingTypes(types)
+        if (types.length > 0) {
+          setSelectedMeetingType(types[0])
         }
       } catch (err: any) {
-        console.error('Erro ao carregar dados iniciais:', err)
+        console.error('Erro ao carregar tipos de reunião:', err)
       }
     }
     loadInitialData()
-  }, [API_URL])
+    loadAssessores()
+  }, [API_URL, loadAssessores])
+
+  // Recarrega assessores se estiver vazio ao entrar no formulário
+  useEffect(() => {
+    if (step === 'form' && assessores.length === 0) {
+      loadAssessores()
+    }
+  }, [step, assessores.length, loadAssessores])
 
   // Carrega slots quando o tipo de reunião mudar
   const loadSlots = useCallback(
@@ -530,18 +546,32 @@ export default function AuthenticatedBookingPage() {
 
             {/* Assessor / Organização */}
             <div>
-              <label className="text-[11px] font-bold text-slate-700 uppercase block mb-1">
-                🏢 Assessor Responsável (Organização) *
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-bold text-slate-700 uppercase">
+                  🏢 Assessor Responsável (Organização) *
+                </label>
+                <button
+                  type="button"
+                  onClick={loadAssessores}
+                  disabled={loadingAssessores}
+                  className="text-[10px] text-[#0092FF] hover:underline font-bold flex items-center space-x-1"
+                >
+                  <RefreshCw className={`w-3 h-3 ${loadingAssessores ? 'animate-spin' : ''}`} />
+                  <span>Recarregar</span>
+                </button>
+              </div>
               <div className="relative">
                 <Building2 className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                 <select
                   required
+                  disabled={loadingAssessores}
                   value={selectedAssessorId}
                   onChange={(e) => setSelectedAssessorId(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#0092FF] outline-none transition-all cursor-pointer"
+                  className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#0092FF] outline-none transition-all cursor-pointer disabled:opacity-60"
                 >
-                  <option value="">Selecione o Assessor / Organização...</option>
+                  <option value="">
+                    {loadingAssessores ? 'Carregando assessores...' : 'Selecione o Assessor / Organização...'}
+                  </option>
                   {assessores.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.name}
@@ -550,7 +580,9 @@ export default function AuthenticatedBookingPage() {
                 </select>
               </div>
               <span className="text-[10px] text-slate-400 mt-0.5 block">
-                Vincula o agendamento diretamente à organização do assessor no Pipedrive.
+                {assessores.length > 0
+                  ? `${assessores.length} assessores sincronizados do Pipedrive.`
+                  : 'Vincula o agendamento diretamente à organização do assessor no Pipedrive.'}
               </span>
             </div>
 
