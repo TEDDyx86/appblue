@@ -442,7 +442,7 @@ export default function CadastrosPage() {
                 {processing ? (
                   <RefreshCw className="w-8 h-8 animate-spin" />
                 ) : (
-                  <UploadCloud className="w-8 h-8 animate-bounce" />
+                  <UploadCloud className="w-8 h-8 transition-transform duration-300 group-hover:scale-110" />
                 )}
               </div>
 
@@ -1086,8 +1086,8 @@ export default function CadastrosPage() {
               </div>
 
               <div className="p-6 overflow-y-auto space-y-4">
-                <div className="text-xs text-slate-600 dark:text-slate-300 bg-blue-50/60 dark:bg-[#002060]/30 p-3.5 rounded-xl border border-blue-200/80 dark:border-[#0092FF]/30">
-                  <p className="font-semibold text-slate-800 dark:text-slate-200">
+                <div className="text-xs text-blue-950 dark:text-blue-200 bg-blue-50/70 dark:bg-[#002060]/30 p-3.5 rounded-xl border border-blue-200/80 dark:border-[#0092FF]/30">
+                  <p className="font-semibold text-blue-900 dark:text-blue-100">
                     💡 Dica: Todos os dados extraídos também são salvos no <strong>Histórico de Atividades</strong> da Pessoa, mesmo se você optar por não gravar em um campo específico.
                   </p>
                 </div>

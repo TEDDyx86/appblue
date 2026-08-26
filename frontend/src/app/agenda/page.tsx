@@ -1384,7 +1384,7 @@ export default function AgendaPage() {
                                       href={act.deal_url}
                                       target="_blank"
                                       rel="noreferrer"
-                                      className="p-2 rounded-xl text-slate-400 hover:text-[#0092FF] hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors"
+                                      className="p-2 rounded-xl text-slate-500 hover:text-blue-600 hover:bg-blue-50/80 dark:hover:bg-blue-950/50 transition-colors"
                                       title="Abrir no Pipedrive"
                                     >
                                       <ExternalLink className="w-3.5 h-3.5" />
@@ -1607,7 +1607,7 @@ export default function AgendaPage() {
                             <button
                               type="button"
                               onClick={() => handleDeleteMeetingType(meeting.id)}
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50/80 dark:hover:bg-rose-950/50 transition-colors"
                               title="Excluir evento"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -1809,7 +1809,7 @@ export default function AgendaPage() {
                                   <button
                                     type="button"
                                     onClick={() => removeInterval(dayKey, idx)}
-                                    className="w-9 h-9 flex items-center justify-center rounded-xl border border-slate-200 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-500 hover:text-rose-600 transition-colors"
+                                    className="w-9 h-9 flex items-center justify-center rounded-xl border border-slate-200 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] hover:border-rose-300 dark:hover:border-rose-800/60 hover:bg-rose-50/80 dark:hover:bg-rose-950/40 text-slate-500 hover:text-rose-600 transition-colors"
                                     title="Remover este horário"
                                   >
                                     <X className="w-4 h-4" />

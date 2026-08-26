@@ -332,12 +332,12 @@ export default function LogsPage() {
                   <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase font-display">
                     Clientes & Negócios
                   </p>
-                  <p className="text-2xl font-extrabold text-indigo-600 dark:text-indigo-400 font-display mt-2 tnum">
+                  <p className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 font-display mt-2 tnum">
                     {stats.pipedrive_assignments}
                   </p>
                   <p className="text-xs text-slate-400 mt-1">Atribuídos no CRM</p>
                 </div>
-                <div className="p-3 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 rounded-2xl border border-indigo-200 dark:border-indigo-800/60">
+                <div className="p-3 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 rounded-2xl border border-emerald-200 dark:border-emerald-800/60">
                   <Briefcase className="w-5 h-5" />
                 </div>
               </div>

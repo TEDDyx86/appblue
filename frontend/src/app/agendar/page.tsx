@@ -398,13 +398,13 @@ export default function AuthenticatedBookingPage() {
                             isSelected
                               ? 'bg-[#000D38] text-white border-[#000D38] shadow-sm ring-2 ring-[#0092FF]'
                               : isAvailable
-                              ? 'bg-blue-50/40 border-blue-200 text-slate-900 hover:bg-blue-100/60'
+                              ? 'bg-blue-50/50 border-blue-200 text-blue-950 hover:bg-blue-100/70'
                               : 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed opacity-50'
                           }`}
                         >
                           <span
                             className={`text-[10px] font-bold block uppercase ${
-                              isSelected ? 'text-[#00FFFF]' : isAvailable ? 'text-[#0092FF]' : 'text-slate-400'
+                              isSelected ? 'text-[#00FFFF]' : isAvailable ? 'text-blue-600' : 'text-slate-400'
                             }`}
                           >
                             {d.weekday_name}
