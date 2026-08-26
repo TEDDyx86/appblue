@@ -8,7 +8,7 @@ import uuid
 import json
 import base64
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Union
 from functools import wraps
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks, UploadFile, File
@@ -1288,7 +1288,7 @@ async def create_pipedrive_note(
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             res = await client.post(
-                f"{PIPEDRIVE_BASE_URL}/notes",
+                "https://api.pipedrive.com/v1/notes",
                 params={"api_token": PIPEDRIVE_API_TOKEN},
                 json=payload
             )
@@ -1310,7 +1310,7 @@ async def delete_pipedrive_note(note_id: str) -> bool:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             res = await client.delete(
-                f"{PIPEDRIVE_BASE_URL}/notes/{note_id}",
+                f"https://api.pipedrive.com/v1/notes/{note_id}",
                 params={"api_token": PIPEDRIVE_API_TOKEN}
             )
             if res.status_code in [200, 204]:
