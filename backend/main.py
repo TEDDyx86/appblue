@@ -2918,12 +2918,9 @@ async def fetch_pipedrive_busy_intervals(start_date: str, end_date: str) -> Dict
         ref_type = act.get("reference_type")
         series = act.get("series") or []
         
-        # Eventos do calendar-sync armazenam horários em UTC no Pipedrive
-        is_calendar_sync = (ref_type == "calendar-sync")
-        
-        # Ocorrência direta / pai
+        # Todas as atividades com horário no Pipedrive são armazenadas em UTC
         if due_date and due_time:
-            add_busy_slot(due_date, due_time, dur, is_utc=is_calendar_sync)
+            add_busy_slot(due_date, due_time, dur, is_utc=True)
             
         # Ocorrências de séries recorrentes (armazenadas em UTC)
         if isinstance(series, list):
@@ -3155,14 +3152,25 @@ async def book_meeting(booking: BookingRequest, user: Optional[dict] = Depends(g
         elif "call" in type_combined or "chamada" in type_combined:
             pipedrive_activity_type = "call"
         
+        # Converte a data e horário escolhidos (Brasília UTC-3) para UTC (+3h) para gravação no Pipedrive
+        def to_pipedrive_utc(date_str: str, time_str: str) -> Tuple[str, str]:
+            try:
+                dt_local = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+                dt_utc = dt_local + timedelta(hours=3)
+                return dt_utc.strftime("%Y-%m-%d"), dt_utc.strftime("%H:%M")
+            except Exception:
+                return date_str, time_str
+
+        utc_due_date, utc_due_time = to_pipedrive_utc(booking.date, booking.time)
+        
         # 4. Cria Activity no Pipedrive (em aberto)
         activity = await create_pipedrive_activity(
             person_id=person_id,
             deal_id=deal_id,
             org_id=booking.org_id,
             subject=subject,
-            due_date=booking.date,
-            due_time=booking.time,
+            due_date=utc_due_date,
+            due_time=utc_due_time,
             duration=dur_str,
             location=platform_location,
             note=note_content,
