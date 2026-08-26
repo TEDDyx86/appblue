@@ -152,7 +152,7 @@ const AVAILABLE_TAGS = [
   { tag: '{horario}', label: 'Horário (Intervalo)', demo: '14:00 - 15:00' },
   { tag: '{dia_semana}', label: 'Dia da Semana', demo: 'Segunda-feira' },
   { tag: '{data}', label: 'Data Curta (Dia/Mês)', demo: '25/08' },
-  { tag: '{assessor}', label: 'Nome do Assessor / Org', demo: 'Investimentos Blue' },
+  { tag: '{assessor}', label: 'Nome do Assessor / Org', demo: 'Assessoria' },
   { tag: '{deal}', label: 'Título do Deal', demo: 'Holding Familiar' },
   { tag: '{deal_id}', label: 'ID do Deal', demo: '48' },
   { tag: '{horario_inicio}', label: 'Hora Início', demo: '14:00' },
@@ -519,8 +519,8 @@ export default function AgendaPage() {
       person_name: 'Carlos Eduardo',
       assunto: 'R1 Planejamento Sucessório',
       subject: 'R1 Planejamento Sucessório',
-      assessor: 'Investimentos Blue',
-      org_name: 'Investimentos Blue',
+      assessor: 'Assessoria',
+      org_name: 'Assessoria',
       deal: 'Holding Familiar',
       deal_title: 'Holding Familiar',
       deal_id: '48',
@@ -553,8 +553,8 @@ export default function AgendaPage() {
       .replaceAll('{subject}', act.subject || '')
       .replaceAll('{cliente}', act.person_name || 'Cliente')
       .replaceAll('{person_name}', act.person_name || 'Cliente')
-      .replaceAll('{assessor}', act.org_name || 'Investimentos Blue')
-      .replaceAll('{org_name}', act.org_name || 'Investimentos Blue')
+      .replaceAll('{assessor}', act.org_name || 'Assessoria')
+      .replaceAll('{org_name}', act.org_name || 'Assessoria')
       .replaceAll('{deal}', act.deal_title || '')
       .replaceAll('{deal_title}', act.deal_title || '')
       .replaceAll('{deal_id}', act.deal_id || '')
@@ -735,7 +735,7 @@ export default function AgendaPage() {
     const tplItem = settings?.whatsapp_item_template || '• {horario} | {assunto} com {cliente}'
     const tplFooter = settings?.whatsapp_footer_template !== undefined ? settings.whatsapp_footer_template : 'Qualquer dúvida ou ajuste de horário, estou à disposição! 🚀'
 
-    let assessorLabel = 'Investimentos Blue'
+    let assessorLabel = 'Assessoria'
     if (selectedAssessor !== 'all') {
       assessorLabel = selectedAssessor
     } else {
@@ -1675,7 +1675,7 @@ export default function AgendaPage() {
                             onChange={(e) => setEditingMeeting({ ...editingMeeting, color: e.target.value })}
                             className="w-full px-3 py-2 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-[#0092FF]"
                           >
-                            <option value="sky">Azul Blue3</option>
+                            <option value="sky">Azul Corporativo</option>
                             <option value="teal">Verde Petróleo</option>
                             <option value="indigo">Índigo</option>
                             <option value="amber">Âmbar / Dourado</option>

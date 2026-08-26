@@ -910,7 +910,7 @@ def generate_pipedrive_briefing_html(briefing_json: dict, meeting_title: str, cl
         f"{decisoes_section}"
         f"{atencao_section}"
         f"<hr/>"
-        f"<p><em>⚡ Sincronizado automaticamente pelo Sistema Robson Tavernard (Investimentos Blue)</em></p>"
+        f"<p><em>⚡ Sincronizado automaticamente pelo Sistema Robson Tavernard</em></p>"
     )
     return html
 
@@ -2633,7 +2633,7 @@ async def get_system_status(user: Optional[dict] = Depends(get_current_user_opti
             if res.status_code == 200:
                 user_info = res.json().get("data", {})
                 status_report["pipedrive"]["connected"] = True
-                status_report["pipedrive"]["detail"] = f"{user_info.get('name')} ({user_info.get('company_name', 'Investimentos Blue')})"
+                status_report["pipedrive"]["detail"] = f"{user_info.get('name')} (CRM)"
             else:
                 status_report["pipedrive"]["detail"] = f"Status {res.status_code}"
     except Exception as e:
@@ -3137,7 +3137,7 @@ async def book_meeting(booking: BookingRequest, user: Optional[dict] = Depends(g
             f"📧 E-mail: {booking.client_email or 'Não informado'}\n"
             f"💻 Plataforma: {booking.platform.upper()}\n"
             f"📝 Observações: {booking.notes or 'Nenhuma'}\n"
-            f"⚡ Agendado via Sistema Robson Blue3"
+            f"⚡ Agendado via Sistema Robson Tavernard"
         )
         
         platform_location = "Microsoft Teams" if booking.platform == "teams" else ("Google Meet" if booking.platform == "meet" else "Presencial")
@@ -3333,7 +3333,7 @@ async def get_calendar_meeting_types(user: Optional[dict] = Depends(get_current_
     return {
         "planner_name": "Robson Vieira Tavernard",
         "planner_role": "Planejamento Financeiro e Sucessório",
-        "company": "Blue3 Investimentos",
+        "company": "Planejamento Patrimonial",
         "meeting_types": settings_dict.get("meeting_types", []),
         "timezone": settings_dict.get("timezone", "America/Sao_Paulo")
     }

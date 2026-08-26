@@ -30,7 +30,7 @@ export default function Sidebar({
   onToggleCollapse,
   onLogout,
   userName = 'Robson Vieira',
-  userEmail = 'robson.vieira@investimentosblue.com.br',
+  userEmail = 'robson.vieira@email.com',
 }: SidebarProps) {
   const pathname = usePathname()
 

@@ -1,32 +1,32 @@
-# Design System: Blue3 Investimentos
+# Design System: Robson Tavernard Advisory Hub
 
 <!-- impeccable:design-schema 1 -->
 
 ## Brand Identity & Aesthetic World
 
-A identidade visual da plataforma é diretamente derivada do ecossistema oficial da **Blue3 Investimentos** (`blue3investimentos.com.br`), combinando a sofisticação do Private Wealth Management com a precisão tecnológica de alta performance.
+A identidade visual da plataforma combina a sofisticação do Private Wealth Management com a precisão tecnológica de alta performance.
 
 - **Vibe Geral**: Executivo, limpo, moderno, tecnológico e altamente escaneável (*Operate Mode*).
-- **Contraste & Hierarquia**: Fundo escuro azul-marinho profundo (`#000D38` / `#0A1128`) para navegação e headers, superfícies neutras de alta legibilidade (`#F8FAFC` / `#FFFFFF`), e acentos marcantes no icônico **Azul Elétrico Blue3 (`#0092FF`)** e **Ciano Highlighter (`#00FFFF`)**.
+- **Contraste & Hierarquia**: Fundo escuro azul-marinho profundo (`#000D38` / `#0A1128`) para navegação e headers, superfícies neutras de alta legibilidade (`#F8FAFC` / `#FFFFFF`), e acentos marcantes no **Azul Elétrico (`#0092FF`)** e **Ciano Highlighter (`#00FFFF`)**.
 
 ---
 
-## Palette & Color Tokens (Blue3 High-End Wealth Palette)
+## Palette & Color Tokens (Corporate Wealth Palette)
 
-### 1. Primary Blues (Marca & Ações)
-- **Blue3 Primary Blue**: `#0092FF` (`--brand--primary-blue` / `--blues--blue-4--100`) — Ações principais, botões primários, links ativos, badges de destaque.
-- **Blue3 Vivid Cyan**: `#00FFFF` (`--blues--blue-5--100`) — Glows, indicadores de status ativos, detalhes de alta precisão.
-- **Blue3 Royal Blue**: `#001D99` (`--blues--blue-3--100`) — Hover em botões primários, gradientes corporativos.
-- **Blue3 Corporate Navy**: `#002060` (`--blues--blue-2--100`) — Cabeçalhos, cartões institucionais.
-- **Blue3 Midnight Deep**: `#000D38` (`--blues--blue-1--100`) — Sidebar, headers contrastados, superfícies premium.
-- **Blue3 Deep Canvas (Dark)**: `#00061A` — Fundo principal do modo escuro.
+### 1. Primary Blues (Ações & Interface)
+- **Primary Electric Blue**: `#0092FF` — Ações principais, botões primários, links ativos, badges de destaque.
+- **Vivid Cyan**: `#00FFFF` — Glows, indicadores de status ativos, detalhes de alta precisão.
+- **Royal Blue**: `#001D99` — Hover em botões primários, gradientes corporativos.
+- **Corporate Navy**: `#002060` — Cabeçalhos, cartões institucionais.
+- **Midnight Deep**: `#000D38` — Sidebar, headers contrastados, superfícies premium.
+- **Deep Canvas (Dark)**: `#00061A` — Fundo principal do modo escuro.
 
 ### 2. Wealth & Status Tokens
 - **Wealth Gold (Patrimonial & Sucessório)**: `#F59E0B` / `#FBBF24` (Dourado Âmbar Sucessório) / Fundo: `bg-amber-500/10` / Glow: `shadow-[0_0_16px_rgba(245,158,11,0.3)]`.
 - **Success / Sincronizado**: `#10B981` (Emerald Mint) / Fundo: `#ECFDF5` (`bg-emerald-50`)
 - **Warning / Atenção**: `#F59E0B` (Amber) / Fundo: `#FFFBEB` (`bg-amber-50`)
 - **Danger / Negócio Parado**: `#FF3366` / `#EF4444` (Coral Rose) / Fundo: `bg-rose-500/10` (`bg-rose-50`)
-- **Pipedrive Badge**: `#0092FF` (Azul Blue3) / Fundo: `#EFF6FF` (`bg-blue-50`)
+- **Pipedrive Badge**: `#0092FF` (Azul CRM) / Fundo: `#EFF6FF` (`bg-blue-50`)
 - **Tactiq Badge**: `#8B5CF6` (Roxo / IA) / Fundo: `#F5F3FF` (`bg-purple-50`)
 - **Drive Badge**: `#059669` (Esmeralda / Docs) / Fundo: `#ECFDF5`
 

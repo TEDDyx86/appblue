@@ -52,7 +52,7 @@ export default function AuthenticatedBookingPage() {
   const [plannerInfo, setPlannerInfo] = useState({
     planner_name: 'Robson Vieira Tavernard',
     planner_role: 'Planejamento Financeiro e Sucessório',
-    company: 'Blue3 Investimentos',
+    company: 'Planejamento Patrimonial',
   })
   const [meetingTypes, setMeetingTypes] = useState<MeetingType[]>([])
   const [selectedMeetingType, setSelectedMeetingType] = useState<MeetingType | null>(null)
@@ -117,7 +117,7 @@ export default function AuthenticatedBookingPage() {
         setPlannerInfo({
           planner_name: res.data.planner_name || 'Robson Vieira Tavernard',
           planner_role: res.data.planner_role || 'Planejamento Financeiro e Sucessório',
-          company: res.data.company || 'Blue3 Investimentos',
+          company: res.data.company || 'Planejamento Patrimonial',
         })
         const types = res.data.meeting_types || []
         setMeetingTypes(types)

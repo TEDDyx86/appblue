@@ -8,7 +8,7 @@ web
 
 ## Users
 
-- **Usuário Primário**: Robson Vieira Tavernard (`robson.vieira@investimentosblue.com.br`), Planejador Financeiro e Sucessório da Blue3 Investimentos (`investimentosblue.pipedrive.com`). Ele conduz reuniões com clientes de alta renda (HNW), realiza diagnósticos patrimoniais, estrutura estratégias de proteção e sucessão familiar e acompanha a evolução de apólices e carteiras.
+- **Usuário Primário**: Robson Vieira Tavernard (`robson.vieira@email.com`), Planejador Financeiro e Sucessório (`investimentosblue.pipedrive.com`). Ele conduz reuniões com clientes de alta renda (HNW), realiza diagnósticos patrimoniais, estrutura estratégias de proteção e sucessão familiar e acompanha a evolução de apólices e carteiras.
 - **Usuários Secundários**: Equipe de assessoria, backoffice e administração técnica do sistema (Roberto Righetti).
 
 ## Product Purpose
@@ -20,7 +20,7 @@ Eliminar o trabalho manual de pós-reunião e organizar o fluxo de planejamento 
 
 ## Positioning
 
-A plataforma é o "cockpit executivo e motor de automação" dedicado ao planejador financeiro da Blue3. Ao contrário de CRMs genéricos ou ferramentas isoladas de agendamento, ela conecta de forma nativa e sem atrito a tríade **Tactiq (transcrição/IA) ↔ Google Drive ↔ Pipedrive CRM (atividades e negócios)**, garantindo que nenhuma informação de reunião se perca e que todas as tarefas de follow-up sejam executadas no prazo.
+A plataforma é o "cockpit executivo e motor de automação" dedicado ao planejador financeiro. Ao contrário de CRMs genéricos ou ferramentas isoladas de agendamento, ela conecta de forma nativa e sem atrito a tríade **Tactiq (transcrição/IA) ↔ Google Drive ↔ Pipedrive CRM (atividades e negócios)**, garantindo que nenhuma informação de reunião se perca e que todas as tarefas de follow-up sejam executadas no prazo.
 
 ## Operating Context
 
@@ -28,7 +28,7 @@ A plataforma é o "cockpit executivo e motor de automação" dedicado ao planeja
 - **Ferramentas Conectadas**:
   - **Tactiq**: Gera transcrições ao vivo e briefings estruturados com IA salvos automaticamente no Google Drive (pasta `Briefing - Tactiq`).
   - **Google Drive**: Armazenamento em nuvem dos documentos originais via Service Account.
-  - **Pipedrive CRM**: Gerenciamento de Pessoas, Negócios (Deals) e Atividades de Reunião/Follow-up da organização Blue3 Investimentos.
+  - **Pipedrive CRM**: Gerenciamento de Pessoas, Negócios (Deals) e Atividades de Reunião/Follow-up.
   - **Microsoft Teams & Outlook**: Calendário e salas virtuais sincronizados via Pipedrive Calendar Sync.
 
 ## Capabilities and Constraints
@@ -48,14 +48,14 @@ A plataforma é o "cockpit executivo e motor de automação" dedicado ao planeja
 
 ## Brand Commitments
 
-- **Identidade Corporativa**: Blue3 Investimentos / Planejamento Financeiro e Sucessório.
+- **Identidade Corporativa**: Robson Tavernard / Planejamento Financeiro e Sucessório.
 - **Tom de Voz**: Profissional, executivo, discreto, confiável e de alta precisão.
 - **Paleta e Estética**: Tons sóbrios e tecnológicos (Slate escuro/grafite, Teal/Esmeralda para ações e sucesso, Sky/Azul corporativo para CRM e badges informativas).
 
 ## Evidence on Hand
 
 - Documentos de arquitetura e PRD: `PRD-automacao-tactiq-pipedrive.md` e `ARQUITETURA-TACITQ-PIPEDRIVE.md`.
-- Conexões e credenciais validadas: Google Drive Service Account, Supabase PostgreSQL e API Token do Pipedrive CRM Blue3.
+- Conexões e credenciais validadas: Google Drive Service Account, Supabase PostgreSQL e API Token do Pipedrive CRM.
 - Base real com 18 documentos de reuniões reais do Google Drive e atividades ativas criadas no Pipedrive.
 
 ## Product Principles
