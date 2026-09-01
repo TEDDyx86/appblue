@@ -6,26 +6,22 @@ import axios from 'axios'
 import Sidebar from '@/components/Sidebar'
 import AlertsPanel, { Alert } from '@/components/AlertsPanel'
 import StatsCards, { Stats } from '@/components/StatsCards'
-import RecentTranscriptions from '@/components/RecentTranscriptions'
+import RecoveryQueue, { LostDeal } from '@/components/RecoveryQueue'
+import LossReasons, { LossReason } from '@/components/LossReasons'
+import BirthdaysCard, { Birthday } from '@/components/BirthdaysCard'
+import TodayAgenda, { AgendaItem } from '@/components/TodayAgenda'
+import ConversionCard, { Conversao } from '@/components/ConversionCard'
+import CardVisibilityMenu from '@/components/CardVisibilityMenu'
 import {
   RefreshCw,
-  Bell,
-  CheckCircle2,
   Calendar,
-  Layers,
-  ArrowUpRight,
-  ShieldCheck,
   Sun,
   Moon,
-  TrendingUp,
-  DollarSign,
   Briefcase,
-  AlertTriangle,
   ExternalLink,
   Zap,
   Search,
   X,
-  Clock,
   Eye,
 } from 'lucide-react'
 import { useTheme } from '@/context/ThemeContext'
@@ -63,6 +59,59 @@ interface PipelineSummary {
   deals?: DealItem[]
 }
 
+interface DashboardOperacional {
+  resumo: {
+    total_abertos: number
+    follow_ups_vencidos: number
+    negocios_parados: number
+    sem_proximo_passo: number
+    transcricoes_pendentes: number
+  }
+  pipeline: PipelineSummary
+  sem_proximo_passo: DealItem[]
+  perdidos: {
+    total_perdidos: number
+    motivos: LossReason[]
+    fila_recuperacao: LostDeal[]
+    total_recuperavel: number
+  }
+  aniversarios: {
+    aniversariantes: Birthday[]
+    com_data: number
+    total_pessoas: number
+    cobertura: number
+  }
+  agenda: {
+    hoje: AgendaItem[]
+    total_hoje: number
+    total_semana: number
+  }
+  conversao: Conversao
+}
+
+type CardId = 'agenda' | 'recuperacao' | 'conversao' | 'motivos' | 'aniversarios' | 'alertas'
+
+const ORDEM_PADRAO: CardId[] = [
+  'agenda',
+  'recuperacao',
+  'conversao',
+  'motivos',
+  'aniversarios',
+  'alertas',
+]
+
+const TITULOS_CARD: Record<CardId, string> = {
+  agenda: 'Agenda de Hoje',
+  recuperacao: 'Fila de Recuperação',
+  conversao: 'Taxa de Conversão',
+  motivos: 'Motivos de Perda',
+  aniversarios: 'Aniversariantes',
+  alertas: 'Alertas Operacionais',
+}
+
+const CHAVE_ORDEM = 'dashboard:ordem-cards'
+const CHAVE_OCULTOS = 'dashboard:cards-ocultos'
+
 export default function DashboardPage() {
   const router = useRouter()
   const { theme, isDark, toggleTheme } = useTheme()
@@ -79,13 +128,93 @@ export default function DashboardPage() {
   const [selectedStageFilter, setSelectedStageFilter] = useState('all')
   const [dealsSortBy, setDealsSortBy] = useState<'recent_update' | 'oldest_update' | 'highest_value' | 'stagnant_days' | 'title_az'>('recent_update')
 
+  const [operacional, setOperacional] = useState<DashboardOperacional | null>(null)
+
+  const [ordem, setOrdem] = useState<CardId[]>(ORDEM_PADRAO)
+  const [ocultos, setOcultos] = useState<CardId[]>([])
+  const [anuncio, setAnuncio] = useState('')
+
+  // Lido após a montagem: no servidor não existe localStorage, e ler direto no
+  // useState causaria divergência de hidratação.
+  useEffect(() => {
+    const salvo = window.localStorage.getItem(CHAVE_ORDEM)
+    if (!salvo) return
+    try {
+      const lista = JSON.parse(salvo) as CardId[]
+      // Reconcilia com o padrão: descarta ids desconhecidos e acrescenta os que
+      // faltarem, para uma ordem antiga não sumir com um card novo.
+      const validos = lista.filter((id) => ORDEM_PADRAO.includes(id))
+      const faltantes = ORDEM_PADRAO.filter((id) => !validos.includes(id))
+      setOrdem([...validos, ...faltantes])
+    } catch {
+      // JSON corrompido: mantém o padrão
+    }
+  }, [])
+
+  useEffect(() => {
+    const salvo = window.localStorage.getItem(CHAVE_OCULTOS)
+    if (!salvo) return
+    try {
+      const lista = JSON.parse(salvo) as CardId[]
+      setOcultos(lista.filter((id) => ORDEM_PADRAO.includes(id)))
+    } catch {
+      // JSON corrompido: nada oculto
+    }
+  }, [])
+
+  const visiveis = ordem.filter((id) => !ocultos.includes(id))
+
+  /**
+   * Move um card uma posição entre os **visíveis**. A troca acontece no array
+   * completo, mas pulando os ocultos — sem isso, mover um card poderia trocá-lo
+   * com um card invisível e nada aconteceria na tela.
+   */
+  const moverCard = (id: CardId, direcao: -1 | 1) => {
+    setOrdem((atual) => {
+      const de = atual.indexOf(id)
+      let para = de + direcao
+      while (para >= 0 && para < atual.length && ocultos.includes(atual[para])) {
+        para += direcao
+      }
+      if (de < 0 || para < 0 || para >= atual.length) return atual
+
+      const nova = [...atual]
+      ;[nova[de], nova[para]] = [nova[para], nova[de]]
+      window.localStorage.setItem(CHAVE_ORDEM, JSON.stringify(nova))
+
+      const novaVisivel = nova.filter((c) => !ocultos.includes(c))
+      setAnuncio(
+        `${TITULOS_CARD[id]} movido para a posição ${novaVisivel.indexOf(id) + 1} de ${novaVisivel.length}.`,
+      )
+      return nova
+    })
+  }
+
+  const alternarVisibilidade = (id: CardId) => {
+    setOcultos((atual) => {
+      const nova = atual.includes(id) ? atual.filter((c) => c !== id) : [...atual, id]
+      window.localStorage.setItem(CHAVE_OCULTOS, JSON.stringify(nova))
+      setAnuncio(
+        nova.includes(id)
+          ? `${TITULOS_CARD[id]} ocultado. Use o botão Cards para reexibir.`
+          : `${TITULOS_CARD[id]} exibido novamente.`,
+      )
+      return nova
+    })
+  }
+
+  const mostrarTodos = () => {
+    setOcultos([])
+    window.localStorage.setItem(CHAVE_OCULTOS, JSON.stringify([]))
+    setAnuncio('Todos os cards foram exibidos.')
+  }
+
   const [stats, setStats] = useState<Stats>({
-    total_alerts: 0,
     negocio_parado: 0,
     follow_up_atrasado: 0,
-    teams_pendente: 0,
+    sem_proximo_passo: 0,
+    transcricoes_pendentes: 0,
   })
-  const [activeFilter, setActiveFilter] = useState<string>('all')
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [lastSyncTime, setLastSyncTime] = useState<Date>(new Date())
@@ -102,8 +231,10 @@ export default function DashboardPage() {
         return
       }
 
-      // Fetch alerts, user info & pipeline summary concurrently
-      const [alertsRes, userRes, pipelineRes] = await Promise.allSettled([
+      // O resumo do funil vem dentro de /dashboard/operacional. Chamá-lo em
+      // separado paginava os negócios abertos duas vezes por carregamento, e a
+      // cota diária do Pipedrive é finita.
+      const [alertsRes, userRes, operacionalRes] = await Promise.allSettled([
         axios.get(`${API_URL}/api/alerts`, {
           headers: { Authorization: `Bearer ${token}` },
           params: { resolved: false },
@@ -111,21 +242,13 @@ export default function DashboardPage() {
         axios.get(`${API_URL}/api/auth/me`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
-        axios.get(`${API_URL}/api/pipedrive/pipeline/comercial/summary`, {
+        axios.get(`${API_URL}/api/dashboard/operacional`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
       ])
 
       if (alertsRes.status === 'fulfilled') {
-        const alertsData: Alert[] = alertsRes.value.data
-        setAlerts(alertsData)
-
-        setStats({
-          total_alerts: alertsData.length,
-          negocio_parado: alertsData.filter((a) => a.alert_type === 'negocio_parado').length,
-          follow_up_atrasado: alertsData.filter((a) => a.alert_type === 'follow_up_atrasado').length,
-          teams_pendente: alertsData.filter((a) => a.alert_type === 'teams_pendente').length,
-        })
+        setAlerts(alertsRes.value.data)
         setError('')
       } else {
         const err: any = alertsRes.reason
@@ -142,8 +265,18 @@ export default function DashboardPage() {
         setUser(userRes.value.data)
       }
 
-      if (pipelineRes.status === 'fulfilled') {
-        setPipelineSummary(pipelineRes.value.data)
+      if (operacionalRes.status === 'fulfilled') {
+        const dados: DashboardOperacional = operacionalRes.value.data
+        setOperacional(dados)
+        setPipelineSummary(dados.pipeline)
+        // Os números do topo vêm do funil inteiro (paginado), não da tabela de
+        // alertas — esta só guarda o que já virou alerta no Supabase.
+        setStats({
+          negocio_parado: dados.resumo.negocios_parados,
+          follow_up_atrasado: dados.resumo.follow_ups_vencidos,
+          sem_proximo_passo: dados.resumo.sem_proximo_passo,
+          transcricoes_pendentes: dados.resumo.transcricoes_pendentes,
+        })
       }
 
       setLastSyncTime(new Date())
@@ -332,6 +465,14 @@ export default function DashboardPage() {
                 Monitoramento contínuo do Funil Comercial (Pipedrive) & Briefings do Google Drive.
               </p>
             </div>
+
+            <CardVisibilityMenu
+              todos={ORDEM_PADRAO}
+              titulos={TITULOS_CARD}
+              ocultos={ocultos}
+              onToggle={alternarVisibilidade}
+              onMostrarTodos={mostrarTodos}
+            />
           </div>
 
           {/* Error Banner */}
@@ -347,12 +488,8 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Interactive Stats Cards */}
-          <StatsCards
-            stats={stats}
-            activeFilter={activeFilter}
-            onSelectFilter={(filterType) => setActiveFilter(filterType)}
-          />
+          {/* Números operacionais do funil inteiro */}
+          <StatsCards stats={stats} totalAbertos={operacional?.resumo.total_abertos} />
 
           {/* COMMERCIAL PIPELINE HIGHLIGHT BANNER */}
           {pipelineSummary && (
@@ -386,13 +523,6 @@ export default function DashboardPage() {
                     </span>
                   </div>
 
-                  <div className="px-3.5 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60">
-                    <span className="text-[10px] uppercase font-bold text-emerald-600 dark:text-emerald-400 block">Volume em Pipeline</span>
-                    <span className="text-sm font-extrabold text-emerald-700 dark:text-emerald-300 font-display">
-                      {pipelineSummary.total_value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                    </span>
-                  </div>
-
                   <button
                     onClick={handleSyncPipeline}
                     disabled={isSyncingPipeline}
@@ -421,52 +551,94 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {/* Stages Bar */}
-              {pipelineSummary.stages_breakdown && Object.keys(pipelineSummary.stages_breakdown).length > 0 && (
-                <div className="mt-4 pt-3.5 border-t border-slate-100 dark:border-[#002060]/70">
-                  <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-2 flex items-center space-x-1.5">
-                    <Layers className="w-3.5 h-3.5 text-[#0092FF]" />
-                    <span>Distribuição de Negócios por Etapa (Clique para filtrar):</span>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {Object.entries(pipelineSummary.stages_breakdown).map(([stageName, count]) => (
-                      <button
-                        key={stageName}
-                        type="button"
-                        onClick={() => {
-                          setSelectedStageFilter(stageName)
-                          setIsDealsModalOpen(true)
-                        }}
-                        className="px-2.5 py-1 rounded-lg bg-slate-100/80 hover:bg-blue-50 dark:bg-[#00061A] dark:hover:bg-[#002060] border border-slate-200/80 dark:border-[#002060] text-[11px] flex items-center space-x-1.5 transition-colors group cursor-pointer"
-                        title={`Ver ${count} negócios em ${stageName}`}
-                      >
-                        <span className="text-slate-600 dark:text-slate-300 group-hover:text-[#0092FF]">{stageName}:</span>
-                        <span className="font-bold text-slate-900 dark:text-[#00FFFF]">{count}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
-          {/* Main Content Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-            {/* Alerts Panel - 2 cols */}
-            <div className="lg:col-span-2">
-              <AlertsPanel
-                alerts={alerts}
-                onResolve={handleResolve}
-                selectedTypeFilter={activeFilter}
-                onTypeFilterChange={(filterType) => setActiveFilter(filterType)}
-              />
-            </div>
+          {/* Cards reordenáveis, em coluna única. A ordem vive no estado e é
+              persistida; cada card recebe os callbacks de mover, ou null nas
+              extremidades para desabilitar o botão correspondente. */}
+          {visiveis.map((id, indice) => {
+            const mover = {
+              onMoveUp: indice > 0 ? () => moverCard(id, -1) : null,
+              onMoveDown: indice < visiveis.length - 1 ? () => moverCard(id, 1) : null,
+              onHide: () => alternarVisibilidade(id),
+            }
 
-            {/* Recent Transcriptions - 1 col */}
-            <div className="lg:col-span-1 h-full">
-              <RecentTranscriptions />
+            if (id === 'alertas') {
+              return (
+                <AlertsPanel key={id} alerts={alerts} onResolve={handleResolve} {...mover} />
+              )
+            }
+            if (!operacional) return null
+            if (id === 'agenda') {
+              return (
+                <TodayAgenda
+                  key={id}
+                  itens={operacional.agenda.hoje}
+                  totalSemana={operacional.agenda.total_semana}
+                  {...mover}
+                />
+              )
+            }
+            if (id === 'conversao') {
+              return <ConversionCard key={id} dados={operacional.conversao} {...mover} />
+            }
+            if (id === 'recuperacao') {
+              return (
+                <RecoveryQueue
+                  key={id}
+                  deals={operacional.perdidos.fila_recuperacao}
+                  {...mover}
+                />
+              )
+            }
+            if (id === 'motivos') {
+              return (
+                <LossReasons
+                  key={id}
+                  motivos={operacional.perdidos.motivos}
+                  totalPerdidos={operacional.perdidos.total_perdidos}
+                  {...mover}
+                />
+              )
+            }
+            return (
+              <BirthdaysCard
+                key={id}
+                aniversariantes={operacional.aniversarios.aniversariantes}
+                comData={operacional.aniversarios.com_data}
+                totalPessoas={operacional.aniversarios.total_pessoas}
+                cobertura={operacional.aniversarios.cobertura}
+                {...mover}
+              />
+            )
+          })}
+
+          {/* Todos os cards ocultos: sem isso o painel ficaria vazio e sem pista
+              de como recuperá-los. */}
+          {visiveis.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-slate-300 dark:border-[#002060] p-10 text-center">
+              <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 font-display">
+                Todos os cards estão ocultos
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Use o botão <span className="font-semibold">Cards</span>, no topo, para escolher o
+                que exibir.
+              </p>
+              <button
+                type="button"
+                onClick={mostrarTodos}
+                className="mt-4 inline-flex items-center px-4 py-2 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white text-xs font-bold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0092FF]"
+              >
+                Mostrar todos
+              </button>
             </div>
-          </div>
+          )}
+
+          {/* Anúncio de reordenação e visibilidade para leitor de tela */}
+          <p aria-live="polite" className="sr-only">
+            {anuncio}
+          </p>
         </main>
       </div>
 
