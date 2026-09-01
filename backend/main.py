@@ -7,6 +7,8 @@ import os
 import uuid
 import json
 import base64
+import time
+import asyncio
 import unicodedata
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple, Union
@@ -2187,9 +2189,23 @@ def contar_transcricoes_pendentes() -> Dict[str, Any]:
     }
 
 
-@app.get("/api/dashboard/operacional")
-async def dashboard_operacional(user: dict = Depends(get_current_user)):
-    """Reúne os blocos do dashboard operacional numa única resposta."""
+# ---------------------------------------------------------------------------
+# Cache do dashboard
+#
+# Montar a resposta custa ~15 requisições ao Pipedrive (várias páginas de
+# negócios, 456 pessoas, atividades). Com o painel aberto e recarregando
+# sozinho, isso consumia a cota diária da conta em poucas horas.
+#
+# Cache global e não por usuário: a resposta não depende de quem pergunta.
+# ---------------------------------------------------------------------------
+CACHE_DASHBOARD_TTL = 300  # segundos
+
+_cache_dashboard: Dict[str, Any] = {"gerado_em": 0.0, "dados": None}
+_lock_dashboard = asyncio.Lock()
+
+
+async def montar_dashboard_operacional() -> Dict[str, Any]:
+    """Busca tudo no Pipedrive e no Supabase. Sempre bate na origem."""
     pipeline = await fetch_comercial_pipeline_data()
     perdidos = await fetch_lost_deals_data()
     aniversarios = await fetch_birthdays_data()
@@ -2220,6 +2236,53 @@ async def dashboard_operacional(user: dict = Depends(get_current_user)):
         "agenda": agenda,
         "conversao": conversao,
     }
+
+
+@app.get("/api/dashboard/operacional")
+async def dashboard_operacional(
+    refresh: bool = False,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Blocos do dashboard operacional, servidos de cache quando recentes.
+
+    `?refresh=true` ignora o cache — usado pelo botão de sincronizar manual.
+
+    Se a busca falhar e existir dado antigo em cache, ele é devolvido em vez do
+    erro: durante um estouro de cota, um número de dez minutos atrás é mais útil
+    que uma tela vazia. A resposta sinaliza isso em `cache.obsoleto`.
+    """
+    agora = time.monotonic()
+    idade = agora - _cache_dashboard["gerado_em"]
+
+    if not refresh and _cache_dashboard["dados"] is not None and idade < CACHE_DASHBOARD_TTL:
+        return {**_cache_dashboard["dados"], "cache": {"idade_s": int(idade), "obsoleto": False}}
+
+    # O lock evita que duas abas abrindo juntas disparem a busca em duplicidade.
+    async with _lock_dashboard:
+        # Outra requisição pode ter preenchido o cache enquanto esperávamos.
+        agora = time.monotonic()
+        idade = agora - _cache_dashboard["gerado_em"]
+        if not refresh and _cache_dashboard["dados"] is not None and idade < CACHE_DASHBOARD_TTL:
+            return {**_cache_dashboard["dados"], "cache": {"idade_s": int(idade), "obsoleto": False}}
+
+        try:
+            dados = await montar_dashboard_operacional()
+        except HTTPException:
+            if _cache_dashboard["dados"] is not None:
+                idade = time.monotonic() - _cache_dashboard["gerado_em"]
+                logger.warning(
+                    f"Dashboard: falha ao atualizar, servindo cache de {int(idade)}s atrás"
+                )
+                return {
+                    **_cache_dashboard["dados"],
+                    "cache": {"idade_s": int(idade), "obsoleto": True},
+                }
+            raise
+
+        _cache_dashboard["dados"] = dados
+        _cache_dashboard["gerado_em"] = time.monotonic()
+        return {**dados, "cache": {"idade_s": 0, "obsoleto": False}}
 
 
 async def sync_comercial_alerts_internal(user_id: Optional[str] = None) -> Dict[str, Any]:

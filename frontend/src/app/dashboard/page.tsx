@@ -244,6 +244,8 @@ export default function DashboardPage() {
         }),
         axios.get(`${API_URL}/api/dashboard/operacional`, {
           headers: { Authorization: `Bearer ${token}` },
+          // O clique manual em Sincronizar ignora o cache do backend.
+          params: isManual ? { refresh: true } : undefined,
         }),
       ])
 
@@ -291,10 +293,13 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchData()
 
-    // Auto-refresh a cada 45 segundos
+    // Auto-refresh a cada 5 minutos. Cada carregamento custa ~15 requisicoes
+    // ao Pipedrive; a 45s isso consumia a cota diaria da conta em poucas horas
+    // so de deixar o painel aberto. O backend ainda tem cache de 5 min, entao
+    // recargas mais frequentes que isso nao trariam dado novo de qualquer forma.
     const interval = setInterval(() => {
       fetchData()
-    }, 45000)
+    }, 5 * 60 * 1000)
 
     return () => clearInterval(interval)
   }, [fetchData])
