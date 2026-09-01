@@ -7,6 +7,7 @@ import os
 import uuid
 import json
 import base64
+import unicodedata
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple, Union
 from functools import wraps
@@ -1783,9 +1784,75 @@ async def list_pipedrive_activities(
 
 PIPELINE_COMERCIAL_ID = 1
 
+async def paginar_pipedrive(
+    client: httpx.AsyncClient,
+    path: str,
+    params: Optional[Dict[str, Any]] = None,
+    limite_paginas: int = 50,
+) -> List[Dict[str, Any]]:
+    """
+    Percorre todas as páginas de um endpoint de coleção do Pipedrive.
+
+    O Pipedrive devolve no máximo 100 itens por chamada e sinaliza a continuação
+    em `additional_data.pagination.more_items_in_collection`. Sem percorrer essas
+    páginas, uma conta com 242 negócios abertos reporta 100 — e todo agregado
+    calculado em cima (volume, parados, follow-ups) sai subestimado em silêncio.
+
+    `limite_paginas` é uma trava de segurança contra laço infinito caso a API
+    devolva paginação inconsistente.
+    """
+    itens: List[Dict[str, Any]] = []
+    start = 0
+    for _ in range(limite_paginas):
+        p = dict(params or {})
+        p.update({"api_token": PIPEDRIVE_API_TOKEN, "limit": 100, "start": start})
+        res = await client.get(f"https://api.pipedrive.com/v1{path}", params=p)
+
+        # Uma falha NUNCA pode se disfarçar de "nenhum resultado". Sem esta
+        # checagem, um 429 devolvia lista vazia e o dashboard renderizava tudo
+        # zerado como se o funil estivesse vazio — parecendo dado, não erro.
+        if res.status_code == 429:
+            espera = res.headers.get("Retry-After", "?")
+            logger.error(f"Pipedrive: cota de requisições esgotada em {path} (Retry-After: {espera}s)")
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "A cota diária de requisições do Pipedrive foi atingida. "
+                    "Os dados voltam automaticamente quando a cota renovar."
+                ),
+            )
+        if res.status_code != 200:
+            logger.error(f"Pipedrive respondeu {res.status_code} em {path}: {res.text[:200]}")
+            raise HTTPException(
+                status_code=502,
+                detail=f"O Pipedrive respondeu com erro {res.status_code}.",
+            )
+
+        payload = res.json()
+        if payload.get("success") is False:
+            logger.error(f"Pipedrive retornou success=false em {path}: {payload.get('error')}")
+            raise HTTPException(
+                status_code=502,
+                detail=f"Pipedrive: {payload.get('error') or 'erro desconhecido'}",
+            )
+
+        itens.extend(payload.get("data") or [])
+
+        paginacao = (payload.get("additional_data") or {}).get("pagination") or {}
+        if not paginacao.get("more_items_in_collection"):
+            return itens
+        start = paginacao.get("next_start", start + 100)
+
+    logger.warning(
+        f"paginar_pipedrive: limite de {limite_paginas} páginas atingido em {path}; "
+        f"resultado pode estar incompleto ({len(itens)} itens)"
+    )
+    return itens
+
+
 async def fetch_comercial_pipeline_data() -> Dict[str, Any]:
     """Busca dados consolidados do Funil Comercial do Pipedrive"""
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         # 1. Busca stages do funil 1
         stages_res = await client.get(
             "https://api.pipedrive.com/v1/stages",
@@ -1793,14 +1860,22 @@ async def fetch_comercial_pipeline_data() -> Dict[str, Any]:
         )
         all_stages = stages_res.json().get("data") or []
         comercial_stages = {s["id"]: s["name"] for s in all_stages if s.get("pipeline_id") == PIPELINE_COMERCIAL_ID}
-        
-        # 2. Busca deals abertos do funil 1
-        deals_res = await client.get(
-            "https://api.pipedrive.com/v1/deals",
-            params={"api_token": PIPEDRIVE_API_TOKEN, "pipeline_id": PIPELINE_COMERCIAL_ID, "status": "open", "limit": 100}
-        )
-        raw_deals = deals_res.json().get("data") or []
-        
+
+        # 2. Busca deals abertos e filtra o funil aqui, não na API.
+        #
+        # A v1 de /deals ACEITA `pipeline_id` mas o IGNORA em silêncio: pedir
+        # pipeline_id=1 devolve exatamente o mesmo que não filtrar nada. Sem o
+        # filtro abaixo, negócios de Pós-Venda, Eventos e MentorIA entram na
+        # conta como se fossem do Comercial (99 de 242 na medição real).
+        #
+        # A v2 filtra de verdade, mas não devolve `next_activity_date` nem
+        # `person_name`, que são a base dos alertas — por isso continuamos na v1.
+        todos_abertos = await paginar_pipedrive(client, "/deals", {"status": "open"})
+        raw_deals = [
+            d for d in todos_abertos
+            if str(d.get("pipeline_id")) == str(PIPELINE_COMERCIAL_ID)
+        ]
+
         now = datetime.now()
         total_value = 0.0
         stages_breakdown = {}
@@ -1872,6 +1947,280 @@ async def fetch_comercial_pipeline_data() -> Dict[str, Any]:
             "stagnant_deals": stagnant_deals,
             "overdue_deals": overdue_deals
         }
+
+# ============================================================================
+# DASHBOARD OPERACIONAL
+# ============================================================================
+
+def _normalizar(texto: str) -> str:
+    """Minúsculas e sem acento, para casar motivo de perda sem depender de grafia."""
+    sem_acento = unicodedata.normalize("NFKD", texto or "")
+    return "".join(c for c in sem_acento if not unicodedata.combining(c)).lower().strip()
+
+
+# Motivos de perda em que o cliente não rejeitou o produto — só não foi alcançado
+# ou não era o momento. São os que voltam para a fila de trabalho.
+MOTIVOS_RECUPERAVEIS = ("consegui contato", "nao e o momento")
+
+
+def _e_recuperavel(motivo: str) -> bool:
+    m = _normalizar(motivo)
+    return any(chave in m for chave in MOTIVOS_RECUPERAVEIS)
+
+
+async def fetch_lost_deals_data() -> Dict[str, Any]:
+    """
+    Negócios perdidos agrupados por motivo, mais a fila de recuperação.
+
+    O campo `lost_reason` está preenchido em 100% dos negócios perdidos desta
+    conta, então o agrupamento é confiável sem tratamento de ausentes.
+    """
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        todos_perdidos = await paginar_pipedrive(client, "/deals", {"status": "lost"})
+
+    perdidos = [
+        d for d in todos_perdidos
+        if str(d.get("pipeline_id")) == str(PIPELINE_COMERCIAL_ID)
+    ]
+
+    por_motivo: Dict[str, int] = {}
+    fila: List[Dict[str, Any]] = []
+
+    for d in perdidos:
+        motivo = (d.get("lost_reason") or "").strip() or "Sem motivo informado"
+        por_motivo[motivo] = por_motivo.get(motivo, 0) + 1
+
+        if _e_recuperavel(motivo):
+            deal_id = str(d.get("id"))
+            fila.append({
+                "id": deal_id,
+                "title": d.get("title") or "Negócio sem título",
+                "person_name": d.get("person_name") or "Cliente",
+                "value": float(d.get("value") or 0),
+                "lost_reason": motivo,
+                "lost_time": d.get("lost_time"),
+                "deal_url": f"https://investimentosblue.pipedrive.com/deal/{deal_id}",
+            })
+
+    # Mais recentes primeiro: são os de contato ainda quente.
+    fila.sort(key=lambda x: x.get("lost_time") or "", reverse=True)
+
+    motivos = [
+        {"motivo": k, "total": v, "recuperavel": _e_recuperavel(k)}
+        for k, v in sorted(por_motivo.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+
+    return {
+        "total_perdidos": len(perdidos),
+        "motivos": motivos,
+        "fila_recuperacao": fila,
+        "total_recuperavel": len(fila),
+        # Repassado para `fetch_conversao` reaproveitar, em vez de refazer a
+        # mesma paginação. Não vai para a resposta HTTP.
+        "_brutos": todos_perdidos,
+    }
+
+
+async def fetch_birthdays_data() -> Dict[str, Any]:
+    """
+    Aniversariantes do mês corrente.
+
+    ATENÇÃO: apenas ~5% das pessoas têm data de nascimento preenchida. O card
+    consumidor exibe `cobertura` na tela justamente porque a lista parece
+    completa e não é — sem esse aviso, dois nomes passam a impressão de que só
+    existem dois aniversariantes no mês.
+    """
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        campos_res = await client.get(
+            "https://api.pipedrive.com/v1/personFields",
+            params={"api_token": PIPEDRIVE_API_TOKEN},
+        )
+        chave_nascimento = None
+        for f in (campos_res.json().get("data") or []):
+            if "nascimento" in _normalizar(f.get("name") or ""):
+                chave_nascimento = f.get("key")
+                break
+
+        if not chave_nascimento:
+            return {"aniversariantes": [], "com_data": 0, "total_pessoas": 0, "cobertura": 0.0}
+
+        pessoas = await paginar_pipedrive(client, "/persons")
+
+    mes_atual = datetime.now().month
+    com_data = 0
+    aniversariantes: List[Dict[str, Any]] = []
+
+    for p in pessoas:
+        bruto = p.get(chave_nascimento)
+        if not bruto:
+            continue
+        com_data += 1
+        try:
+            nascimento = datetime.strptime(str(bruto)[:10], "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if nascimento.month != mes_atual:
+            continue
+
+        pessoa_id = str(p.get("id"))
+        aniversariantes.append({
+            "id": pessoa_id,
+            "name": p.get("name") or "Sem nome",
+            "dia": nascimento.day,
+            "person_url": f"https://investimentosblue.pipedrive.com/person/{pessoa_id}",
+        })
+
+    aniversariantes.sort(key=lambda x: x["dia"])
+    total = len(pessoas)
+
+    return {
+        "aniversariantes": aniversariantes,
+        "com_data": com_data,
+        "total_pessoas": total,
+        "cobertura": round(com_data / total * 100, 1) if total else 0.0,
+    }
+
+
+async def fetch_agenda_hoje() -> Dict[str, Any]:
+    """
+    Atividades não concluídas de hoje e dos próximos 7 dias.
+
+    Responde "o que eu faço agora", que é o uso real do painel.
+    """
+    hoje = datetime.now().date()
+    fim = hoje + timedelta(days=7)
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        atividades = await paginar_pipedrive(
+            client,
+            "/activities",
+            {"start_date": str(hoje), "end_date": str(fim), "done": 0},
+        )
+
+    de_hoje: List[Dict[str, Any]] = []
+    for a in atividades:
+        if str(a.get("due_date")) != str(hoje):
+            continue
+        atividade_id = str(a.get("id"))
+        de_hoje.append({
+            "id": atividade_id,
+            "subject": a.get("subject") or "Sem assunto",
+            "type": a.get("type") or "task",
+            "due_time": a.get("due_time") or "",
+            "person_name": a.get("person_name"),
+            "deal_title": a.get("deal_title"),
+            "url": f"https://investimentosblue.pipedrive.com/activities/list#dialog/activity/{atividade_id}",
+        })
+
+    # Sem horário primeiro (dia todo), depois em ordem cronológica.
+    de_hoje.sort(key=lambda x: x["due_time"] or "00:00")
+
+    return {
+        "hoje": de_hoje,
+        "total_hoje": len(de_hoje),
+        "total_semana": len(atividades),
+    }
+
+
+async def fetch_conversao(perdidos_brutos: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Taxa de ganho sobre negócios fechados do Funil Comercial.
+
+    Recebe os perdidos já buscados em vez de refazer a chamada: a cota diária de
+    requisições do Pipedrive é finita, e este endpoint paginava a mesma lista
+    duas vezes por carregamento do dashboard.
+
+    Só o número global: `won_time` está preenchido em uma minoria dos ganhos,
+    então qualquer recorte por período seria enganoso. A cobertura vai junto na
+    resposta para o card poder avisar.
+    """
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        ganhos = await paginar_pipedrive(client, "/deals", {"status": "won"})
+
+    alvo = str(PIPELINE_COMERCIAL_ID)
+    ganhos = [d for d in ganhos if str(d.get("pipeline_id")) == alvo]
+    perdidos = [d for d in perdidos_brutos if str(d.get("pipeline_id")) == alvo]
+
+    fechados = len(ganhos) + len(perdidos)
+    com_data = sum(1 for d in ganhos if d.get("won_time"))
+
+    return {
+        "ganhos": len(ganhos),
+        "perdidos": len(perdidos),
+        "fechados": fechados,
+        "taxa_ganho": round(len(ganhos) / fechados * 100, 1) if fechados else 0.0,
+        "valor_ganho": sum(float(d.get("value") or 0) for d in ganhos),
+        "ganhos_com_data": com_data,
+    }
+
+
+def contar_transcricoes_pendentes() -> Dict[str, Any]:
+    """
+    Transcrições processadas que ainda não foram vinculadas ao Pipedrive.
+
+    O vínculo mora em `briefing_json.pipedrive` (person_id ou deal_id). As
+    marcadas com `is_ignored` — reuniões internas — ficam de fora: estão sem
+    vínculo de propósito, e contá-las inflaria o número de pendências.
+    """
+    res = supabase.table("transcriptions").select("briefing_json").execute()
+    linhas = res.data or []
+
+    pendentes = 0
+    vinculadas = 0
+    ignoradas = 0
+
+    for linha in linhas:
+        briefing = linha.get("briefing_json") or {}
+        pipe = briefing.get("pipedrive") or {}
+        if pipe.get("person_id") or pipe.get("deal_id"):
+            vinculadas += 1
+        elif briefing.get("is_ignored"):
+            ignoradas += 1
+        else:
+            pendentes += 1
+
+    return {
+        "pendentes": pendentes,
+        "vinculadas": vinculadas,
+        "ignoradas": ignoradas,
+        "total": len(linhas),
+    }
+
+
+@app.get("/api/dashboard/operacional")
+async def dashboard_operacional(user: dict = Depends(get_current_user)):
+    """Reúne os blocos do dashboard operacional numa única resposta."""
+    pipeline = await fetch_comercial_pipeline_data()
+    perdidos = await fetch_lost_deals_data()
+    aniversarios = await fetch_birthdays_data()
+    agenda = await fetch_agenda_hoje()
+    conversao = await fetch_conversao(perdidos.pop("_brutos", []))
+    transcricoes = contar_transcricoes_pendentes()
+
+    sem_proximo_passo = [
+        d for d in pipeline.get("deals", []) if not d.get("next_activity_date")
+    ]
+
+    return {
+        "resumo": {
+            "total_abertos": pipeline.get("total_deals", 0),
+            "follow_ups_vencidos": pipeline.get("overdue_count", 0),
+            "negocios_parados": pipeline.get("stagnant_count", 0),
+            "sem_proximo_passo": len(sem_proximo_passo),
+            "transcricoes_pendentes": transcricoes["pendentes"],
+        },
+        "transcricoes": transcricoes,
+        # Devolvido junto para o frontend não precisar chamar
+        # /pipedrive/pipeline/comercial/summary em separado, o que paginava os
+        # negócios abertos uma segunda vez a cada carregamento.
+        "pipeline": pipeline,
+        "sem_proximo_passo": sem_proximo_passo,
+        "perdidos": perdidos,
+        "aniversarios": aniversarios,
+        "agenda": agenda,
+        "conversao": conversao,
+    }
+
 
 async def sync_comercial_alerts_internal(user_id: Optional[str] = None) -> Dict[str, Any]:
     """Varre o Funil Comercial e grava/atualiza os alertas de negócios parados e follow-ups atrasados no Supabase"""
