@@ -4,12 +4,14 @@ Autenticação, Webhooks, Integração CRM
 """
 
 import os
+import re
 import uuid
 import json
 import base64
 import time
 import asyncio
 import unicodedata
+from difflib import SequenceMatcher
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple, Union
 from functools import wraps
@@ -626,6 +628,210 @@ async def update_pipedrive_activity(activity_id: str, updates: Dict) -> Optional
         return data.get("data") if data.get("success") else None
 
 # ============================================================================
+# VÍNCULO: transcrição -> atividade do Pipedrive
+# ============================================================================
+
+# Tipos de atividade que representam uma reunião com o cliente nesta conta.
+# São os R1/R2/R3 do funil — `teams` fica de fora de propósito: existem R1
+# antigos gravados com esse tipo, mas é dívida do passado, não regra.
+TIPOS_REUNIAO = {"meeting": "R1", "reuniao_2": "R2", "r3": "R3"}
+
+# Abaixo disto o candidato é tratado como outra pessoa. Calibrado com dados
+# reais: "Mariana Vicário" tinha "Sérgio Bressan" como melhor palpite (0.28), e
+# "Adilson Schelbauer" tinha "Radilson Carlos" (0.55). Vínculo errado é pior que
+# vínculo ausente.
+LIMIAR_COMPATIBILIDADE = 0.90
+
+# A atividade nasce do compromisso agendado, então cai sempre na data exata.
+# Medido com 0, 1 e 2 dias: resultado idêntico e nenhuma candidata múltipla.
+# Fica como rede para reunião que atravessa a meia-noite ou é remarcada.
+TOLERANCIA_DIAS = 1
+
+
+def _normalizar_nome(txt: str) -> str:
+    sem_acento = "".join(
+        c for c in unicodedata.normalize("NFKD", str(txt or "")) if not unicodedata.combining(c)
+    )
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z ]", "", sem_acento.lower())).strip()
+
+
+def compatibilidade_nome(nome: str, titulo: str) -> float:
+    """
+    Quão provável é que `nome` e `titulo` sejam a mesma pessoa, de 0 a 1.
+
+    Trata nome parcial por contenção — a transcrição costuma dizer "Márcio"
+    enquanto o negócio se chama "Márcio Paes". Sem isso, um acerto óbvio ficaria
+    em 0.71 e cairia fora do limiar.
+    """
+    a, b = _normalizar_nome(nome), _normalizar_nome(titulo)
+    if not a or not b:
+        return 0.0
+    if a in b or b in a:
+        return 1.0
+    tokens_a, tokens_b = set(a.split()), set(b.split())
+    if tokens_a and tokens_b:
+        proporcao = len(tokens_a & tokens_b) / min(len(tokens_a), len(tokens_b))
+        if proporcao >= 0.6:
+            return 0.95
+    return SequenceMatcher(None, a, b).ratio()
+
+
+async def buscar_negocio_por_nome(client: httpx.AsyncClient, nome: str) -> List[Dict[str, Any]]:
+    """
+    Busca negócios pelo nome do cliente.
+
+    O caminho é `/v1/deals/search`, sem o prefixo `/api`: a mesma rota sob
+    `/api/v1` devolve 404 "Unknown method". A base não é consistente entre os
+    endpoints do Pipedrive.
+    """
+    termo = (nome or "").strip().split()[0] if (nome or "").strip() else ""
+    if len(termo) < 2:
+        return []
+    res = await client.get(
+        "https://api.pipedrive.com/v1/deals/search",
+        params={"api_token": PIPEDRIVE_API_TOKEN, "term": termo, "limit": 8},
+    )
+    if res.status_code != 200:
+        logger.warning(f"deals/search respondeu {res.status_code} para '{termo}'")
+        return []
+    return ((res.json().get("data") or {}).get("items")) or []
+
+
+async def encontrar_atividade_da_reuniao(
+    nome_cliente: str, data_reuniao: Optional[str]
+) -> Tuple[Optional[Dict[str, Any]], str, Dict[str, Any]]:
+    """
+    Localiza a atividade R1/R2/R3 que a transcrição documenta.
+
+    Devolve `(atividade, motivo, detalhe)`. Com atividade encontrada o motivo é
+    "OK"; caso contrário traz o código da falha e a evidência que levou a ela —
+    é essa evidência que permite melhorar a regra depois.
+    """
+    if not nome_cliente or len(nome_cliente) < 3 or "identificado" in nome_cliente.lower():
+        return None, "SEM_NOME_CLIENTE", {"nome_recebido": nome_cliente}
+
+    alvo = None
+    if data_reuniao:
+        m = re.match(r"(\d{2})/(\d{2})/(\d{4})", data_reuniao)
+        if m:
+            try:
+                alvo = datetime(int(m.group(3)), int(m.group(2)), int(m.group(1))).date()
+            except ValueError:
+                alvo = None
+    if alvo is None:
+        return None, "SEM_DATA_REUNIAO", {"data_recebida": data_reuniao}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            itens = await buscar_negocio_por_nome(client, nome_cliente)
+        except Exception as e:
+            return None, "ERRO_PIPEDRIVE", {"erro": str(e)[:200]}
+
+        if not itens:
+            return None, "NEGOCIO_NAO_ENCONTRADO", {"nome_buscado": nome_cliente}
+
+        melhor = max(itens, key=lambda i: compatibilidade_nome(nome_cliente, i["item"].get("title")))
+        negocio = melhor["item"]
+        score = compatibilidade_nome(nome_cliente, negocio.get("title"))
+
+        if score < LIMIAR_COMPATIBILIDADE:
+            return None, "COMPATIBILIDADE_BAIXA", {
+                "nome_buscado": nome_cliente,
+                "melhor_candidato": negocio.get("title"),
+                "score": round(score, 2),
+                "limiar": LIMIAR_COMPATIBILIDADE,
+            }
+
+        res = await client.get(
+            f"https://api.pipedrive.com/v1/deals/{negocio['id']}/activities",
+            params={"api_token": PIPEDRIVE_API_TOKEN, "limit": 50},
+        )
+        if res.status_code != 200:
+            return None, "ERRO_PIPEDRIVE", {"status": res.status_code, "deal_id": negocio["id"]}
+        atividades = res.json().get("data") or []
+
+    reunioes = [a for a in atividades if a.get("type") in TIPOS_REUNIAO]
+    candidatas = []
+    for a in reunioes:
+        try:
+            quando = datetime.strptime(str(a.get("due_date")), "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            continue
+        if abs((quando - alvo).days) <= TOLERANCIA_DIAS:
+            candidatas.append(a)
+
+    base = {
+        "nome_buscado": nome_cliente,
+        "negocio": negocio.get("title"),
+        "deal_id": negocio["id"],
+        "score": round(score, 2),
+        "data_reuniao": str(alvo),
+    }
+
+    if len(candidatas) == 1:
+        return candidatas[0], "OK", base
+    if len(candidatas) > 1:
+        base["candidatas"] = [
+            {"id": a["id"], "tipo": TIPOS_REUNIAO.get(a.get("type")), "data": a.get("due_date")}
+            for a in candidatas
+        ]
+        return None, "MULTIPLAS_CANDIDATAS", base
+
+    base["reunioes_no_negocio"] = sorted({str(a.get("due_date")) for a in reunioes})
+    base["tolerancia_dias"] = TOLERANCIA_DIAS
+    return None, "SEM_ATIVIDADE_NA_DATA", base
+
+
+async def vincular_briefing_na_atividade(
+    briefing_json: Dict[str, Any], meeting_title: str
+) -> Dict[str, Any]:
+    """
+    Anexa o briefing na atividade da reunião e a marca como concluída.
+
+    `done` só é reescrito quando está `false`: as reuniões costumam já ter sido
+    fechadas manualmente antes de a transcrição chegar, e não faz sentido
+    reescrever um status que já está correto.
+
+    Devolve o bloco `vinculo`, gravado no briefing para a tela poder explicar ao
+    usuário por que não vinculou.
+    """
+    nome = (briefing_json.get("dados_cliente") or {}).get("nome") or ""
+    atividade, motivo, detalhe = await encontrar_atividade_da_reuniao(
+        nome, briefing_json.get("data_reuniao")
+    )
+    agora = datetime.utcnow().isoformat() + "Z"
+
+    if not atividade:
+        return {"status": "nao_vinculado", "motivo": motivo, "detalhe": detalhe, "avaliado_em": agora}
+
+    html = generate_pipedrive_briefing_html(briefing_json, meeting_title, nome)
+    campos: Dict[str, Any] = {"note": html}
+    ja_concluida = bool(atividade.get("done"))
+    if not ja_concluida:
+        campos["done"] = True
+
+    atualizada = await update_pipedrive_activity(str(atividade["id"]), campos)
+    if not atualizada:
+        return {
+            "status": "nao_vinculado",
+            "motivo": "ERRO_PIPEDRIVE",
+            "detalhe": {**detalhe, "activity_id": atividade["id"], "erro": "PUT em /activities falhou"},
+            "avaliado_em": agora,
+        }
+
+    return {
+        "status": "vinculado",
+        "motivo": "OK",
+        "activity_id": str(atividade["id"]),
+        "activity_type": TIPOS_REUNIAO.get(atividade.get("type")),
+        "activity_url": f"https://investimentosblue.pipedrive.com/activities/list#dialog/activity/{atividade['id']}",
+        "ja_estava_concluida": ja_concluida,
+        "detalhe": detalhe,
+        "avaliado_em": agora,
+    }
+
+
+# ============================================================================
 # WEBHOOK: Google Drive
 # ============================================================================
 
@@ -662,6 +868,120 @@ async def google_drive_webhook(
 
 import re
 
+def _normalizar_rotulo(txt: str) -> str:
+    """
+    Reduz um rótulo à forma canônica para comparação.
+
+    Remove os parênteses explicativos do prompt — "Regime de casamento (se casado
+    ou em união estável)" vira "regime de casamento", e "Nome(s) do(s) filho(s)"
+    vira "nome do filho".
+    """
+    sem_parenteses = re.sub(r"\([^)]*\)", "", txt or "")
+    sem_acento = "".join(
+        c for c in unicodedata.normalize("NFKD", sem_parenteses) if not unicodedata.combining(c)
+    )
+    return re.sub(r"\s+", " ", sem_acento).strip().strip(":").lower()
+
+
+# Rótulos aceitos na seção DADOS DO CLIENTE -> campo canônico.
+#
+# Inclui as variações antigas junto com as do prompt atual: documentos já
+# processados continuam sendo lidos, e um ajuste de redação no prompt não
+# derruba a extração inteira.
+ROTULOS_CLIENTE: Dict[str, str] = {
+    "nome": "nome",
+    "nome do cliente": "nome",
+    "data de nascimento": "data_nascimento",
+    "idade": "idade",
+    "profissao": "profissao",
+    "ocupacao": "profissao",
+    "estado civil": "estado_civil",
+    "regime de casamento": "regime_casamento",
+    "regime de bens": "regime_casamento",
+    "nome do conjuge": "nome_conjuge",
+    "conjuge": "nome_conjuge",
+    "conjuge sem protecao": "conjuge_sem_protecao",
+    "nome do filho": "filhos",
+    "filhos": "filhos",
+    "herdeiros/filhos": "filhos",
+    "herdeiros": "filhos",
+    "filho sem protecao": "filhos_sem_protecao",
+    "patrimonio ou bens mencionados": "patrimonio_bens",
+    "patrimonio/bens": "patrimonio_bens",
+    "patrimonio": "patrimonio_bens",
+    "seguros ou apolices ja existentes": "seguros_existentes",
+    "seguros/previdencia existentes": "seguros_existentes",
+    "seguros existentes": "seguros_existentes",
+    "seguros": "seguros_existentes",
+    "demonstrou interesse": "demonstrou_interesse",
+    "e-mail": "email",
+    "email": "email",
+    "telefone": "telefone",
+    "celular": "telefone",
+    "renda mensal": "renda_mensal",
+    "renda": "renda_mensal",
+}
+
+# Campos cujo valor pode continuar nas linhas seguintes, como lista de itens.
+CAMPOS_LISTA = {"patrimonio_bens", "seguros_existentes", "filhos"}
+
+# O prompt escreve isto quando não apurou o dado. Guardar a string literal faria
+# "Não informado" ser gravado no CRM como se fosse informação.
+VAZIOS = {"nao informado", "nao informada", "nao informados", "n/a", "na", "-", "--", "nenhum", "nenhuma"}
+
+
+def _valor_limpo(valor: str) -> str:
+    v = (valor or "").strip().strip("*").strip()
+    return "" if _normalizar_rotulo(v) in VAZIOS else v
+
+
+def extrair_dados_cliente(bloco: str) -> Dict[str, Any]:
+    """
+    Lê a seção DADOS DO CLIENTE, que vem como pares `* Rótulo: valor`.
+
+    Dois detalhes tornam a leitura ingênua incorreta:
+
+    1. Rótulos como "Patrimônio ou bens mencionados:" não trazem valor na própria
+       linha — os itens vêm nas linhas seguintes, também iniciadas por `*`.
+    2. Itens de lista podem conter dois-pontos ("Conta/investimentos na XP: cerca
+       de R$ 1,4 milhão"), então a presença de `:` não distingue rótulo de item.
+
+    Por isso a decisão é tomada contra a lista de rótulos conhecidos, e tudo que
+    não casa é tratado como continuação do campo anterior.
+    """
+    campos: Dict[str, Any] = {}
+    listas: Dict[str, List[str]] = {chave: [] for chave in CAMPOS_LISTA}
+    campo_atual: Optional[str] = None
+
+    for linha in (bloco or "").split("\n"):
+        conteudo = linha.strip().lstrip("*").strip()
+        if not conteudo:
+            continue
+
+        rotulo_bruto, separador, resto = conteudo.partition(":")
+        canonico = ROTULOS_CLIENTE.get(_normalizar_rotulo(rotulo_bruto)) if separador else None
+
+        if canonico:
+            campo_atual = canonico
+            valor = _valor_limpo(resto)
+            if canonico in CAMPOS_LISTA:
+                if valor:
+                    listas[canonico].append(valor)
+            else:
+                campos[canonico] = valor
+        elif campo_atual in CAMPOS_LISTA:
+            # Continuação: item da lista aberta pelo rótulo anterior.
+            valor = _valor_limpo(conteudo)
+            if valor:
+                listas[campo_atual].append(valor)
+
+    for chave, itens in listas.items():
+        campos[f"{chave}_itens"] = itens
+        campos[chave] = "; ".join(itens)
+
+    return campos
+
+
 def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
     """
     Parser para extrair dados estruturados dos Google Docs gerados pelo Tactiq
@@ -674,6 +994,8 @@ def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
         "hora_reuniao": "",
         "principais_topicos": [],
         "dados_cliente": {
+            # Chaves históricas — o gerador de HTML e a sincronização com o
+            # Pipedrive dependem delas, então continuam sempre presentes.
             "nome": "",
             "idade": "",
             "estado_civil": "",
@@ -681,7 +1003,20 @@ def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
             "patrimonio_bens": "",
             "seguros_existentes": "",
             "demonstrou_interesse": "",
-            "email": ""
+            "email": "",
+            # Campos que o prompt novo passou a fornecer.
+            "data_nascimento": "",
+            "profissao": "",
+            "regime_casamento": "",
+            "nome_conjuge": "",
+            "conjuge_sem_protecao": "",
+            "filhos_sem_protecao": "",
+            "telefone": "",
+            "renda_mensal": "",
+            # Versões em lista, para consumo estruturado sem quebrar as strings.
+            "filhos_itens": [],
+            "patrimonio_bens_itens": [],
+            "seguros_existentes_itens": [],
         },
         "decisoes_proximos_passos": [],
         "pontos_atencao": [],
@@ -722,40 +1057,29 @@ def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
     if resumo_match:
         data["resumo_rapido"] = resumo_match.group(1).strip()
         
-    # 4. Dados do Cliente
-    nome_match = re.search(r"\*\s*Nome:\s*(.*)", text, re.IGNORECASE)
-    if nome_match and "nao informado" not in nome_match.group(1).lower() and "não informado" not in nome_match.group(1).lower():
-        data["dados_cliente"]["nome"] = nome_match.group(1).strip()
-    elif data["participantes"]:
+    # 4. Dados do Cliente — lidos por rótulo dentro da própria seção.
+    #
+    # Delimitar a seção importa: fora dela existem linhas com `*` e dois-pontos
+    # (tópicos, decisões) que a busca solta no texto inteiro capturava por engano.
+    bloco_cliente = re.search(
+        r"DADOS DO CLIENTE\s*\n(.*?)(?=(DECIS[OÕ]ES|PONTOS DE ATEN[CÇ][AÃ]O|Link da reuni[aã]o|====|$))",
+        text, re.IGNORECASE | re.DOTALL,
+    )
+    if bloco_cliente:
+        data["dados_cliente"].update(extrair_dados_cliente(bloco_cliente.group(1)))
+
+    # `herdeiros_filhos` é o nome histórico do campo de filhos.
+    if data["dados_cliente"].get("filhos"):
+        data["dados_cliente"]["herdeiros_filhos"] = data["dados_cliente"]["filhos"]
+
+    # Sem nome apurado, cai no primeiro participante que não seja da casa.
+    if not data["dados_cliente"].get("nome") and data["participantes"]:
         for p in data["participantes"]:
             if "robson" not in p.lower() and "alexandre" not in p.lower():
                 data["dados_cliente"]["nome"] = p
                 break
 
-    idade_match = re.search(r"\*\s*Idade:\s*(.*)", text, re.IGNORECASE)
-    if idade_match:
-        data["dados_cliente"]["idade"] = idade_match.group(1).strip()
 
-    ec_match = re.search(r"\*\s*Estado civil:\s*(.*)", text, re.IGNORECASE)
-    if ec_match:
-        data["dados_cliente"]["estado_civil"] = ec_match.group(1).strip()
-
-    herdeiros_match = re.search(r"\*\s*Herdeiros[^\:]*:\s*(.*)", text, re.IGNORECASE)
-    if herdeiros_match:
-        data["dados_cliente"]["herdeiros_filhos"] = herdeiros_match.group(1).strip()
-
-    patrimonio_match = re.search(r"\*\s*Patrim[oô]nio[^\:]*:\s*(.*)", text, re.IGNORECASE)
-    if patrimonio_match:
-        data["dados_cliente"]["patrimonio_bens"] = patrimonio_match.group(1).strip()
-
-    seguros_match = re.search(r"\*\s*Seguros[^\:]*:\s*(.*)", text, re.IGNORECASE)
-    if seguros_match:
-        data["dados_cliente"]["seguros_existentes"] = seguros_match.group(1).strip()
-
-    interesse_match = re.search(r"\*\s*Demonstrou interesse:\s*(.*)", text, re.IGNORECASE)
-    if interesse_match:
-        data["dados_cliente"]["demonstrou_interesse"] = interesse_match.group(1).strip()
-        
     # 5. Principais Tópicos
     topicos_section = re.search(r"PRINCIPAIS T[ÓO]PICOS\s*\n(.*?)(?=(DADOS DO CLIENTE|DECIS[OÕ]ES|PONTOS DE ATEN[CÇ][AÃ]O|Link da reuni[aã]o|====|$))", text, re.IGNORECASE | re.DOTALL)
     if topicos_section:
@@ -1106,7 +1430,45 @@ async def process_new_transcription(user_id: Optional[str] = None) -> Dict[str, 
                                 briefing_json["pipedrive"]["note_id"] = note_id
                                 briefing_json["pipedrive"]["activity_id"] = None
                                 logger.info(f"Nota Pipedrive criada com sucesso: #{note_id} para {cliente_nome}")
-                
+
+                # Vincula o briefing à atividade da reunião (R1/R2/R3) que já
+                # existe na agenda. Toda falha registra o motivo e a evidência,
+                # para a tela poder explicar e a regra poder ser melhorada.
+                if should_link_crm:
+                    try:
+                        vinculo = await vincular_briefing_na_atividade(briefing_json, meeting_title)
+                    except Exception as e:
+                        logger.error(f"Falha ao vincular atividade de '{meeting_title}': {e}")
+                        vinculo = {
+                            "status": "nao_vinculado",
+                            "motivo": "ERRO_PIPEDRIVE",
+                            "detalhe": {"erro": str(e)[:200]},
+                            "avaliado_em": datetime.utcnow().isoformat() + "Z",
+                        }
+                    briefing_json["vinculo"] = vinculo
+
+                    if vinculo["status"] == "vinculado":
+                        activity_id = vinculo["activity_id"]
+                        briefing_json["pipedrive"]["activity_id"] = activity_id
+
+                    log_audit_event(
+                        action="TRANSCRIPTION_LINKED" if vinculo["status"] == "vinculado"
+                               else "TRANSCRIPTION_LINK_FAILED",
+                        resource_type="transcription",
+                        resource_id=transcription_id,
+                        user_id=clean_user_id,
+                        details={
+                            "doc_title": meeting_title,
+                            "cliente_nome": cliente_nome,
+                            "motivo": vinculo["motivo"],
+                            **vinculo.get("detalhe", {}),
+                            **({"activity_id": vinculo["activity_id"],
+                                "activity_type": vinculo.get("activity_type"),
+                                "ja_estava_concluida": vinculo.get("ja_estava_concluida")}
+                               if vinculo["status"] == "vinculado" else {}),
+                        },
+                    )
+
                 # Atualiza transcrição para completed com o briefing real
                 supabase.table("transcriptions").update({
                     "processing_status": "completed",
@@ -2883,6 +3245,64 @@ async def unlink_transcription_from_crm(
         "note_deleted": note_deleted,
         "briefing_json": briefing_json
     }
+
+@app.get("/api/transcriptions/{transcription_id}/vinculo")
+async def get_vinculo_transcricao(
+    transcription_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Estado do vínculo com a atividade, incluindo o motivo da falha."""
+    res = supabase.table("transcriptions").select("briefing_json, meeting_title").eq(
+        "id", transcription_id
+    ).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Transcrição não encontrada")
+
+    briefing = res.data[0].get("briefing_json") or {}
+    vinculo = briefing.get("vinculo")
+    if not vinculo:
+        # Transcrição processada antes desta funcionalidade existir.
+        return {
+            "status": "nao_avaliado",
+            "motivo": "NAO_AVALIADO",
+            "detalhe": {},
+            "meeting_title": res.data[0].get("meeting_title"),
+        }
+    return {**vinculo, "meeting_title": res.data[0].get("meeting_title")}
+
+
+@app.post("/api/transcriptions/{transcription_id}/revincular")
+async def revincular_transcricao(
+    transcription_id: str,
+    user: dict = Depends(require_admin),
+):
+    """Reavalia o vínculo de uma transcrição, sem reprocessar o documento."""
+    res = supabase.table("transcriptions").select("briefing_json, meeting_title").eq(
+        "id", transcription_id
+    ).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Transcrição não encontrada")
+
+    briefing = res.data[0].get("briefing_json") or {}
+    titulo = res.data[0].get("meeting_title") or "Reunião"
+    vinculo = await vincular_briefing_na_atividade(briefing, titulo)
+    briefing["vinculo"] = vinculo
+    if vinculo["status"] == "vinculado":
+        briefing.setdefault("pipedrive", {})["activity_id"] = vinculo["activity_id"]
+
+    supabase.table("transcriptions").update({"briefing_json": briefing}).eq(
+        "id", transcription_id
+    ).execute()
+
+    log_audit_event(
+        action="TRANSCRIPTION_LINKED" if vinculo["status"] == "vinculado" else "TRANSCRIPTION_LINK_FAILED",
+        resource_type="transcription",
+        resource_id=transcription_id,
+        user_id=user.get("id"),
+        details={"doc_title": titulo, "motivo": vinculo["motivo"], "manual": True, **vinculo.get("detalhe", {})},
+    )
+    return vinculo
+
 
 @app.post("/api/transcriptions/{transcription_id}/toggle-ignore")
 async def toggle_ignore_transcription(
