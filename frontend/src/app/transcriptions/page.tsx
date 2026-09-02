@@ -141,6 +141,7 @@ export default function TranscriptionsPage() {
   const [motivoAberto, setMotivoAberto] = useState<Vinculo | null>(null)
   const [itemDoMotivo, setItemDoMotivo] = useState<any>(null)
   const [reavaliando, setReavaliando] = useState(false)
+  const [avaliandoId, setAvaliandoId] = useState<string | null>(null)
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -195,6 +196,38 @@ export default function TranscriptionsPage() {
   }
 
   // Toggle ignore / internal meeting
+  /**
+   * Avalia o vinculo de uma transcricao que nunca passou pela regra automatica.
+   * Se vincular, some da lista de pendentes; se falhar, abre o motivo.
+   */
+  const handleAvaliarVinculo = async (item: any) => {
+    setAvaliandoId(item.id)
+    try {
+      const token = localStorage.getItem('access_token')
+      const r = await axios.post(
+        `${API_URL}/api/transcriptions/${item.id}/revincular`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } },
+      )
+      if (r.data?.status === 'vinculado') {
+        await fetchTranscriptions()
+      } else {
+        setItemDoMotivo(item)
+        setMotivoAberto({ ...r.data, meeting_title: item.meeting_title })
+      }
+    } catch (e: any) {
+      setItemDoMotivo(item)
+      setMotivoAberto({
+        status: 'nao_vinculado',
+        motivo: 'ERRO_PIPEDRIVE',
+        detalhe: { erro: e?.response?.data?.detail || 'Falha ao avaliar' },
+        meeting_title: item.meeting_title,
+      })
+    } finally {
+      setAvaliandoId(null)
+    }
+  }
+
   const handleAbrirMotivo = (item: any) => {
     setItemDoMotivo(item)
     setMotivoAberto({ ...(item.briefing_json?.vinculo || {}), meeting_title: item.meeting_title })
@@ -727,15 +760,29 @@ export default function TranscriptionsPage() {
                             Vínculo Pipedrive CRM
                           </span>
                           <div className="flex items-center gap-3">
-                            {/* Só aparece quando o vínculo automático falhou —
-                                é o caminho para entender o porquê e corrigir. */}
-                            {item.briefing_json?.vinculo?.status === 'nao_vinculado' && (
+                            {/* Dois estados na mesma posição:
+                                - falhou  -> explica o motivo
+                                - nunca avaliado -> dispara a avaliação
+                                Sem o segundo caso, as transcrições anteriores a
+                                esta funcionalidade nunca teriam como ser
+                                avaliadas pela tela. */}
+                            {!isIgnored && item.briefing_json?.vinculo?.status === 'nao_vinculado' && (
                               <button
                                 onClick={() => handleAbrirMotivo(item)}
                                 className="text-[10px] font-bold text-amber-600 dark:text-amber-400 hover:underline flex items-center space-x-1"
                               >
                                 <AlertTriangle className="w-3 h-3" />
                                 <span>Por que não vinculou?</span>
+                              </button>
+                            )}
+                            {!isIgnored && !item.briefing_json?.vinculo && (
+                              <button
+                                onClick={() => handleAvaliarVinculo(item)}
+                                disabled={avaliandoId === item.id}
+                                className="text-[10px] font-bold text-slate-500 dark:text-slate-400 hover:text-[#0092FF] hover:underline flex items-center space-x-1 disabled:opacity-50"
+                              >
+                                <RefreshCw className={`w-3 h-3 ${avaliandoId === item.id ? 'animate-spin' : ''}`} />
+                                <span>{avaliandoId === item.id ? 'Avaliando...' : 'Avaliar vínculo'}</span>
                               </button>
                             )}
                             {!isLinked && !isIgnored && (
