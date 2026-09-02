@@ -35,24 +35,29 @@ ocultar — configurar o painel é o oposto de velocidade.
    ▲ padrão                7d 15d 30d
 
 ┌─ AGORA ──────────────────────────────────┐
-│  14:00 · Teams · Leandro Magalhães       │
-│  R$ 85.000 · R3 - Reunião de Fechamento  │
-│  [Entrar]  [Abrir no CRM]                │
+│  14:00 · R3 · Leandro Magalhães          │
+│  [Abrir no CRM]                          │
 └──────────────────────────────────────────┘
 
-REUNIÕES (6)
-  14:00 · Leandro Magalhães        R3 - Fechamento      R$ 85.000
-  15:30 · Ana Ribeiro              R1 - Apresentação
+REUNIÕES (5)
+  14:00  R3     Leandro Magalhães          R$ 85.000
+  15:30  R1     Ana Ribeiro
+  16:00  Teams  Bruno Costa
 
-LIGAÇÕES (4)
-  09:00 · Bruno Costa              R2 - Planejamento    R$ 40.000
-   —    · Carlos Mendes            Elaborar Planejamento
+MENSAGENS (5)
+   —     E-mail  Enviar proposta — Joelson
 
-E-MAILS (2)
-   —    · Enviar proposta — Joelson   Enviar Informações
+TAREFAS (10)
+   —     Tarefa  Revisar apólice — Carlos
+   —     Prazo   Vencimento da proposta
 
-TAREFAS (3)
+LIGAÇÕES (1)
+  09:00  Chamada  Radilson Carlos
 ```
+
+O exemplo acima reflete a composição real medida em 2026-09-02: 5 reuniões,
+5 mensagens, 10 tarefas, 1 ligação. Note que a maioria das linhas **não tem
+valor de negócio** — é o caso comum, não a exceção.
 
 ### Agrupamento por modo de ação
 
@@ -60,15 +65,31 @@ A aba de cada período agrupa as atividades por **o que você vai fazer**, que �
 como o dia é pensado na prática: tenho seis reuniões, quatro ligações, dois
 e-mails.
 
-| Grupo | Tipos do Pipedrive |
-|---|---|
-| **Reuniões** | `teams`, `meeting` |
-| **Ligações** | `call` |
-| **E-mails** | `email` |
-| **Tarefas** | `task` e demais |
+A conta tem **15 tipos de atividade personalizados**, verificados em
+`GET /activityTypes`:
 
-`teams` e `meeting` entram juntos porque ambos são encontro com cliente —
-separá-los criaria dois blocos quase idênticos.
+```
+call        Chamada        meeting     R1          no_show     R1 No Show
+whatsapp    WhatsApp       reuniao_2   R2          r2_no_show  R2 No Show
+email       E-mail         r3          R3          r3_no_show  R3 No Show
+task        Tarefa         teams       Teams       lunch       RR No Show
+deadline    Prazo          outlook     Outlook     tactiq      Tactiq
+```
+
+| Grupo | Tipos |
+|---|---|
+| **Reuniões** | `teams`, `meeting` (R1), `reuniao_2` (R2), `r3` (R3), `outlook` |
+| **Ligações** | `call` |
+| **Mensagens** | `email`, `whatsapp` |
+| **Tarefas** | `task`, `deadline`, `tactiq` e demais |
+| **No Show** | `no_show`, `r2_no_show`, `r3_no_show`, `lunch` |
+
+O grupo **No Show** existe porque a conta trata falta como categoria própria —
+são quatro tipos dedicados. Misturá-los com reuniões daria a impressão de
+compromisso a cumprir.
+
+Cada reunião exibe o **rótulo do próprio tipo** (R1, R2, R3, Teams), que já
+identifica o estágio do relacionamento.
 
 Dentro de cada grupo: quem tem horário vem primeiro, em ordem cronológica; os
 sem hora vêm depois, marcados com `—`.
@@ -84,17 +105,33 @@ aparece no painel em vez de sumir.
 
 Tipos desconhecidos caem em **Tarefas**, que funciona como grupo de fallback.
 
-### A etapa (R1/R2/R3) vem do negócio, não da atividade
+### R1/R2/R3 já vêm no tipo da atividade
 
-R1, R2 e R3 são **etapas do funil**, não propriedades da atividade. A atividade
-carrega `deal_id`; a etapa e o valor vêm do negócio associado.
+Medido: R1, R2 e R3 existem como **tipos de atividade** (`meeting`, `reuniao_2`,
+`r3`), além de existirem como etapas do funil. Para rotular uma reunião de hoje
+como R3, **basta o tipo** — não é preciso buscar os negócios abertos.
 
-O cruzamento é feito **em memória**: os negócios abertos são buscados uma vez
-(3 requisições) e indexados por id. Uma consulta por atividade multiplicaria o
-consumo de cota e está descartada.
+Isso reduz o custo da tela de ~5 para **~2 requisições**.
 
-Atividade sem negócio associado exibe só cliente e assunto — o layout precisa
-ficar íntegro sem esses campos.
+O valor do negócio continua sendo enriquecimento opcional, e é fraco: apenas
+**36 de 106** atividades futuras têm `deal_id`. Dois terços não têm negócio
+associado. **Não buscar os negócios abertos só por isso** — o layout deve tratar
+a ausência de valor como caso normal, não como exceção.
+
+### Armadilha: `end_date` é exclusivo
+
+Verificado contra a API:
+
+```
+start_date=2026-09-02  end_date=2026-09-02  ->   0 atividades
+start_date=2026-09-02  end_date=2026-09-03  ->  21 atividades
+```
+
+Pedir o mesmo dia em `start_date` e `end_date` devolve **vazio**. A aba "Hoje"
+precisa pedir `end_date = hoje + 1 dia`.
+
+Implementado de forma ingênua, o painel nasceria mostrando "nenhuma atividade
+hoje" todos os dias — e o erro passaria por dado, não por bug.
 
 ### Períodos
 
@@ -158,7 +195,7 @@ desenvolvimento. Esta mudança melhora isso de forma significativa:
 | Tela | Custo por carregamento |
 |---|---|
 | `/dashboard` hoje | ~15 requisições |
-| `/dashboard` novo | **~5** (1 atividades + 1 tipos + 3 negócios abertos) |
+| `/dashboard` novo | **~2** (1 atividades + 1 tipos) |
 | `/dashboard/analise` | ~15, mas aberta raramente |
 
 A tela usada o dia inteiro fica barata; as agregações caras migram para uma
@@ -176,9 +213,11 @@ GET /api/dashboard/agenda/atrasadas
 ```
 
 Ambos consultam `/activities` com `done=0` e as datas do período, mais
-`/activityTypes` para o mapeamento de grupos e os negócios abertos para o
-cruzamento de etapa e valor. O endpoint `/api/dashboard/operacional` permanece
-como está, servindo a página de análise.
+`/activityTypes` para o mapeamento de grupos. **Sem buscar negócios abertos** —
+R1/R2/R3 já vêm no tipo da atividade. O endpoint `/api/dashboard/operacional`
+permanece como está, servindo a página de análise.
+
+Atenção ao `end_date` exclusivo: o período "hoje" pede `end_date = hoje + 1`.
 
 Resposta agrupada, pronta para renderizar:
 
@@ -186,7 +225,10 @@ Resposta agrupada, pronta para renderizar:
 {
   "grupos": [
     { "chave": "reunioes", "titulo": "Reuniões", "itens": [ ... ] },
-    { "chave": "ligacoes", "titulo": "Ligações",  "itens": [ ... ] }
+    { "chave": "ligacoes", "titulo": "Ligações",  "itens": [ ... ] },
+    { "chave": "mensagens", "titulo": "Mensagens", "itens": [ ... ] },
+    { "chave": "tarefas",  "titulo": "Tarefas",   "itens": [ ... ] },
+    { "chave": "no_show",  "titulo": "No Show",   "itens": [ ... ] }
   ],
   "total": 15,
   "atrasadas": 120
@@ -213,24 +255,31 @@ separação é comunicada no texto de cada item.
 
 ## Riscos
 
-**1. Volume de "hoje" pode ser irreal.** A medição apontou **37 atividades com
-vencimento hoje**, o que é muito para uma pessoa. O agrupamento por modo de ação
-ameniza — seis reuniões e trinta tarefas lê muito melhor que "37 itens" — mas se
-o grupo Tarefas nascer com trinta linhas, a sobrecarga volta com outra roupa.
+**Resolvido — volume real.** Medido em 2026-09-02 (quarta): **21 atividades**,
+distribuídas assim:
 
-**Verificar a composição dessas 37 antes de implementar.** Se forem
-majoritariamente tarefas represadas, o grupo Tarefas deve nascer **retraído**,
-com apenas a contagem visível.
+| Grupo | Qtd |
+|---|---|
+| Reuniões (`teams` 3, `reuniao_2` 1, `meeting` 1) | 5 |
+| Mensagens (`email` 5) | 5 |
+| Tarefas (`task` 8, `deadline` 2) | 10 |
+| Ligações (`call` 1) | 1 |
 
-**2. Nem toda atividade tem negócio associado.** Linhas sem valor e etapa vão
-existir; o layout precisa ficar íntegro sem esses campos.
+A janela de 4 semanas mostra dias entre 1 e 26 atividades, com média em torno de
+10. **Não é uma agenda sobrecarregada** — o agrupamento dá conta sem precisar
+nascer retraído. A estimativa anterior de "37 hoje" era de outra data.
 
-**3. `deal_id` na atividade não foi confirmado.** A listagem de atividades foi
-verificada quanto a `subject`, `type`, `due_date`, `due_time`, `person_name` e
-`deal_title`, mas **não quanto a `deal_id`**. Sem ele o cruzamento com o negócio
-não acontece e a etapa (R1/R2/R3) não aparece. Confirmar na primeira
-requisição disponível; se faltar, o fallback é casar por `deal_title`, que é
-frágil e deve ser evitado.
+**1. Metade das atividades não tem horário.** Medido: **76 de 106** futuras têm
+`due_time`, ou seja, ~28% são itens sem hora. O marcador de "agora" só ordena os
+que têm horário; os demais ficam agrupados ao final de cada bloco.
+
+**2. Dois terços não têm negócio associado.** Apenas **36 de 106** têm
+`deal_id`. Valor e etapa do funil são exceção, não regra — o layout precisa ser
+desenhado para a linha sem esses campos e tratá-los como enriquecimento.
+
+**3. Volume de atrasadas.** Só nos últimos 7 dias há **85 atividades vencidas**
+não concluídas. O total é maior. Confirma a decisão de manter o acesso
+secundário e limitar a lista.
 
 **3. Fuso.** As datas do Pipedrive vêm como `YYYY-MM-DD`. Usar a leitura direta
 do texto ISO, nunca `new Date(...)` — o mesmo bug de um dia a menos já corrigido
