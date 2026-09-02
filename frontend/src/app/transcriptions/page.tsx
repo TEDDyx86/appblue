@@ -35,10 +35,13 @@ import {
   Video,
 } from 'lucide-react'
 import { useTheme } from '@/context/ThemeContext'
+import MotivoVinculo, { Vinculo } from '@/components/MotivoVinculo'
 
 interface BriefingData {
   resumo_rapido?: string
   principais_topicos?: string[]
+  /** Estado do vínculo automático com a atividade R1/R2/R3 do Pipedrive. */
+  vinculo?: Vinculo
   dados_cliente?: {
     nome?: string
     idade?: string
@@ -48,6 +51,15 @@ interface BriefingData {
     seguros_existentes?: string
     filhos?: string
     profissao?: string
+    /** Campos que o prompt novo do Tactiq passou a fornecer. */
+    data_nascimento?: string
+    regime_casamento?: string
+    nome_conjuge?: string
+    conjuge_sem_protecao?: string
+    filhos_sem_protecao?: string
+    filhos_itens?: string[]
+    patrimonio_bens_itens?: string[]
+    seguros_existentes_itens?: string[]
     patrimonio_estimado?: string
     renda_mensal?: string
     objetivos_principais?: string[]
@@ -126,6 +138,9 @@ export default function TranscriptionsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [assignSuccess, setAssignSuccess] = useState(false)
   const [togglingIgnoreId, setTogglingIgnoreId] = useState<string | null>(null)
+  const [motivoAberto, setMotivoAberto] = useState<Vinculo | null>(null)
+  const [itemDoMotivo, setItemDoMotivo] = useState<any>(null)
+  const [reavaliando, setReavaliando] = useState(false)
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -180,6 +195,34 @@ export default function TranscriptionsPage() {
   }
 
   // Toggle ignore / internal meeting
+  const handleAbrirMotivo = (item: any) => {
+    setItemDoMotivo(item)
+    setMotivoAberto({ ...(item.briefing_json?.vinculo || {}), meeting_title: item.meeting_title })
+  }
+
+  /** Reavalia o vinculo sem reprocessar o documento do Drive. */
+  const handleTentarNovamente = async () => {
+    if (!itemDoMotivo) return
+    setReavaliando(true)
+    try {
+      const token = localStorage.getItem('access_token')
+      const r = await axios.post(
+        `${API_URL}/api/transcriptions/${itemDoMotivo.id}/revincular`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } },
+      )
+      setMotivoAberto({ ...r.data, meeting_title: itemDoMotivo.meeting_title })
+      if (r.data?.status === 'vinculado') {
+        setMotivoAberto(null)
+        fetchTranscriptions()
+      }
+    } catch {
+      // mantem o painel aberto com o motivo anterior
+    } finally {
+      setReavaliando(false)
+    }
+  }
+
   const handleToggleIgnore = async (transcriptionId: string) => {
     try {
       setTogglingIgnoreId(transcriptionId)
@@ -683,15 +726,28 @@ export default function TranscriptionsPage() {
                           <span className="text-[10px] uppercase font-bold text-slate-400 block font-display">
                             Vínculo Pipedrive CRM
                           </span>
-                          {!isLinked && !isIgnored && (
-                            <button
-                              onClick={() => handleOpenAssignModal(item)}
-                              className="text-[10px] font-bold text-[#0092FF] dark:text-[#00FFFF] hover:underline flex items-center space-x-1"
-                            >
-                              <Plus className="w-3 h-3" />
-                              <span>Atribuir Agora</span>
-                            </button>
-                          )}
+                          <div className="flex items-center gap-3">
+                            {/* Só aparece quando o vínculo automático falhou —
+                                é o caminho para entender o porquê e corrigir. */}
+                            {item.briefing_json?.vinculo?.status === 'nao_vinculado' && (
+                              <button
+                                onClick={() => handleAbrirMotivo(item)}
+                                className="text-[10px] font-bold text-amber-600 dark:text-amber-400 hover:underline flex items-center space-x-1"
+                              >
+                                <AlertTriangle className="w-3 h-3" />
+                                <span>Por que não vinculou?</span>
+                              </button>
+                            )}
+                            {!isLinked && !isIgnored && (
+                              <button
+                                onClick={() => handleOpenAssignModal(item)}
+                                className="text-[10px] font-bold text-[#0092FF] dark:text-[#00FFFF] hover:underline flex items-center space-x-1"
+                              >
+                                <Plus className="w-3 h-3" />
+                                <span>Atribuir Agora</span>
+                              </button>
+                            )}
+                          </div>
                         </div>
 
                         {isIgnored ? (
@@ -1454,6 +1510,21 @@ export default function TranscriptionsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Por que o vinculo automatico falhou */}
+      {motivoAberto && (
+        <MotivoVinculo
+          vinculo={motivoAberto}
+          reavaliando={reavaliando}
+          onFechar={() => setMotivoAberto(null)}
+          onTentarNovamente={handleTentarNovamente}
+          onVincularManual={() => {
+            const item = itemDoMotivo
+            setMotivoAberto(null)
+            if (item) handleOpenAssignModal(item)
+          }}
+        />
       )}
     </div>
   )
