@@ -2083,45 +2083,157 @@ async def fetch_birthdays_data() -> Dict[str, Any]:
     }
 
 
-async def fetch_agenda_hoje() -> Dict[str, Any]:
-    """
-    Atividades não concluídas de hoje e dos próximos 7 dias.
+# ============================================================================
+# AGENDA — "o que eu preciso fazer agora?"
+# ============================================================================
 
-    Responde "o que eu faço agora", que é o uso real do painel.
+# Agrupamento por modo de ação. As chaves são os `key_string` dos tipos de
+# atividade da conta, lidos de /activityTypes — são personalizáveis, e vários
+# aqui foram criados pelo usuário (teams, reuniao_2, r3, tactiq...).
+#
+# R1, R2 e R3 são TIPOS DE ATIVIDADE nesta conta, não só etapas do funil. Por
+# isso rotular uma reunião não exige buscar o negócio associado.
+GRUPOS_AGENDA: List[Tuple[str, str, Tuple[str, ...]]] = [
+    ("reunioes", "Reuniões", ("teams", "meeting", "reuniao_2", "r3", "outlook")),
+    ("ligacoes", "Ligações", ("call",)),
+    ("mensagens", "Mensagens", ("email", "whatsapp")),
+    # Falta é categoria própria na conta, com quatro tipos dedicados. Misturar
+    # com reuniões daria a impressão de compromisso a cumprir.
+    ("no_show", "No Show", ("no_show", "r2_no_show", "r3_no_show", "lunch")),
+    ("tarefas", "Tarefas", ("task", "deadline", "tactiq")),
+]
+
+# Tipo desconhecido cai aqui, para um tipo novo criado no CRM aparecer no painel
+# em vez de sumir.
+GRUPO_PADRAO = "tarefas"
+
+
+async def buscar_rotulos_de_tipo(client: httpx.AsyncClient) -> Dict[str, str]:
+    """Mapa `key_string` -> nome exibido, ex.: `r3` -> `R3`, `meeting` -> `R1`."""
+    res = await client.get(
+        "https://api.pipedrive.com/v1/activityTypes",
+        params={"api_token": PIPEDRIVE_API_TOKEN},
+    )
+    if res.status_code != 200:
+        logger.warning(f"activityTypes respondeu {res.status_code}; usando as chaves cruas")
+        return {}
+    return {
+        t.get("key_string"): t.get("name")
+        for t in (res.json().get("data") or [])
+        if t.get("key_string")
+    }
+
+
+def _formatar_atividade(a: Dict[str, Any], rotulos: Dict[str, str]) -> Dict[str, Any]:
+    atividade_id = str(a.get("id"))
+    chave = a.get("type") or "task"
+    return {
+        "id": atividade_id,
+        "subject": a.get("subject") or "Sem assunto",
+        "type": chave,
+        "type_label": rotulos.get(chave, chave),
+        "due_date": a.get("due_date"),
+        "due_time": a.get("due_time") or "",
+        "person_name": a.get("person_name"),
+        # A organização vinculada à atividade é, nesta conta, o assessor
+        # responsável — não uma empresa cliente. Preenchida em ~40% dos casos.
+        "org_name": a.get("org_name"),
+        "deal_id": a.get("deal_id"),
+        "deal_title": a.get("deal_title"),
+        "url": f"https://investimentosblue.pipedrive.com/activities/list#dialog/activity/{atividade_id}",
+    }
+
+
+def _agrupar(atividades: List[Dict[str, Any]], rotulos: Dict[str, str]) -> List[Dict[str, Any]]:
+    """Distribui nos grupos de ação, preservando a ordem de GRUPOS_AGENDA."""
+    por_chave: Dict[str, List[Dict[str, Any]]] = {chave: [] for chave, _, _ in GRUPOS_AGENDA}
+    tipo_para_grupo = {
+        tipo: chave for chave, _, tipos in GRUPOS_AGENDA for tipo in tipos
+    }
+
+    for a in atividades:
+        item = _formatar_atividade(a, rotulos)
+        por_chave[tipo_para_grupo.get(item["type"], GRUPO_PADRAO)].append(item)
+
+    for itens in por_chave.values():
+        # Com horário primeiro, em ordem cronológica; sem horário no fim.
+        itens.sort(key=lambda x: (x["due_time"] == "", x["due_date"] or "", x["due_time"]))
+
+    return [
+        {"chave": chave, "titulo": titulo, "itens": por_chave[chave]}
+        for chave, titulo, _ in GRUPOS_AGENDA
+        if por_chave[chave]  # grupo vazio não aparece
+    ]
+
+
+async def fetch_agenda(periodo: str = "hoje", dias: int = 7) -> Dict[str, Any]:
+    """
+    Atividades não concluídas do período, agrupadas por modo de ação.
+
+    ATENÇÃO: `end_date` do Pipedrive é EXCLUSIVO. Pedir start_date e end_date no
+    mesmo dia devolve lista vazia — verificado contra a API. Por isso todo
+    intervalo aqui soma um dia ao fim. Sem isso a aba "Hoje" nasceria vazia
+    todos os dias, e o erro passaria por dado em vez de bug.
     """
     hoje = datetime.now().date()
-    fim = hoje + timedelta(days=7)
+
+    if periodo == "amanha":
+        inicio = hoje + timedelta(days=1)
+        fim = inicio
+    elif periodo == "proximos":
+        inicio = hoje
+        fim = hoje + timedelta(days=max(1, dias))
+    else:  # hoje
+        inicio = fim = hoje
 
     async with httpx.AsyncClient(timeout=60.0) as client:
+        rotulos = await buscar_rotulos_de_tipo(client)
         atividades = await paginar_pipedrive(
             client,
             "/activities",
-            {"start_date": str(hoje), "end_date": str(fim), "done": 0},
+            {
+                "start_date": str(inicio),
+                "end_date": str(fim + timedelta(days=1)),  # exclusivo
+                "done": 0,
+            },
         )
 
-    de_hoje: List[Dict[str, Any]] = []
-    for a in atividades:
-        if str(a.get("due_date")) != str(hoje):
-            continue
-        atividade_id = str(a.get("id"))
-        de_hoje.append({
-            "id": atividade_id,
-            "subject": a.get("subject") or "Sem assunto",
-            "type": a.get("type") or "task",
-            "due_time": a.get("due_time") or "",
-            "person_name": a.get("person_name"),
-            "deal_title": a.get("deal_title"),
-            "url": f"https://investimentosblue.pipedrive.com/activities/list#dialog/activity/{atividade_id}",
-        })
-
-    # Sem horário primeiro (dia todo), depois em ordem cronológica.
-    de_hoje.sort(key=lambda x: x["due_time"] or "00:00")
-
     return {
-        "hoje": de_hoje,
-        "total_hoje": len(de_hoje),
-        "total_semana": len(atividades),
+        "periodo": periodo,
+        "dias": dias if periodo == "proximos" else None,
+        "inicio": str(inicio),
+        "fim": str(fim),
+        "grupos": _agrupar(atividades, rotulos),
+        "total": len(atividades),
     }
+
+
+async def fetch_agenda_atrasadas(limite: int = 30) -> Dict[str, Any]:
+    """
+    Atividades vencidas e não concluídas, das mais recentes para as mais antigas.
+
+    A ordem não é acidental: uma atividade que venceu ontem ainda está quente;
+    uma de seis meses atrás está morta. Ordenar por antiguidade traria o
+    irrelevante para o topo.
+
+    A janela de 180 dias evita paginar anos de histórico só para preencher uma
+    lista que mostra algumas dezenas.
+    """
+    hoje = datetime.now().date()
+    inicio = hoje - timedelta(days=180)
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        rotulos = await buscar_rotulos_de_tipo(client)
+        atividades = await paginar_pipedrive(
+            client,
+            "/activities",
+            {"start_date": str(inicio), "end_date": str(hoje), "done": 0},  # fim exclusivo = ontem
+        )
+
+    itens = [_formatar_atividade(a, rotulos) for a in atividades]
+    itens.sort(key=lambda x: (x["due_date"] or "", x["due_time"]), reverse=True)
+
+    return {"itens": itens[:limite], "total": len(itens), "limite": limite}
 
 
 async def fetch_conversao(perdidos_brutos: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -2189,6 +2301,81 @@ def contar_transcricoes_pendentes() -> Dict[str, Any]:
     }
 
 
+CACHE_AGENDA_TTL = 120  # segundos — a agenda muda mais que as agregações
+
+_cache_agenda: Dict[str, Dict[str, Any]] = {}
+_lock_agenda = asyncio.Lock()
+
+
+async def _servir_com_cache(chave: str, ttl: int, montar, refresh: bool) -> Dict[str, Any]:
+    """
+    Cache com TTL por chave, servindo dado obsoleto quando a origem falha.
+
+    Durante um estouro de cota da API, um número de minutos atrás é mais útil que
+    uma tela vazia. A resposta sinaliza isso em `cache.obsoleto`.
+    """
+    entrada = _cache_agenda.get(chave)
+    agora = time.monotonic()
+
+    if not refresh and entrada and agora - entrada["gerado_em"] < ttl:
+        return {**entrada["dados"], "cache": {"idade_s": int(agora - entrada["gerado_em"]), "obsoleto": False}}
+
+    async with _lock_agenda:
+        entrada = _cache_agenda.get(chave)
+        agora = time.monotonic()
+        if not refresh and entrada and agora - entrada["gerado_em"] < ttl:
+            return {**entrada["dados"], "cache": {"idade_s": int(agora - entrada["gerado_em"]), "obsoleto": False}}
+
+        try:
+            dados = await montar()
+        except HTTPException:
+            if entrada:
+                idade = int(time.monotonic() - entrada["gerado_em"])
+                logger.warning(f"Agenda '{chave}': falha ao atualizar, servindo cache de {idade}s atrás")
+                return {**entrada["dados"], "cache": {"idade_s": idade, "obsoleto": True}}
+            raise
+
+        _cache_agenda[chave] = {"dados": dados, "gerado_em": time.monotonic()}
+        return {**dados, "cache": {"idade_s": 0, "obsoleto": False}}
+
+
+@app.get("/api/dashboard/agenda")
+async def dashboard_agenda(
+    periodo: str = "hoje",
+    dias: int = 7,
+    refresh: bool = False,
+    user: dict = Depends(get_current_user),
+):
+    """Atividades do período, agrupadas por modo de ação."""
+    if periodo not in ("hoje", "amanha", "proximos"):
+        raise HTTPException(status_code=400, detail="periodo deve ser hoje, amanha ou proximos")
+    if dias not in (7, 15, 30):
+        raise HTTPException(status_code=400, detail="dias deve ser 7, 15 ou 30")
+
+    chave = f"agenda:{periodo}:{dias if periodo == 'proximos' else '-'}"
+    return await _servir_com_cache(chave, CACHE_AGENDA_TTL, lambda: fetch_agenda(periodo, dias), refresh)
+
+
+@app.get("/api/dashboard/pendencias")
+async def dashboard_pendencias(user: dict = Depends(get_current_user)):
+    """
+    Faixa de status da agenda.
+
+    Só consulta o Supabase — nenhuma requisição ao Pipedrive. É por isso que
+    cabe na tela usada o dia inteiro, ao contrário dos números do funil.
+    """
+    return {"transcricoes": contar_transcricoes_pendentes()}
+
+
+@app.get("/api/dashboard/agenda/atrasadas")
+async def dashboard_agenda_atrasadas(
+    refresh: bool = False,
+    user: dict = Depends(get_current_user),
+):
+    """Atividades vencidas, das mais recentes para as mais antigas."""
+    return await _servir_com_cache("agenda:atrasadas", CACHE_AGENDA_TTL, fetch_agenda_atrasadas, refresh)
+
+
 # ---------------------------------------------------------------------------
 # Cache do dashboard
 #
@@ -2209,7 +2396,6 @@ async def montar_dashboard_operacional() -> Dict[str, Any]:
     pipeline = await fetch_comercial_pipeline_data()
     perdidos = await fetch_lost_deals_data()
     aniversarios = await fetch_birthdays_data()
-    agenda = await fetch_agenda_hoje()
     conversao = await fetch_conversao(perdidos.pop("_brutos", []))
     transcricoes = contar_transcricoes_pendentes()
 
@@ -2233,7 +2419,6 @@ async def montar_dashboard_operacional() -> Dict[str, Any]:
         "sem_proximo_passo": sem_proximo_passo,
         "perdidos": perdidos,
         "aniversarios": aniversarios,
-        "agenda": agenda,
         "conversao": conversao,
     }
 
