@@ -122,12 +122,56 @@ Regras da tela:
 
 ### Nota opcional
 
-Patrimônio, seguros existentes e "demonstrou interesse" não têm campo de pessoa
-correspondente. Uma caixa opcional cria uma nota na pessoa com esse conteúdo,
-usando `create_pipedrive_note`, que já existe.
+Quatro campos da transcrição não são gravados no cadastro. Uma caixa opcional
+cria uma nota na pessoa com esse conteúdo, usando `create_pipedrive_note`, que
+já existe. Fica desmarcada por padrão: é conteúdo que já aparece no briefing
+anexado à atividade, e repetir sem escolha polui o cadastro.
 
-Fica desmarcada por padrão: é conteúdo que já aparece no briefing anexado à
-atividade, e repetir sem escolha polui o cadastro.
+| Campo | Por quê |
+|---|---|
+| `patrimonio_bens` | não existe campo correspondente |
+| `demonstrou_interesse` | não existe campo correspondente |
+| `idade` | ver abaixo |
+| `seguros_existentes` | ver abaixo |
+
+#### `seguros_existentes` não vai para os campos CS
+
+Existem seis campos monetários `CS - Capital Segurado *` no cadastro de pessoa,
+e a transcrição traz valores de capital segurado. **Ainda assim não se mapeia
+um no outro** — são conceitos diferentes.
+
+Os campos CS descrevem a **apólice emitida por esta assessoria**. Verificado no
+cadastro de um cliente com negócio ganho:
+
+```
+Idade na Emissão = 53      PA Emitido = 61.527,98
+Cliente Desde    = 2024-04-22   Produtos Adquiridos = 65
+CS - Capital Segurado Morte              = 1.000.000
+CS - Capital Segurado Doenças Graves     = 0
+CS - Capital Segurado Invalidez Acidente = 0
+```
+
+Os zeros são explícitos, não vazios: é o desenho da apólice vendida, com
+coberturas contratadas e não contratadas, preenchido em conjunto na emissão.
+
+O `seguros_existentes` da transcrição é a cobertura que o cliente **já possuía
+antes** — no caso medido, um seguro da Funpresp. Gravar isso nos campos CS faria
+parecer que a assessoria emitiu uma apólice inexistente e contaminaria qualquer
+relatório de produção.
+
+Separar os valores no prompt do Tactiq **não resolve**: o problema não é formato,
+é significado. Se cobertura pré-existente for informação de negócio relevante, o
+caminho é criar campos próprios (`Seguro Existente - Seguradora`,
+`Seguro Existente - CS Morte`), o que é decisão de estrutura do CRM e está fora
+deste escopo.
+
+#### `idade` não vai para "Idade na Emissão"
+
+Existe um campo `Idade na Emissão`, mas ele registra a idade **no momento da
+emissão da apólice**, não a idade atual do cliente. Mapear ali corromperia um
+dado de produção.
+
+A idade atual, quando informada, é redundante com a data de nascimento.
 
 ## Criar pessoa nova
 
@@ -176,6 +220,17 @@ mostrará poucas sugestões — comportamento correto, não falha.
 **3. Sobrescrever lista de filhos.** "Diana e João" no CRM contra "Diana" na
 transcrição é perda de informação se aplicado sem ler. A tela marca esse caso
 como **substituir**, não como preencher, para diferenciar do campo vazio.
+
+## Cobertura do mapeamento
+
+Cruzamento verificado entre o que o parser produz e os campos de pessoa
+existentes: **12 dos 19 campos** têm correspondência direta. Os demais estão
+justificados na seção da nota opcional.
+
+Campos de pessoa que existem e esta feature **não toca**, por não haver dado
+correspondente na transcrição: Origem do Lead, Link Pasta do Cliente, Possui
+Sobretaxa, CPF Cliente, Cliente Desde, PA Emitido, Produtos Adquiridos, Cod XP,
+Idade na Emissão e os seis campos CS.
 
 ## Fora de escopo
 
