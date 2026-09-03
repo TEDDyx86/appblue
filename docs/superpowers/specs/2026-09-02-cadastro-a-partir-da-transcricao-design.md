@@ -1,7 +1,7 @@
 # Design — Atualizar cadastro do cliente a partir da transcrição
 
 **Data:** 2026-09-02
-**Status:** aprovado, não implementado
+**Status:** implementado (2026-09-03)
 
 ## Objetivo
 
@@ -193,6 +193,8 @@ duplicado e sujo.
   opção de enum, tolerando gênero e acento
 - `montar_sugestoes(briefing, person_id) -> List[Sugestao]` — para cada campo:
   valor atual no CRM, valor sugerido, se são iguais, e se é aplicável
+- `GET  /api/transcriptions/com-dados-cadastrais` — alimenta a aba; não consulta
+  o Pipedrive, então devolve campos *extraídos*, não pendentes
 - `GET  /api/transcriptions/{id}/sugestoes-cadastro`
 - `POST /api/transcriptions/{id}/aplicar-cadastro` — recebe só os campos
   marcados, grava e registra em `audit_log` com a ação
@@ -216,6 +218,23 @@ automático e o valor do CRM é o padrão.
 **2. Formato antigo não tem os campos novos.** As 66 transcrições anteriores ao
 prompt atual só têm nome, estado civil e e-mail preenchidos. Para elas a tela
 mostrará poucas sugestões — comportamento correto, não falha.
+
+Medido depois de implementar: das 11 reuniões vinculadas com algum dado, só a da
+Natália (prompt novo) rende os 6 campos. As outras rendem 1 ou 2 — e o que sai
+em "Filhos" é **prosa**, não nome: `"2 filhas menores de idade; Letícia é esposa
+e meeira"`. Marcar isso escreveria uma frase no campo "Nome(s) do(s) filho(s)".
+A tela protege porque nada vem marcado e o texto aparece inteiro, mas vale
+saber: para transcrição antiga, Filhos quase sempre é para não marcar.
+
+**2b. O `briefing_json` gravado envelhece.** Ele guarda o resultado do parser
+vigente no processamento. A transcrição nova da Natália foi processada antes da
+reescrita do parser e ficou com um recorte pobre — tinha `estado_civil` e
+perdera profissão, regime, cônjuge e filhos, todos presentes no documento.
+
+Por isso a tela **reextrai de `transcription_text` na leitura**, em vez de
+confiar no briefing (`dados_cliente_atualizados`). Nada é regravado: o briefing
+já enviado ao Pipedrive fica como está, e melhorias no parser passam a valer
+para o histórico inteiro sem reprocessar nada.
 
 **3. Sobrescrever lista de filhos.** "Diana e João" no CRM contra "Diana" na
 transcrição é perda de informação se aplicado sem ler. A tela marca esse caso

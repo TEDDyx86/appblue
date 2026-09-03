@@ -3246,6 +3246,175 @@ async def unlink_transcription_from_crm(
         "briefing_json": briefing_json
     }
 
+class AplicarCadastroRequest(BaseModel):
+    """Só os campos marcados chegam aqui — a tela nunca envia o que não foi revisado."""
+    campos: List[str] = []
+    criar_nota: bool = False
+
+
+@app.get("/api/transcriptions/com-dados-cadastrais")
+async def listar_transcricoes_com_dados_cadastrais(
+    user: dict = Depends(get_current_user),
+):
+    """
+    Transcrições vinculadas a uma pessoa que trazem algum dado de cadastro.
+
+    Não consulta o Pipedrive: a comparação com o CRM é cara (uma chamada por
+    pessoa) e só faz sentido na tela de revisão. Aqui a pergunta é mais simples
+    — "esta reunião apurou algo sobre o cliente?" — e ela se responde só com o
+    documento. Por isso a contagem devolvida é de campos *extraídos*, não de
+    campos pendentes; nomear isso errado na tela prometeria uma revisão que
+    ainda não foi feita.
+    """
+    res = supabase.table("transcriptions").select(
+        "id, meeting_title, meeting_date, briefing_json, transcription_text"
+    ).order("meeting_date", desc=True).limit(200).execute()
+
+    itens = []
+    for t in res.data or []:
+        briefing = t.get("briefing_json") or {}
+        if briefing.get("is_ignored"):
+            continue
+        pipedrive = briefing.get("pipedrive") or {}
+        person_id = pipedrive.get("person_id")
+        if not person_id:
+            continue
+
+        dados = dados_cliente_atualizados(briefing, t.get("transcription_text"))
+        campos = [
+            rotulo
+            for origem, _chave, rotulo, _tipo in CAMPOS_SUGERIVEIS
+            if str(dados.get(origem) or "").strip()
+        ]
+        if not campos:
+            continue
+
+        itens.append({
+            "id": t["id"],
+            "meeting_title": t.get("meeting_title"),
+            "meeting_date": t.get("meeting_date"),
+            "person_id": str(person_id),
+            "person_name": dados.get("nome") or pipedrive.get("person_name"),
+            "deal_id": pipedrive.get("deal_id"),
+            "campos_extraidos": campos,
+        })
+
+    return {"total": len(itens), "itens": itens}
+
+
+@app.get("/api/transcriptions/{transcription_id}/sugestoes-cadastro")
+async def get_sugestoes_cadastro(
+    transcription_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """O que a transcrição sugere para o cadastro, ao lado do valor atual."""
+    res = supabase.table("transcriptions").select(
+        "briefing_json, meeting_title, transcription_text"
+    ).eq("id", transcription_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Transcrição não encontrada")
+
+    briefing = res.data[0].get("briefing_json") or {}
+    person_id = (briefing.get("pipedrive") or {}).get("person_id")
+    dados = await montar_sugestoes_cadastro(
+        briefing, person_id, res.data[0].get("transcription_text")
+    )
+    return {**dados, "meeting_title": res.data[0].get("meeting_title")}
+
+
+@app.post("/api/transcriptions/{transcription_id}/aplicar-cadastro")
+async def aplicar_cadastro(
+    transcription_id: str,
+    req: AplicarCadastroRequest,
+    user: dict = Depends(require_admin),
+):
+    """
+    Grava no Pipedrive apenas os campos marcados na revisão.
+
+    O log guarda valores antigo e novo: é o que permite desfazer uma sugestão
+    ruim e avaliar se a extração está melhorando com o tempo.
+    """
+    res = supabase.table("transcriptions").select(
+        "briefing_json, meeting_title, transcription_text"
+    ).eq("id", transcription_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Transcrição não encontrada")
+
+    briefing = res.data[0].get("briefing_json") or {}
+    titulo = res.data[0].get("meeting_title") or "Reunião"
+    person_id = (briefing.get("pipedrive") or {}).get("person_id")
+    if not person_id:
+        raise HTTPException(status_code=400, detail="Transcrição sem pessoa vinculada no Pipedrive")
+
+    dados = await montar_sugestoes_cadastro(
+        briefing, person_id, res.data[0].get("transcription_text")
+    )
+    escolhidas = [
+        s for s in dados["sugestoes"]
+        if s["campo"] in req.campos and s["aplicavel"] and s["valor_a_gravar"] is not None
+    ]
+    if not escolhidas and not req.criar_nota:
+        raise HTTPException(status_code=400, detail="Nenhum campo selecionado")
+
+    payload = {s["chave_pipedrive"]: s["valor_a_gravar"] for s in escolhidas}
+    antigos = {s["rotulo"]: s["valor_atual"] for s in escolhidas}
+    novos = {s["rotulo"]: s["valor_exibido"] for s in escolhidas}
+
+    if payload:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.put(
+                f"https://api.pipedrive.com/v1/persons/{person_id}",
+                params={"api_token": PIPEDRIVE_API_TOKEN},
+                json=payload,
+            )
+            if r.status_code != 200:
+                logger.error(f"Falha ao atualizar pessoa {person_id}: {r.text[:200]}")
+                raise HTTPException(status_code=502, detail=f"Pipedrive respondeu {r.status_code}")
+
+    nota_id = None
+    if req.criar_nota and dados["extras_para_nota"]:
+        partes = []
+        for chave, rotulo in (
+            ("patrimonio_bens", "Patrimônio e bens"),
+            ("seguros_existentes", "Seguros já existentes"),
+            ("demonstrou_interesse", "Interesse demonstrado"),
+        ):
+            valor = dados["extras_para_nota"].get(chave)
+            if not valor:
+                continue
+            if isinstance(valor, list):
+                itens = "".join(f"<li>{v}</li>" for v in valor)
+                partes.append(f"<p><strong>{rotulo}</strong></p><ul>{itens}</ul>")
+            else:
+                partes.append(f"<p><strong>{rotulo}:</strong> {valor}</p>")
+        if partes:
+            html = f"<p><em>Extraído da reunião: {titulo}</em></p>" + "".join(partes)
+            nota = await create_pipedrive_note(content=html, person_id=str(person_id), deal_id=None)
+            nota_id = str(nota.get("id")) if nota else None
+
+    log_audit_event(
+        action="PERSON_UPDATED_FROM_TRANSCRIPTION",
+        resource_type="person",
+        resource_id=str(person_id),
+        user_id=user.get("id"),
+        details={
+            "transcription_id": transcription_id,
+            "doc_title": titulo,
+            "campos_aplicados": [s["rotulo"] for s in escolhidas],
+            "nota_criada": nota_id,
+        },
+        old_values=antigos,
+        new_values=novos,
+    )
+
+    return {
+        "aplicados": len(escolhidas),
+        "campos": [s["rotulo"] for s in escolhidas],
+        "nota_id": nota_id,
+        "person_id": person_id,
+    }
+
+
 @app.get("/api/transcriptions/{transcription_id}/vinculo")
 async def get_vinculo_transcricao(
     transcription_id: str,
@@ -4369,7 +4538,249 @@ PIPEDRIVE_PERSON_CUSTOM_FIELDS = {
     "nome_conjuge": "dad66a725f4cce02a26669d26e4929cb1c816150",
     "renda": "3b4aea4bd2e89b7859117ade965123b8580d2173",
     "link_pasta": "7a4456cb975aa8b0decb9e1842eed3039a47e415",
+    # Campos que o prompt novo do Tactiq passou a fornecer.
+    "regime_casamento": "011f47eeeffdcd9977e52c2dd706e969a7d76abe",
+    "filhos": "4dbe50bc5776265528952814794cf56659d16e1c",
+    "conjuge_sem_protecao": "0d615482b0d010a1f487678d1137c1f753b1aaf7",
+    "filhos_sem_protecao": "25a7be8d3ecfbf20f750d375297ce37e93c016e7",
 }
+
+# ============================================================================
+# SUGESTÕES DE CADASTRO A PARTIR DA TRANSCRIÇÃO
+# ============================================================================
+
+# Campo da transcrição -> (chave em PIPEDRIVE_PERSON_CUSTOM_FIELDS, rótulo, tipo)
+# Só entram campos cujo significado corresponde de fato. `seguros_existentes`
+# fica de fora de proposito: os campos "CS - Capital Segurado" descrevem a
+# apólice emitida por esta assessoria, não a cobertura que o cliente já tinha.
+CAMPOS_SUGERIVEIS: List[Tuple[str, str, str, str]] = [
+    ("profissao", "profissao", "Profissão", "texto"),
+    ("estado_civil", "estado_civil", "Estado Civil", "enum"),
+    ("regime_casamento", "regime_casamento", "Regime de Casamento", "enum"),
+    ("nome_conjuge", "nome_conjuge", "Nome do cônjuge", "texto"),
+    ("filhos", "filhos", "Filhos", "texto"),
+    ("conjuge_sem_protecao", "conjuge_sem_protecao", "Cônjuge sem Proteção", "enum"),
+    ("filhos_sem_protecao", "filhos_sem_protecao", "Filhos sem Proteção", "enum"),
+    ("data_nascimento", "data_nascimento", "Data de Nascimento", "data"),
+    ("renda_mensal", "renda", "Renda", "monetario"),
+]
+
+
+def _sem_flexao(txt: str) -> str:
+    """Normaliza acento, caixa e terminação de gênero/número.
+
+    A transcrição escreve "Casada"/"casados" onde a opção do Pipedrive é
+    "Casado". Sem isso, nenhum enum casaria.
+    """
+    base = "".join(
+        c for c in unicodedata.normalize("NFKD", str(txt or "")) if not unicodedata.combining(c)
+    ).lower().strip()
+    base = re.sub(r"[^a-z ]", "", base)
+    return re.sub(r"(a|o|as|os)\b", "", base).strip()
+
+
+def normalizar_para_opcao(valor: str, opcoes: List[Dict[str, Any]]) -> Optional[int]:
+    """
+    Casa texto livre com a opção de um campo enum, devolvendo o id.
+
+    Devolve None quando não há correspondência clara — em campo de escolha fixa,
+    sugerir errado é pior que não sugerir.
+    """
+    alvo = _sem_flexao(valor)
+    if not alvo:
+        return None
+    for o in opcoes:
+        if _sem_flexao(o.get("label")) == alvo:
+            return o.get("id")
+    # Segunda passada por contenção: "separacao obrigatoria" casa com
+    # "separacao obrigatorio de bens".
+    for o in opcoes:
+        rotulo = _sem_flexao(o.get("label"))
+        if rotulo and (alvo in rotulo or rotulo in alvo):
+            return o.get("id")
+    return None
+
+
+def extrair_valor_monetario(texto: str) -> Optional[float]:
+    """Tira um número de "cerca de R$ 12 mil". Sem número claro, devolve None."""
+    limpo = str(texto or "").lower()
+    m = re.search(r"(\d+(?:[.,]\d+)?)", limpo.replace(".", ""))
+    if not m:
+        return None
+    try:
+        valor = float(m.group(1).replace(",", "."))
+    except ValueError:
+        return None
+    if "milh" in limpo:
+        valor *= 1_000_000
+    elif "mil" in limpo:
+        valor *= 1_000
+    return valor
+
+
+def extrair_data_iso(texto: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Converte a data da transcrição para ISO.
+
+    Devolve `(iso, motivo_de_recusa)`. A transcrição costuma trazer só o ano
+    ("1984"), e o campo do Pipedrive é `date` — não aceita data parcial. Nesse
+    caso o motivo é devolvido para a tela explicar, em vez de o campo sumir.
+    """
+    t = str(texto or "").strip()
+    if not t:
+        return None, None
+    m = re.search(r"(\d{2})/(\d{2})/(\d{4})", t)
+    if m:
+        return f"{m.group(3)}-{m.group(2)}-{m.group(1)}", None
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})", t)
+    if m:
+        return m.group(0), None
+    if re.fullmatch(r"(19|20)\d{2}", t):
+        return None, "a transcrição trouxe só o ano"
+    return None, "formato de data não reconhecido"
+
+
+def dados_cliente_atualizados(
+    briefing: Dict[str, Any], transcription_text: Optional[str]
+) -> Dict[str, Any]:
+    """
+    Dados do cliente relidos do documento original, não do briefing gravado.
+
+    O `briefing_json` guarda o resultado do parser vigente na hora do
+    processamento. Transcrições anteriores à reescrita do parser têm ali um
+    recorte pobre — a da Natália, por exemplo, guardou `estado_civil` e perdeu
+    profissão, regime de bens, cônjuge e filhos, que estavam no documento.
+
+    Reextrair na leitura resolve isso sem regravar nada: o briefing já enviado
+    ao Pipedrive permanece como está, e a tela de sugestões passa a enxergar
+    tudo que o parser atual sabe ler. Se o texto não estiver disponível, cai
+    para o que foi gravado.
+    """
+    if transcription_text:
+        try:
+            relido = extrair_dados_cliente(transcription_text)
+            if relido:
+                return relido
+        except Exception as e:  # documento malformado não pode derrubar a tela
+            logger.warning(f"Falha ao reextrair dados do cliente: {e}")
+    return briefing.get("dados_cliente") or {}
+
+
+async def montar_sugestoes_cadastro(
+    briefing: Dict[str, Any],
+    person_id: Optional[str],
+    transcription_text: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Compara o que a transcrição extraiu com o cadastro atual da pessoa.
+
+    Nenhuma sugestão vem marcada: o valor que já está no CRM é a informação
+    principal, e a alteração exige decisão explícita de quem revisa.
+    """
+    dados = dados_cliente_atualizados(briefing, transcription_text)
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        campos_res = await client.get(
+            "https://api.pipedrive.com/v1/personFields",
+            params={"api_token": PIPEDRIVE_API_TOKEN, "limit": 200},
+        )
+        definicoes = {f["key"]: f for f in (campos_res.json().get("data") or [])}
+
+        pessoa: Dict[str, Any] = {}
+        if person_id:
+            p_res = await client.get(
+                f"https://api.pipedrive.com/v1/persons/{person_id}",
+                params={"api_token": PIPEDRIVE_API_TOKEN},
+            )
+            pessoa = p_res.json().get("data") or {}
+
+    sugestoes: List[Dict[str, Any]] = []
+    for origem, chave_mapa, rotulo, tipo in CAMPOS_SUGERIVEIS:
+        bruto = dados.get(origem)
+        if isinstance(bruto, list):
+            bruto = ", ".join(bruto)
+        bruto = str(bruto or "").strip()
+        if not bruto:
+            continue
+
+        key = PIPEDRIVE_PERSON_CUSTOM_FIELDS.get(chave_mapa)
+        definicao = definicoes.get(key) or {}
+        atual_bruto = pessoa.get(key)
+
+        item: Dict[str, Any] = {
+            "campo": origem,
+            "rotulo": rotulo,
+            "tipo": tipo,
+            "chave_pipedrive": key,
+            "valor_transcricao": bruto,
+            "aplicavel": True,
+            "motivo_nao_aplicavel": None,
+        }
+
+        if tipo == "enum":
+            opcoes = definicao.get("options") or []
+            id_sugerido = normalizar_para_opcao(bruto, opcoes)
+            rotulo_atual = next(
+                (o["label"] for o in opcoes if str(o.get("id")) == str(atual_bruto)), None
+            )
+            item["valor_atual"] = rotulo_atual
+            item["valor_a_gravar"] = id_sugerido
+            item["valor_exibido"] = next(
+                (o["label"] for o in opcoes if o.get("id") == id_sugerido), None
+            )
+            if id_sugerido is None:
+                item["aplicavel"] = False
+                item["motivo_nao_aplicavel"] = "não corresponde a nenhuma opção do campo"
+
+        elif tipo == "data":
+            iso, recusa = extrair_data_iso(bruto)
+            item["valor_atual"] = atual_bruto or None
+            item["valor_a_gravar"] = iso
+            item["valor_exibido"] = iso or bruto
+            if not iso:
+                item["aplicavel"] = False
+                item["motivo_nao_aplicavel"] = recusa
+
+        elif tipo == "monetario":
+            numero = extrair_valor_monetario(bruto)
+            item["valor_atual"] = atual_bruto or None
+            item["valor_a_gravar"] = numero
+            item["valor_exibido"] = numero
+            if numero is None:
+                item["aplicavel"] = False
+                item["motivo_nao_aplicavel"] = "não foi possível extrair um número"
+
+        else:
+            item["valor_atual"] = atual_bruto or None
+            item["valor_a_gravar"] = bruto
+            item["valor_exibido"] = bruto
+
+        # "igual" e "substituir" são situações diferentes para quem revisa:
+        # a primeira não pede ação, a segunda avisa que há perda de informação.
+        atual_txt = str(item.get("valor_atual") or "").strip()
+        item["ja_igual"] = bool(atual_txt) and _sem_flexao(atual_txt) == _sem_flexao(
+            str(item.get("valor_exibido") or "")
+        )
+        item["acao"] = "igual" if item["ja_igual"] else ("substituir" if atual_txt else "preencher")
+        sugestoes.append(item)
+
+    # Sem campo correspondente no cadastro — só cabem numa nota.
+    extras = {
+        "patrimonio_bens": dados.get("patrimonio_bens_itens") or dados.get("patrimonio_bens"),
+        "seguros_existentes": dados.get("seguros_existentes_itens") or dados.get("seguros_existentes"),
+        "demonstrou_interesse": dados.get("demonstrou_interesse"),
+    }
+
+    return {
+        "person_id": person_id,
+        "person_name": pessoa.get("name"),
+        "person_url": f"https://investimentosblue.pipedrive.com/person/{person_id}" if person_id else None,
+        "nome_transcricao": dados.get("nome"),
+        "sugestoes": sugestoes,
+        "aplicaveis": sum(1 for s in sugestoes if s["aplicavel"] and not s["ja_igual"]),
+        "extras_para_nota": {k: v for k, v in extras.items() if v},
+    }
+
 
 def parse_xp_ficha_cadastral(doc_bytes_or_path) -> Dict[str, Any]:
     """

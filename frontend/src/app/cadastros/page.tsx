@@ -1,11 +1,14 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import axios from 'axios'
 import Sidebar from '@/components/Sidebar'
+import SugestoesCadastro from '@/components/SugestoesCadastro'
 import {
   UploadCloud,
+  UserCog,
+  CalendarDays,
   FileText,
   CheckCircle,
   AlertTriangle,
@@ -94,10 +97,29 @@ interface PipedriveField {
   options?: Array<{ id: number | string; label: string }>
 }
 
+interface ReuniaoComDados {
+  id: string
+  meeting_title: string | null
+  meeting_date: string | null
+  person_id: string
+  person_name: string | null
+  deal_id: string | null
+  campos_extraidos: string[]
+}
+
 export default function CadastrosPage() {
   const router = useRouter()
   const { theme, isDark, toggleTheme } = useTheme()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+
+  // Duas entradas para a mesma ficha: o PDF que o cliente manda e o que a
+  // reunião apurou. São origens diferentes do mesmo cadastro, não telas
+  // separadas.
+  const [aba, setAba] = useState<'pdf' | 'transcricao'>('pdf')
+  const [reunioes, setReunioes] = useState<ReuniaoComDados[]>([])
+  const [carregandoReunioes, setCarregandoReunioes] = useState(false)
+  const [erroReunioes, setErroReunioes] = useState('')
+  const [revisandoId, setRevisandoId] = useState<string | null>(null)
 
   // Drag & drop & file states
   const [isDragging, setIsDragging] = useState(false)
@@ -167,6 +189,32 @@ export default function CadastrosPage() {
     }
     fetchPersonFields()
   }, [API_URL])
+
+  const carregarReunioes = useCallback(async () => {
+    setCarregandoReunioes(true)
+    setErroReunioes('')
+    try {
+      const token = localStorage.getItem('access_token')
+      const res = await axios.get(`${API_URL}/api/transcriptions/com-dados-cadastrais`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      setReunioes(res.data?.itens || [])
+    } catch (err: any) {
+      setErroReunioes(
+        err?.response?.data?.detail || 'Não foi possível carregar as reuniões.',
+      )
+    } finally {
+      setCarregandoReunioes(false)
+    }
+  }, [API_URL])
+
+  // Só busca ao abrir a aba: a lista relê todas as transcrições e não faz
+  // sentido pagar isso em quem veio importar um PDF.
+  useEffect(() => {
+    if (aba === 'transcricao' && reunioes.length === 0 && !carregandoReunioes) {
+      carregarReunioes()
+    }
+  }, [aba, reunioes.length, carregandoReunioes, carregarReunioes])
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
@@ -364,13 +412,15 @@ export default function CadastrosPage() {
             </div>
             <div>
               <h1 className="text-base font-bold text-slate-900 dark:text-white font-display flex items-center space-x-2">
-                <span>Importação de Ficha Cadastral (PDF)</span>
+                <span>Ficha Cadastral</span>
                 <span className="px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/60 text-[#002060] dark:text-[#00FFFF] text-[10px] font-extrabold uppercase tracking-wider">
-                  OCR & Pipedrive
+                  Pipedrive
                 </span>
               </h1>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Extração inteligente de PDFs e sincronização direta no Pipedrive CRM
+                {aba === 'pdf'
+                  ? 'Extração inteligente de PDFs e sincronização direta no Pipedrive CRM'
+                  : 'Dados apurados nas reuniões, revisados campo a campo antes de gravar'}
               </p>
             </div>
           </div>
@@ -388,6 +438,132 @@ export default function CadastrosPage() {
 
         {/* Page Container */}
         <div className="p-6 max-w-7xl mx-auto space-y-6">
+          {/* Origem do dado: PDF enviado pelo cliente ou reunião transcrita */}
+          <div
+            role="tablist"
+            aria-label="Origem dos dados cadastrais"
+            className="inline-flex p-1 rounded-2xl bg-slate-100 dark:bg-[#000D38] border border-slate-200 dark:border-[#002060]"
+          >
+            {([
+              { id: 'pdf', rotulo: 'Do PDF', Icone: UploadCloud },
+              { id: 'transcricao', rotulo: 'Da transcrição', Icone: CalendarDays },
+            ] as const).map(({ id, rotulo, Icone }) => (
+              <button
+                key={id}
+                role="tab"
+                id={`aba-${id}`}
+                aria-selected={aba === id}
+                aria-controls={`painel-${id}`}
+                onClick={() => setAba(id)}
+                className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0092FF] ${
+                  aba === id
+                    ? 'bg-white dark:bg-[#002060] text-[#0092FF] dark:text-[#00FFFF] shadow-sm'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                }`}
+              >
+                <Icone className="w-3.5 h-3.5" aria-hidden="true" />
+                {rotulo}
+                {id === 'transcricao' && reunioes.length > 0 && (
+                  <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-[#0092FF]/15 text-[#0092FF] dark:text-[#00FFFF] text-[10px] font-extrabold">
+                    {reunioes.length}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {aba === 'transcricao' && (
+            <div id="painel-transcricao" role="tabpanel" aria-labelledby="aba-transcricao" className="space-y-4">
+              <div className="p-5 rounded-2xl bg-gradient-to-r from-[#000D38] via-[#00164D] to-[#002060] text-white shadow-lg border border-[#0092FF]/20 space-y-1">
+                <div className="flex items-center space-x-2">
+                  <span className="px-2 py-0.5 rounded bg-[#0092FF]/20 text-[#00FFFF] font-mono text-[10px] font-bold uppercase tracking-wider border border-[#00FFFF]/30">
+                    Cadastro a partir da reunião
+                  </span>
+                </div>
+                <h2 className="text-lg font-extrabold tracking-tight font-display text-white">
+                  O que as reuniões apuraram sobre o cliente
+                </h2>
+                <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
+                  Reuniões já vinculadas a uma pessoa no CRM cujo briefing trouxe algum dado
+                  cadastral. Abrir uma delas compara com o cadastro atual — nada é gravado sem
+                  você marcar campo a campo.
+                </p>
+              </div>
+
+              {carregandoReunioes && (
+                <p className="text-sm text-slate-500 dark:text-slate-400 text-center py-10">
+                  Relendo as transcrições...
+                </p>
+              )}
+
+              {erroReunioes && (
+                <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-xs text-rose-600 dark:text-rose-300">
+                  {erroReunioes}
+                </div>
+              )}
+
+              {!carregandoReunioes && !erroReunioes && reunioes.length === 0 && (
+                <p className="text-sm text-slate-500 dark:text-slate-400 text-center py-10">
+                  Nenhuma reunião vinculada trouxe dados de cadastro.
+                </p>
+              )}
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {reunioes.map((r) => (
+                  <div
+                    key={r.id}
+                    className="rounded-2xl border border-slate-200 dark:border-[#002060] bg-white dark:bg-[#000D38] p-4 flex flex-col gap-3"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                          {r.person_name || 'Cliente sem nome'}
+                        </p>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">
+                          {r.meeting_title}
+                        </p>
+                      </div>
+                      {r.meeting_date && (
+                        <span className="text-[10px] font-mono text-slate-400 flex-shrink-0">
+                          {r.meeting_date.slice(8, 10)}/{r.meeting_date.slice(5, 7)}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap gap-1">
+                      {r.campos_extraidos.map((c) => (
+                        <span
+                          key={c}
+                          className="px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-[#002060]/60 text-[10px] font-semibold text-slate-600 dark:text-slate-300"
+                        >
+                          {c}
+                        </span>
+                      ))}
+                    </div>
+
+                    <button
+                      onClick={() => setRevisandoId(r.id)}
+                      className="mt-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white text-xs font-bold shadow-md shadow-[#0092FF]/30 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0092FF]"
+                    >
+                      <UserCog className="w-3.5 h-3.5" aria-hidden="true" />
+                      Revisar cadastro
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {revisandoId && (
+            <SugestoesCadastro
+              transcriptionId={revisandoId}
+              apiUrl={API_URL}
+              onFechar={() => setRevisandoId(null)}
+            />
+          )}
+
+          {aba === 'pdf' && (
+          <div id="painel-pdf" role="tabpanel" aria-labelledby="aba-pdf" className="space-y-6">
           {/* Top Banner */}
           <div className="p-5 rounded-2xl bg-gradient-to-r from-[#000D38] via-[#00164D] to-[#002060] text-white shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border border-[#0092FF]/20">
             <div className="space-y-1">
@@ -1055,6 +1231,8 @@ export default function CadastrosPage() {
                 </div>
               </div>
             </div>
+          )}
+          </div>
           )}
         </div>
       </main>

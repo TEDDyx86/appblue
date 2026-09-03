@@ -10,6 +10,7 @@ import {
   CheckCircle,
   AlertTriangle,
   RefreshCw,
+  UserCog,
   Search,
   User,
   Tag,
@@ -36,6 +37,7 @@ import {
 } from 'lucide-react'
 import { useTheme } from '@/context/ThemeContext'
 import MotivoVinculo, { Vinculo } from '@/components/MotivoVinculo'
+import SugestoesCadastro from '@/components/SugestoesCadastro'
 
 interface BriefingData {
   resumo_rapido?: string
@@ -142,6 +144,7 @@ export default function TranscriptionsPage() {
   const [itemDoMotivo, setItemDoMotivo] = useState<any>(null)
   const [reavaliando, setReavaliando] = useState(false)
   const [avaliandoId, setAvaliandoId] = useState<string | null>(null)
+  const [sugestoesDe, setSugestoesDe] = useState<string | null>(null)
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -773,6 +776,15 @@ export default function TranscriptionsPage() {
                               >
                                 <AlertTriangle className="w-3 h-3" />
                                 <span>Por que não vinculou?</span>
+                              </button>
+                            )}
+                            {isLinked && !isIgnored && (
+                              <button
+                                onClick={() => setSugestoesDe(item.id)}
+                                className="text-[10px] font-bold text-[#0092FF] dark:text-[#00FFFF] hover:underline flex items-center space-x-1"
+                              >
+                                <UserCog className="w-3 h-3" />
+                                <span>Atualizar cadastro</span>
                               </button>
                             )}
                             {!isIgnored && !item.briefing_json?.vinculo && (
@@ -1557,6 +1569,16 @@ export default function TranscriptionsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Sugestoes de cadastro extraidas da reuniao */}
+      {sugestoesDe && (
+        <SugestoesCadastro
+          transcriptionId={sugestoesDe}
+          apiUrl={API_URL}
+          onFechar={() => setSugestoesDe(null)}
+          onAplicado={fetchTranscriptions}
+        />
       )}
 
       {/* Por que o vinculo automatico falhou */}
