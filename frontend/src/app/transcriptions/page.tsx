@@ -34,6 +34,7 @@ import {
   Trash2,
   Edit3,
   Video,
+  ChevronDown,
 } from 'lucide-react'
 import { useTheme } from '@/context/ThemeContext'
 import MotivoVinculo, { Vinculo } from '@/components/MotivoVinculo'
@@ -116,6 +117,16 @@ export default function TranscriptionsPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'client_az' | 'linked_first'>('newest')
   const [syncFeedback, setSyncFeedback] = useState('')
+
+  // O card fecha por padrão: a lista serve para varrer e achar, não para ler.
+  // Detalhe e ação ficam atrás de um clique deliberado.
+  const [expandidos, setExpandidos] = useState<Set<string>>(new Set())
+  const alternarCard = (id: string) =>
+    setExpandidos((atual) => {
+      const nova = new Set(atual)
+      nova.has(id) ? nova.delete(id) : nova.add(id)
+      return nova
+    })
 
   // Assign Modal state
   const [assignItem, setAssignItem] = useState<Transcription | null>(null)
@@ -696,7 +707,7 @@ export default function TranscriptionsPage() {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 items-start">
               {filteredTranscriptions.map((item) => {
                 const briefing = item.briefing_json
                 const isIgnored = Boolean(briefing?.is_ignored)
@@ -708,250 +719,248 @@ export default function TranscriptionsPage() {
                 const dealId = briefing?.pipedrive?.deal_id
                 const personUrl = briefing?.pipedrive?.person_url || (personId ? `https://investimentosblue.pipedrive.com/person/${personId}` : null)
                 const dealUrl = briefing?.pipedrive?.deal_url || (dealId ? `https://investimentosblue.pipedrive.com/deal/${dealId}` : null)
+                const aberto = expandidos.has(item.id)
 
                 return (
                   <div
                     key={item.id}
-                    className={`bg-white dark:bg-[#000D38] rounded-2xl border p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between group ${
+                    className={`bg-white dark:bg-[#000D38] rounded-2xl border shadow-sm hover:shadow-md transition-all overflow-hidden ${
                       isIgnored
                         ? 'border-slate-200/60 dark:border-[#002060]/50 opacity-75'
                         : 'border-slate-200/90 dark:border-[#002060] dark:hover:border-[#0092FF]/50'
                     }`}
                   >
-                    <div>
-                      {/* Top status bar */}
-                      <div className="flex items-start justify-between gap-2 mb-3">
+                    {/* Cabeçalho: só o que serve para achar a reunião na lista */}
+                    <div className="p-4">
+                      <div className="flex items-start justify-between gap-2 mb-2">
                         {isIgnored ? (
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-900/60 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-800 flex items-center space-x-1">
-                            <EyeOff className="w-3 h-3" />
+                            <EyeOff className="w-3 h-3" aria-hidden="true" />
                             <span>Interna / Ignorada</span>
                           </span>
                         ) : isLinked ? (
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60 flex items-center space-x-1">
-                            <CheckCircle className="w-3 h-3" />
+                            <CheckCircle className="w-3 h-3" aria-hidden="true" />
                             <span>Vinculado no Pipedrive</span>
                           </span>
                         ) : (
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60 flex items-center space-x-1">
-                            <Clock className="w-3 h-3" />
+                            <Clock className="w-3 h-3" aria-hidden="true" />
                             <span>Pendente de Vínculo</span>
                           </span>
                         )}
 
-                        <span className="text-[11px] text-slate-400 font-medium">
+                        <span className="text-[11px] text-slate-400 font-medium flex-shrink-0">
                           {formatDate(item.meeting_date || item.created_at)}
                         </span>
                       </div>
 
-                      {/* Title */}
-                      <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-snug line-clamp-2 font-display">
+                      <h3
+                        className="text-sm font-bold text-slate-900 dark:text-white leading-snug line-clamp-2 font-display"
+                        title={item.meeting_title || 'Reunião Tactiq'}
+                      >
                         {item.meeting_title || 'Reunião Tactiq'}
                       </h3>
 
-                      {/* Client row */}
+                      <button
+                        onClick={() => alternarCard(item.id)}
+                        aria-expanded={aberto}
+                        aria-controls={`detalhe-${item.id}`}
+                        className="mt-3 w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-[#002060] text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-[#002060] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0092FF]"
+                      >
+                        <ChevronDown
+                          className={`w-3.5 h-3.5 transition-transform ${aberto ? 'rotate-180' : ''}`}
+                          aria-hidden="true"
+                        />
+                        {aberto ? 'Fechar' : 'Abrir'}
+                      </button>
+                    </div>
+
+                    {/* Detalhe e ações. `hidden` em vez de altura zero para que
+                        Tab e leitor de tela pulem o conteúdo fechado. */}
+                    <div
+                      id={`detalhe-${item.id}`}
+                      hidden={!aberto}
+                      className="px-4 pb-4 space-y-3 border-t border-slate-100 dark:border-[#002060] pt-3"
+                    >
                       {clientName && (
-                        <p className="text-xs text-slate-700 dark:text-slate-300 font-semibold mt-2 flex items-center space-x-1.5">
-                          <User className="w-3.5 h-3.5 text-[#0092FF] flex-shrink-0" />
+                        <p className="text-xs text-slate-700 dark:text-slate-300 font-semibold flex items-center space-x-1.5">
+                          <User className="w-3.5 h-3.5 text-[#0092FF] flex-shrink-0" aria-hidden="true" />
                           <span className="truncate">{clientName}</span>
                         </p>
                       )}
 
-                      {/* Associação Pipedrive Card */}
-                      <div className="mt-3 p-3 rounded-xl bg-slate-50 dark:bg-[#00061A]/70 border border-slate-200/90 dark:border-[#002060] text-xs space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] uppercase font-bold text-slate-400 block font-display">
-                            Vínculo Pipedrive CRM
-                          </span>
-                          <div className="flex items-center gap-3">
-                            {/* Dois estados na mesma posição:
-                                - falhou  -> explica o motivo
-                                - nunca avaliado -> dispara a avaliação
-                                Sem o segundo caso, as transcrições anteriores a
-                                esta funcionalidade nunca teriam como ser
-                                avaliadas pela tela. */}
-                            {!isIgnored && item.briefing_json?.vinculo?.status === 'nao_vinculado' && (
-                              <button
-                                onClick={() => handleAbrirMotivo(item)}
-                                className="text-[10px] font-bold text-amber-600 dark:text-amber-400 hover:underline flex items-center space-x-1"
-                              >
-                                <AlertTriangle className="w-3 h-3" />
-                                <span>Por que não vinculou?</span>
-                              </button>
-                            )}
-                            {isLinked && !isIgnored && (
-                              <button
-                                onClick={() => setSugestoesDe(item.id)}
-                                className="text-[10px] font-bold text-[#0092FF] dark:text-[#00FFFF] hover:underline flex items-center space-x-1"
-                              >
-                                <UserCog className="w-3 h-3" />
-                                <span>Atualizar cadastro</span>
-                              </button>
-                            )}
-                            {!isIgnored && !item.briefing_json?.vinculo && (
-                              <button
-                                onClick={() => handleAvaliarVinculo(item)}
-                                disabled={avaliandoId === item.id}
-                                className="text-[10px] font-bold text-slate-500 dark:text-slate-400 hover:text-[#0092FF] hover:underline flex items-center space-x-1 disabled:opacity-50"
-                              >
-                                <RefreshCw className={`w-3 h-3 ${avaliandoId === item.id ? 'animate-spin' : ''}`} />
-                                <span>{avaliandoId === item.id ? 'Avaliando...' : 'Avaliar vínculo'}</span>
-                              </button>
-                            )}
-                            {!isLinked && !isIgnored && (
-                              <button
-                                onClick={() => handleOpenAssignModal(item)}
-                                className="text-[10px] font-bold text-[#0092FF] dark:text-[#00FFFF] hover:underline flex items-center space-x-1"
-                              >
-                                <Plus className="w-3 h-3" />
-                                <span>Atribuir Agora</span>
-                              </button>
-                            )}
-                          </div>
-                        </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-slate-400 font-display block mb-1.5">
+                          Vínculo no Pipedrive
+                        </span>
 
                         {isIgnored ? (
-                          <div className="flex items-center justify-between">
+                          <div className="flex items-center justify-between gap-2">
                             <span className="text-slate-400 italic text-[11px]">
                               Marcada como reunião interna
                             </span>
                             <button
                               onClick={() => handleToggleIgnore(item.id)}
                               disabled={togglingIgnoreId === item.id}
-                              className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center space-x-1"
+                              className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center space-x-1 disabled:opacity-50"
                             >
-                              <Eye className="w-3 h-3" />
+                              <Eye className="w-3 h-3" aria-hidden="true" />
                               <span>Reativar</span>
                             </button>
                           </div>
                         ) : isLinked ? (
-                          <div className="space-y-2">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              {personUrl && (
-                                <a
-                                  href={personUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 text-[#0092FF] dark:text-[#00FFFF] font-bold text-[11px] hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors"
-                                  title="Abrir Pessoa no Pipedrive"
-                                >
-                                  <span>👤 Pessoa #{personId}</span>
-                                  <ArrowUpRight className="w-3 h-3" />
-                                </a>
-                              )}
-
-                              {dealUrl && (
-                                <a
-                                  href={dealUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-[#002060] text-white font-semibold text-[11px] hover:bg-[#001D99] transition-colors"
-                                  title="Abrir Negócio (Deal) no Pipedrive"
-                                >
-                                  <span>💼 Deal #{dealId}</span>
-                                  <ArrowUpRight className="w-3 h-3" />
-                                </a>
-                              )}
-                            </div>
-
-                            <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 dark:border-[#002060]/60">
-                              <button
-                                onClick={() => handleOpenAssignModal(item)}
-                                className="text-[10px] font-bold text-[#0092FF] dark:text-[#00FFFF] hover:underline flex items-center space-x-1"
-                                title="Reatribuir para outro Cliente ou Negócio"
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {personUrl && (
+                              <a
+                                href={personUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 text-[#0092FF] dark:text-[#00FFFF] font-bold text-[11px] hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors"
+                                title="Abrir Pessoa no Pipedrive"
                               >
-                                <Edit3 className="w-3 h-3" />
-                                <span>Alterar Vínculo</span>
-                              </button>
+                                <span>👤 Pessoa #{personId}</span>
+                                <ArrowUpRight className="w-3 h-3" aria-hidden="true" />
+                              </a>
+                            )}
 
-                              <button
-                                onClick={() => handleUnlinkTranscription(item)}
-                                disabled={unlinkingId === item.id}
-                                className="text-[10px] font-bold text-rose-500 hover:text-rose-700 dark:hover:text-rose-400 flex items-center space-x-1 transition-colors"
-                                title="Desvincular do Pipedrive e apagar nota"
+                            {dealUrl && (
+                              <a
+                                href={dealUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-[#002060] text-white font-semibold text-[11px] hover:bg-[#001D99] transition-colors"
+                                title="Abrir Negócio (Deal) no Pipedrive"
                               >
-                                <Unlink className={`w-3 h-3 ${unlinkingId === item.id ? 'animate-spin' : ''}`} />
-                                <span>{unlinkingId === item.id ? 'Desvinculando...' : 'Desvincular'}</span>
-                              </button>
-                            </div>
+                                <span>💼 Deal #{dealId}</span>
+                                <ArrowUpRight className="w-3 h-3" aria-hidden="true" />
+                              </a>
+                            )}
                           </div>
                         ) : (
                           <div className="flex items-center justify-between gap-2">
-                            <button
-                              onClick={() => handleToggleIgnore(item.id)}
-                              disabled={togglingIgnoreId === item.id}
-                              className="text-[10px] font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-300 flex items-center space-x-1 transition-colors"
-                              title="Marcar como reunião interna e não gerar pendência"
-                            >
-                              <EyeOff className="w-3 h-3" />
-                              <span>Ignorar</span>
-                            </button>
-
+                            <span className="text-slate-400 italic text-[11px]">
+                              Nenhum negócio vinculado
+                            </span>
                             <button
                               onClick={() => handleOpenAssignModal(item)}
                               className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-[#0092FF] hover:bg-[#007AFF] text-white font-bold text-[11px] shadow-xs shadow-blue-500/20 transition-all"
                             >
-                              <Sparkles className="w-3 h-3" />
+                              <Sparkles className="w-3 h-3" aria-hidden="true" />
                               <span>Atribuir</span>
                             </button>
                           </div>
                         )}
                       </div>
 
-                      {/* Resumo Rápido Executivo se existir */}
-                      {briefing?.resumo_rapido && !isIgnored && (
-                        <div className="mt-2.5 p-2.5 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/60 text-xs">
-                          <span className="text-[10px] uppercase font-bold text-[#002060] dark:text-[#0092FF] mb-0.5 flex items-center space-x-1">
-                            <Sparkles className="w-3 h-3 text-[#0092FF]" />
-                            <span>Resumo:</span>
+                      {(item.google_doc_id || briefing?.tactiq_link) && (
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-slate-400 font-display block mb-1.5">
+                            Documentos
                           </span>
-                          <p className="text-slate-800 dark:text-slate-200 line-clamp-2 text-[11px] leading-relaxed">
-                            {briefing.resumo_rapido}
-                          </p>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {item.google_doc_id && (
+                              <a
+                                href={`https://docs.google.com/document/d/${item.google_doc_id}/edit`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-800 dark:text-emerald-400 font-semibold text-[11px] border border-emerald-200 dark:border-emerald-800/60 transition-colors"
+                                title="Abrir Google Doc original"
+                              >
+                                <span>Google Drive</span>
+                                <ArrowUpRight className="w-3 h-3" aria-hidden="true" />
+                              </a>
+                            )}
+
+                            {briefing?.tactiq_link && (
+                              <a
+                                href={briefing.tactiq_link}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-[#00061A] hover:bg-slate-200 dark:hover:bg-[#002060] text-slate-700 dark:text-slate-300 font-semibold text-[11px] border border-transparent dark:border-[#002060] transition-colors"
+                                title="Abrir no Tactiq"
+                              >
+                                <span>Tactiq</span>
+                                <ArrowUpRight className="w-3 h-3" aria-hidden="true" />
+                              </a>
+                            )}
+                          </div>
                         </div>
                       )}
-                    </div>
 
-                    {/* Bottom Actions */}
-                    <div className="mt-4 pt-3 border-t border-slate-100 dark:border-[#002060] flex flex-wrap items-center justify-between gap-2 text-xs">
-                      <div className="flex items-center gap-1.5">
-                        {item.google_doc_id && (
-                          <a
-                            href={`https://docs.google.com/document/d/${item.google_doc_id}/edit`}
-                            target="_blank"
-                            rel="noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-800 dark:text-emerald-400 font-semibold text-[11px] border border-emerald-200 dark:border-emerald-800/60 transition-colors"
-                            title="Abrir Google Doc original"
-                          >
-                            <span>Google Drive</span>
-                            <ArrowUpRight className="w-3 h-3" />
-                          </a>
-                        )}
+                      {!isIgnored && (
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-2 border-t border-slate-100 dark:border-[#002060]">
+                          {isLinked && (
+                            <>
+                              <button
+                                onClick={() => handleOpenAssignModal(item)}
+                                className="text-[11px] font-bold text-[#0092FF] dark:text-[#00FFFF] hover:underline flex items-center space-x-1"
+                                title="Reatribuir para outro Cliente ou Negócio"
+                              >
+                                <Edit3 className="w-3 h-3" aria-hidden="true" />
+                                <span>Alterar vínculo</span>
+                              </button>
 
-                        {briefing?.tactiq_link && (
-                          <a
-                            href={briefing.tactiq_link}
-                            target="_blank"
-                            rel="noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-[#00061A] hover:bg-slate-200 dark:hover:bg-[#002060] text-slate-700 dark:text-slate-300 font-semibold text-[11px] border border-transparent dark:border-[#002060] transition-colors"
-                            title="Abrir no Tactiq"
-                          >
-                            <span>Tactiq</span>
-                            <ArrowUpRight className="w-3 h-3" />
-                          </a>
-                        )}
-                      </div>
+                              <button
+                                onClick={() => handleUnlinkTranscription(item)}
+                                disabled={unlinkingId === item.id}
+                                className="text-[11px] font-bold text-rose-500 hover:text-rose-700 dark:hover:text-rose-400 flex items-center space-x-1 transition-colors disabled:opacity-50"
+                                title="Desvincular do Pipedrive e apagar nota"
+                              >
+                                <Unlink className={`w-3 h-3 ${unlinkingId === item.id ? 'animate-spin' : ''}`} aria-hidden="true" />
+                                <span>{unlinkingId === item.id ? 'Desvinculando...' : 'Desvincular'}</span>
+                              </button>
 
-                      <button
-                        onClick={() => setSelectedItem(item)}
-                        className="inline-flex items-center space-x-1 text-xs font-bold text-slate-900 dark:text-white hover:text-[#0092FF] dark:hover:text-[#00FFFF] transition-colors py-1 px-2 rounded-lg hover:bg-slate-100 dark:hover:bg-[#002060]"
-                      >
-                        <span>Ver Briefing</span>
-                        <ArrowUpRight className="w-3.5 h-3.5" />
-                      </button>
+                              <button
+                                onClick={() => setSugestoesDe(item.id)}
+                                className="text-[11px] font-bold text-[#0092FF] dark:text-[#00FFFF] hover:underline flex items-center space-x-1"
+                              >
+                                <UserCog className="w-3 h-3" aria-hidden="true" />
+                                <span>Atualizar cadastro</span>
+                              </button>
+                            </>
+                          )}
+
+                          {/* Dois estados na mesma posição:
+                              - falhou  -> explica o motivo
+                              - nunca avaliado -> dispara a avaliação
+                              Sem o segundo caso, as transcrições anteriores a
+                              esta funcionalidade nunca teriam como ser
+                              avaliadas pela tela. */}
+                          {item.briefing_json?.vinculo?.status === 'nao_vinculado' && (
+                            <button
+                              onClick={() => handleAbrirMotivo(item)}
+                              className="text-[11px] font-bold text-amber-600 dark:text-amber-400 hover:underline flex items-center space-x-1"
+                            >
+                              <AlertTriangle className="w-3 h-3" aria-hidden="true" />
+                              <span>Por que não vinculou?</span>
+                            </button>
+                          )}
+
+                          {!item.briefing_json?.vinculo && (
+                            <button
+                              onClick={() => handleAvaliarVinculo(item)}
+                              disabled={avaliandoId === item.id}
+                              className="text-[11px] font-bold text-slate-500 dark:text-slate-400 hover:text-[#0092FF] hover:underline flex items-center space-x-1 disabled:opacity-50"
+                            >
+                              <RefreshCw className={`w-3 h-3 ${avaliandoId === item.id ? 'animate-spin' : ''}`} aria-hidden="true" />
+                              <span>{avaliandoId === item.id ? 'Avaliando...' : 'Avaliar vínculo'}</span>
+                            </button>
+                          )}
+
+                          {!isLinked && (
+                            <button
+                              onClick={() => handleToggleIgnore(item.id)}
+                              disabled={togglingIgnoreId === item.id}
+                              className="text-[11px] font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-300 flex items-center space-x-1 transition-colors disabled:opacity-50"
+                              title="Marcar como reunião interna e não gerar pendência"
+                            >
+                              <EyeOff className="w-3 h-3" aria-hidden="true" />
+                              <span>Ignorar</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )
