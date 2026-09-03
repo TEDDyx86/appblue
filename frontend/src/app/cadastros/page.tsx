@@ -105,6 +105,7 @@ interface ReuniaoComDados {
   person_name: string | null
   deal_id: string | null
   campos_extraidos: string[]
+  dispensada: boolean
 }
 
 export default function CadastrosPage() {
@@ -120,6 +121,10 @@ export default function CadastrosPage() {
   const [carregandoReunioes, setCarregandoReunioes] = useState(false)
   const [erroReunioes, setErroReunioes] = useState('')
   const [revisandoId, setRevisandoId] = useState<string | null>(null)
+  const [totalDispensadas, setTotalDispensadas] = useState(0)
+  const [mostrarDispensadas, setMostrarDispensadas] = useState(false)
+  const [dispensandoId, setDispensandoId] = useState<string | null>(null)
+  const [avisoFila, setAvisoFila] = useState('')
 
   // Drag & drop & file states
   const [isDragging, setIsDragging] = useState(false)
@@ -190,31 +195,71 @@ export default function CadastrosPage() {
     fetchPersonFields()
   }, [API_URL])
 
-  const carregarReunioes = useCallback(async () => {
-    setCarregandoReunioes(true)
-    setErroReunioes('')
-    try {
-      const token = localStorage.getItem('access_token')
-      const res = await axios.get(`${API_URL}/api/transcriptions/com-dados-cadastrais`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      setReunioes(res.data?.itens || [])
-    } catch (err: any) {
-      setErroReunioes(
-        err?.response?.data?.detail || 'Não foi possível carregar as reuniões.',
-      )
-    } finally {
-      setCarregandoReunioes(false)
-    }
-  }, [API_URL])
+  const carregarReunioes = useCallback(
+    async (incluirDispensadas: boolean) => {
+      setCarregandoReunioes(true)
+      setErroReunioes('')
+      try {
+        const token = localStorage.getItem('access_token')
+        const res = await axios.get(`${API_URL}/api/transcriptions/com-dados-cadastrais`, {
+          headers: { Authorization: `Bearer ${token}` },
+          params: incluirDispensadas ? { incluir_dispensadas: true } : undefined,
+        })
+        setReunioes(res.data?.itens || [])
+        setTotalDispensadas(res.data?.dispensadas || 0)
+      } catch (err: any) {
+        setErroReunioes(
+          err?.response?.data?.detail || 'Não foi possível carregar as reuniões.',
+        )
+      } finally {
+        setCarregandoReunioes(false)
+      }
+    },
+    [API_URL],
+  )
 
   // Só busca ao abrir a aba: a lista relê todas as transcrições e não faz
   // sentido pagar isso em quem veio importar um PDF.
+  const abaAberta = aba === 'transcricao'
   useEffect(() => {
-    if (aba === 'transcricao' && reunioes.length === 0 && !carregandoReunioes) {
-      carregarReunioes()
+    if (abaAberta) carregarReunioes(mostrarDispensadas)
+  }, [abaAberta, mostrarDispensadas, carregarReunioes])
+
+  /**
+   * Tira o card da fila sem tocar na transcrição.
+   *
+   * A remoção é otimista e o aviso oferece desfazer na hora: descartar é um
+   * clique fácil de errar, e mandar a pessoa caçar o item no "ver dispensadas"
+   * para consertar um deslize é atrito à toa.
+   */
+  const alternarDispensa = async (id: string, dispensar: boolean) => {
+    setDispensandoId(id)
+    setAvisoFila('')
+    const anterior = reunioes
+    if (dispensar && !mostrarDispensadas) {
+      setReunioes((atual) => atual.filter((r) => r.id !== id))
     }
-  }, [aba, reunioes.length, carregandoReunioes, carregarReunioes])
+    try {
+      const token = localStorage.getItem('access_token')
+      await axios.post(
+        `${API_URL}/api/transcriptions/${id}/cadastro-dispensar`,
+        { dispensado: dispensar },
+        { headers: { Authorization: `Bearer ${token}` } },
+      )
+      setTotalDispensadas((n) => Math.max(0, n + (dispensar ? 1 : -1)))
+      if (mostrarDispensadas) {
+        setReunioes((atual) =>
+          atual.map((r) => (r.id === id ? { ...r, dispensada: dispensar } : r)),
+        )
+      }
+      setAvisoFila(dispensar ? 'Reunião dispensada da fila.' : 'Reunião devolvida à fila.')
+    } catch (err: any) {
+      setReunioes(anterior)
+      setAvisoFila(err?.response?.data?.detail || 'Não foi possível atualizar a fila.')
+    } finally {
+      setDispensandoId(null)
+    }
+  }
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
@@ -386,6 +431,8 @@ export default function CadastrosPage() {
     }
   }
 
+  const pendentes = reunioes.filter((r) => !r.dispensada).length
+
   return (
     <div className="flex h-screen bg-[#F8FAFC] dark:bg-[#00061A] text-[#000D38] dark:text-slate-100 font-sans transition-colors duration-200 overflow-hidden">
       {/* Sidebar */}
@@ -463,9 +510,10 @@ export default function CadastrosPage() {
               >
                 <Icone className="w-3.5 h-3.5" aria-hidden="true" />
                 {rotulo}
-                {id === 'transcricao' && reunioes.length > 0 && (
+                {/* Conta só o que está na fila — o dispensado não é pendência. */}
+                {id === 'transcricao' && pendentes > 0 && (
                   <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-[#0092FF]/15 text-[#0092FF] dark:text-[#00FFFF] text-[10px] font-extrabold">
-                    {reunioes.length}
+                    {pendentes}
                   </span>
                 )}
               </button>
@@ -504,15 +552,30 @@ export default function CadastrosPage() {
 
               {!carregandoReunioes && !erroReunioes && reunioes.length === 0 && (
                 <p className="text-sm text-slate-500 dark:text-slate-400 text-center py-10">
-                  Nenhuma reunião vinculada trouxe dados de cadastro.
+                  {mostrarDispensadas
+                    ? 'Nenhuma reunião vinculada trouxe dados de cadastro.'
+                    : totalDispensadas > 0
+                      ? 'Fila vazia — tudo que tinha dado cadastral já foi revisado ou dispensado.'
+                      : 'Nenhuma reunião vinculada trouxe dados de cadastro.'}
                 </p>
               )}
+
+              {/* Confirmação e desfazer ficam juntos: descartar é fácil de errar. */}
+              <div aria-live="polite" className="min-h-[1.25rem]">
+                {avisoFila && (
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">{avisoFila}</p>
+                )}
+              </div>
 
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {reunioes.map((r) => (
                   <div
                     key={r.id}
-                    className="rounded-2xl border border-slate-200 dark:border-[#002060] bg-white dark:bg-[#000D38] p-4 flex flex-col gap-3"
+                    className={`rounded-2xl border p-4 flex flex-col gap-3 transition-opacity ${
+                      r.dispensada
+                        ? 'border-dashed border-slate-300 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A]/60 opacity-70'
+                        : 'border-slate-200 dark:border-[#002060] bg-white dark:bg-[#000D38]'
+                    }`}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
@@ -523,11 +586,24 @@ export default function CadastrosPage() {
                           {r.meeting_title}
                         </p>
                       </div>
-                      {r.meeting_date && (
-                        <span className="text-[10px] font-mono text-slate-400 flex-shrink-0">
-                          {r.meeting_date.slice(8, 10)}/{r.meeting_date.slice(5, 7)}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        {r.meeting_date && (
+                          <span className="text-[10px] font-mono text-slate-400">
+                            {r.meeting_date.slice(8, 10)}/{r.meeting_date.slice(5, 7)}
+                          </span>
+                        )}
+                        {!r.dispensada && (
+                          <button
+                            onClick={() => alternarDispensa(r.id, true)}
+                            disabled={dispensandoId === r.id}
+                            aria-label={`Dispensar ${r.person_name || 'esta reunião'} da fila de revisão`}
+                            title="Dispensar da fila"
+                            className="p-1 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0092FF]"
+                          >
+                            <X className="w-3.5 h-3.5" aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex flex-wrap gap-1">
@@ -541,16 +617,47 @@ export default function CadastrosPage() {
                       ))}
                     </div>
 
-                    <button
-                      onClick={() => setRevisandoId(r.id)}
-                      className="mt-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white text-xs font-bold shadow-md shadow-[#0092FF]/30 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0092FF]"
-                    >
-                      <UserCog className="w-3.5 h-3.5" aria-hidden="true" />
-                      Revisar cadastro
-                    </button>
+                    {r.dispensada ? (
+                      <button
+                        onClick={() => alternarDispensa(r.id, false)}
+                        disabled={dispensandoId === r.id}
+                        className="mt-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-[#002060] text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-[#002060] transition-colors disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0092FF]"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+                        Devolver à fila
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setRevisandoId(r.id)}
+                        className="mt-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white text-xs font-bold shadow-md shadow-[#0092FF]/30 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0092FF]"
+                      >
+                        <UserCog className="w-3.5 h-3.5" aria-hidden="true" />
+                        Revisar cadastro
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
+
+              {totalDispensadas > 0 && (
+                <button
+                  onClick={() => setMostrarDispensadas((v) => !v)}
+                  aria-pressed={mostrarDispensadas}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-[#002060] text-xs font-bold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-white dark:hover:bg-[#002060] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0092FF]"
+                >
+                  {mostrarDispensadas ? (
+                    <>
+                      <X className="w-3.5 h-3.5" aria-hidden="true" />
+                      Ocultar dispensadas
+                    </>
+                  ) : (
+                    <>
+                      <Layers className="w-3.5 h-3.5" aria-hidden="true" />
+                      Ver {totalDispensadas} dispensada{totalDispensadas === 1 ? '' : 's'}
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           )}
 
@@ -559,6 +666,11 @@ export default function CadastrosPage() {
               transcriptionId={revisandoId}
               apiUrl={API_URL}
               onFechar={() => setRevisandoId(null)}
+              onAplicado={() =>
+                setAvisoFila(
+                  'Cadastro atualizado. Dispense o card se não houver mais nada a revisar nesta reunião.',
+                )
+              }
             />
           )}
 
