@@ -805,9 +805,10 @@ async def encontrar_atividade_da_reuniao(
                 return None, "ERRO_PIPEDRIVE", {"status": res.status_code, "deal_id": negocio["id"]}
 
             reunioes = [a for a in (res.json().get("data") or []) if a.get("type") in TIPOS_REUNIAO]
-            reunioes_por_negocio[negocio.get("title") or str(negocio["id"])] = sorted(
-                {str(a.get("due_date")) for a in reunioes}
-            )
+            # Chaveado por id, não por título: negócios duplicados têm o mesmo
+            # título e um sobrescrevia a agenda do outro no relatório da falha.
+            rotulo = f"{negocio.get('title')} (#{negocio['id']})"
+            reunioes_por_negocio[rotulo] = sorted({str(a.get("due_date")) for a in reunioes})
             for a in reunioes:
                 try:
                     quando = datetime.strptime(str(a.get("due_date")), "%Y-%m-%d").date()
