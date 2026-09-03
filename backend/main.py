@@ -3254,6 +3254,7 @@ class AplicarCadastroRequest(BaseModel):
 
 @app.get("/api/transcriptions/com-dados-cadastrais")
 async def listar_transcricoes_com_dados_cadastrais(
+    incluir_dispensadas: bool = False,
     user: dict = Depends(get_current_user),
 ):
     """
@@ -3265,12 +3266,16 @@ async def listar_transcricoes_com_dados_cadastrais(
     documento. Por isso a contagem devolvida é de campos *extraídos*, não de
     campos pendentes; nomear isso errado na tela prometeria uma revisão que
     ainda não foi feita.
+
+    O que já foi dispensado sai da lista por padrão. Como toda reunião vinculada
+    acaba caindo aqui, sem isso a fila só cresce e para de ser fila.
     """
     res = supabase.table("transcriptions").select(
         "id, meeting_title, meeting_date, briefing_json, transcription_text"
     ).order("meeting_date", desc=True).limit(200).execute()
 
     itens = []
+    dispensadas = 0
     for t in res.data or []:
         briefing = t.get("briefing_json") or {}
         if briefing.get("is_ignored"):
@@ -3289,6 +3294,12 @@ async def listar_transcricoes_com_dados_cadastrais(
         if not campos:
             continue
 
+        dispensada = bool(briefing.get("cadastro_dispensado"))
+        if dispensada:
+            dispensadas += 1
+            if not incluir_dispensadas:
+                continue
+
         itens.append({
             "id": t["id"],
             "meeting_title": t.get("meeting_title"),
@@ -3297,9 +3308,64 @@ async def listar_transcricoes_com_dados_cadastrais(
             "person_name": dados.get("nome") or pipedrive.get("person_name"),
             "deal_id": pipedrive.get("deal_id"),
             "campos_extraidos": campos,
+            "dispensada": dispensada,
         })
 
-    return {"total": len(itens), "itens": itens}
+    return {
+        "total": len([i for i in itens if not i["dispensada"]]),
+        "dispensadas": dispensadas,
+        "itens": itens,
+    }
+
+
+class DispensarCadastroRequest(BaseModel):
+    dispensado: bool = True
+
+
+@app.post("/api/transcriptions/{transcription_id}/cadastro-dispensar")
+async def dispensar_cadastro(
+    transcription_id: str,
+    req: DispensarCadastroRequest,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Tira (ou devolve) a transcrição da fila de revisão de cadastro.
+
+    Flag próprio, e não `is_ignored`: aquele marca a reunião como interna e
+    chega a apagar atividade e nota do Pipedrive. Aqui a reunião continua
+    valendo — só já foi olhada sob a ótica do cadastro. Confundir os dois
+    apagaria registro do CRM por um clique de "ocultar card".
+    """
+    res = supabase.table("transcriptions").select("briefing_json, meeting_title").eq(
+        "id", transcription_id
+    ).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Transcrição não encontrada")
+
+    briefing = res.data[0].get("briefing_json") or {}
+    titulo = res.data[0].get("meeting_title") or "Reunião"
+    briefing["cadastro_dispensado"] = req.dispensado
+
+    supabase.table("transcriptions").update({"briefing_json": briefing}).eq(
+        "id", transcription_id
+    ).execute()
+
+    log_audit_event(
+        action="CADASTRO_DISPENSADO" if req.dispensado else "CADASTRO_REABERTO",
+        resource_type="transcription",
+        resource_id=transcription_id,
+        user_id=user.get("id", user.get("sub")),
+        details={
+            "doc_title": titulo,
+            "summary": (
+                f"Revisão de cadastro de '{titulo}' dispensada."
+                if req.dispensado
+                else f"Revisão de cadastro de '{titulo}' devolvida à fila."
+            ),
+        },
+    )
+
+    return {"status": "success", "dispensado": req.dispensado}
 
 
 @app.get("/api/transcriptions/{transcription_id}/sugestoes-cadastro")
