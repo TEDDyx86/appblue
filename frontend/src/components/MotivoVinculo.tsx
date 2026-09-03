@@ -48,7 +48,8 @@ const EXPLICACAO: Record<string, { titulo: string; texto: string }> = {
   },
   MULTIPLAS_CANDIDATAS: {
     titulo: 'Mais de uma reunião possível',
-    texto: 'Há mais de uma atividade R1/R2/R3 na janela de datas, e não dá para saber qual delas este briefing documenta.',
+    texto:
+      'Há mais de uma atividade R1/R2/R3 na janela de datas — no mesmo negócio ou em clientes de nome parecido — e não dá para saber qual delas este briefing documenta.',
   },
   ERRO_PIPEDRIVE: {
     titulo: 'O Pipedrive respondeu com erro',
@@ -152,7 +153,26 @@ export default function MotivoVinculo({
               {Array.isArray(d.candidatas) && (
                 <Linha
                   rotulo="Candidatas"
-                  valor={d.candidatas.map((c: any) => `${c.tipo} ${c.data}`).join(' · ')}
+                  valor={
+                    <span className="flex flex-col items-end gap-0.5">
+                      {d.candidatas.map((c: any) => (
+                        <span key={c.id}>
+                          {c.tipo} {c.data}
+                          {/* O negócio importa: as candidatas podem estar em
+                              clientes diferentes de nome parecido. */}
+                          {c.negocio && (
+                            <span className="text-slate-400 font-normal"> · {c.negocio}</span>
+                          )}
+                        </span>
+                      ))}
+                    </span>
+                  }
+                />
+              )}
+              {Array.isArray(d.negocios_avaliados) && d.negocios_avaliados.length > 1 && (
+                <Linha
+                  rotulo="Negócios com o mesmo nome"
+                  valor={d.negocios_avaliados.map((n: any) => n.titulo).join(' · ')}
                 />
               )}
               {d.erro && <Linha rotulo="Erro" valor={d.erro} />}

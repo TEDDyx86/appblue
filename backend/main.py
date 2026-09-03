@@ -655,25 +655,54 @@ def _normalizar_nome(txt: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z ]", "", sem_acento.lower())).strip()
 
 
+# Conectivos não identificam ninguém e distorcem a proporção de tokens em comum.
+_CONECTIVOS = {"de", "da", "do", "das", "dos", "e", "di", "del"}
+
+
+def _tokens_nome(txt: str) -> List[str]:
+    return [t for t in _normalizar_nome(txt).split() if t not in _CONECTIVOS and len(t) > 1]
+
+
+def _casa_token(a: str, b: str) -> bool:
+    """
+    Dois pedaços de nome se referem à mesma palavra.
+
+    Aceita prefixo a partir de 3 letras para cobrir apelido — "Ari" por
+    "Ariovaldo". Prefixo, e não substring: "ari" casa com "ariovaldo" e com
+    "ariane", mas não com "ferrari", que não é o nome de ninguém chamado Ari.
+    """
+    if a == b:
+        return True
+    curto, longo = (a, b) if len(a) <= len(b) else (b, a)
+    return len(curto) >= 3 and longo.startswith(curto)
+
+
+def _contido(a: List[str], b: List[str]) -> bool:
+    return all(any(_casa_token(x, y) for y in b) for x in a)
+
+
 def compatibilidade_nome(nome: str, titulo: str) -> float:
     """
     Quão provável é que `nome` e `titulo` sejam a mesma pessoa, de 0 a 1.
 
-    Trata nome parcial por contenção — a transcrição costuma dizer "Márcio"
-    enquanto o negócio se chama "Márcio Paes". Sem isso, um acerto óbvio ficaria
-    em 0.71 e cairia fora do limiar.
+    A contenção é por palavra inteira, não por substring do texto corrido. Com
+    substring, `"Ari"` valia 1.00 contra "Livia **Ari**ane" e "Ferr**ari**", e
+    quatro negócios diferentes empatavam no topo — quem decidia era a ordem em
+    que a API devolvia, não a regra. Medido: 7 das 24 transcrições avaliáveis
+    caíam nesse empate, e em 3 delas outro empatado também tinha reunião na
+    data.
     """
-    a, b = _normalizar_nome(nome), _normalizar_nome(titulo)
+    a, b = _tokens_nome(nome), _tokens_nome(titulo)
     if not a or not b:
         return 0.0
-    if a in b or b in a:
+    if _contido(a, b) or _contido(b, a):
         return 1.0
-    tokens_a, tokens_b = set(a.split()), set(b.split())
-    if tokens_a and tokens_b:
-        proporcao = len(tokens_a & tokens_b) / min(len(tokens_a), len(tokens_b))
+    comuns = sum(1 for x in a if any(_casa_token(x, y) for y in b))
+    if comuns:
+        proporcao = comuns / min(len(a), len(b))
         if proporcao >= 0.6:
             return 0.95
-    return SequenceMatcher(None, a, b).ratio()
+    return SequenceMatcher(None, _normalizar_nome(nome), _normalizar_nome(titulo)).ratio()
 
 
 async def buscar_negocio_por_nome(client: httpx.AsyncClient, nome: str) -> List[Dict[str, Any]]:
@@ -698,7 +727,7 @@ async def buscar_negocio_por_nome(client: httpx.AsyncClient, nome: str) -> List[
 
 
 async def encontrar_atividade_da_reuniao(
-    nome_cliente: str, data_reuniao: Optional[str]
+    nome_cliente: str, data_reuniao: Optional[str], meeting_title: str = ""
 ) -> Tuple[Optional[Dict[str, Any]], str, Dict[str, Any]]:
     """
     Localiza a atividade R1/R2/R3 que a transcrição documenta.
@@ -706,6 +735,13 @@ async def encontrar_atividade_da_reuniao(
     Devolve `(atividade, motivo, detalhe)`. Com atividade encontrada o motivo é
     "OK"; caso contrário traz o código da falha e a evidência que levou a ela —
     é essa evidência que permite melhorar a regra depois.
+
+    Quando vários negócios empatam no topo, nenhum é eleito por ordem de
+    chegada. O desempate tenta primeiro o título da reunião, que costuma trazer
+    o sobrenome que o campo `nome` não trouxe — foi o que separou
+    "Márcio | R3 Marcio **Aguiar**" de "Márcio Paes". Persistindo o empate,
+    procura a atividade em todos os empatados: vincula se existir exatamente
+    uma na data, e desiste se houver mais de uma.
     """
     if not nome_cliente or len(nome_cliente) < 3 or "identificado" in nome_cliente.lower():
         return None, "SEM_NOME_CLIENTE", {"nome_recebido": nome_cliente}
@@ -730,55 +766,97 @@ async def encontrar_atividade_da_reuniao(
         if not itens:
             return None, "NEGOCIO_NAO_ENCONTRADO", {"nome_buscado": nome_cliente}
 
-        melhor = max(itens, key=lambda i: compatibilidade_nome(nome_cliente, i["item"].get("title")))
-        negocio = melhor["item"]
-        score = compatibilidade_nome(nome_cliente, negocio.get("title"))
+        pontuados = [
+            (compatibilidade_nome(nome_cliente, i["item"].get("title")), i["item"]) for i in itens
+        ]
+        melhor_score = max(s for s, _ in pontuados)
 
-        if score < LIMIAR_COMPATIBILIDADE:
+        if melhor_score < LIMIAR_COMPATIBILIDADE:
+            melhor_titulo = max(pontuados, key=lambda p: p[0])[1].get("title")
             return None, "COMPATIBILIDADE_BAIXA", {
                 "nome_buscado": nome_cliente,
-                "melhor_candidato": negocio.get("title"),
-                "score": round(score, 2),
+                "melhor_candidato": melhor_titulo,
+                "score": round(melhor_score, 2),
                 "limiar": LIMIAR_COMPATIBILIDADE,
             }
 
-        res = await client.get(
-            f"https://api.pipedrive.com/v1/deals/{negocio['id']}/activities",
-            params={"api_token": PIPEDRIVE_API_TOKEN, "limit": 50},
-        )
-        if res.status_code != 200:
-            return None, "ERRO_PIPEDRIVE", {"status": res.status_code, "deal_id": negocio["id"]}
-        atividades = res.json().get("data") or []
+        empatados = [n for s, n in pontuados if s == melhor_score]
+        desempate = "nome"
 
-    reunioes = [a for a in atividades if a.get("type") in TIPOS_REUNIAO]
-    candidatas = []
-    for a in reunioes:
-        try:
-            quando = datetime.strptime(str(a.get("due_date")), "%Y-%m-%d").date()
-        except (ValueError, TypeError):
-            continue
-        if abs((quando - alvo).days) <= TOLERANCIA_DIAS:
-            candidatas.append(a)
+        # O título da reunião só desempata quando ele próprio bate com folga.
+        # Aceitar o "menos pior" aqui reintroduziria a escolha arbitrária, agora
+        # com cara de critério.
+        if len(empatados) > 1 and meeting_title:
+            por_titulo = [(compatibilidade_nome(n.get("title"), meeting_title), n) for n in empatados]
+            topo = max(s for s, _ in por_titulo)
+            if topo >= LIMIAR_COMPATIBILIDADE:
+                finalistas = [n for s, n in por_titulo if s == topo]
+                if len(finalistas) < len(empatados):
+                    empatados, desempate = finalistas, "titulo"
+
+        candidatas: List[Dict[str, Any]] = []
+        reunioes_por_negocio: Dict[str, List[str]] = {}
+        for negocio in empatados:
+            res = await client.get(
+                f"https://api.pipedrive.com/v1/deals/{negocio['id']}/activities",
+                params={"api_token": PIPEDRIVE_API_TOKEN, "limit": 50},
+            )
+            if res.status_code != 200:
+                return None, "ERRO_PIPEDRIVE", {"status": res.status_code, "deal_id": negocio["id"]}
+
+            reunioes = [a for a in (res.json().get("data") or []) if a.get("type") in TIPOS_REUNIAO]
+            reunioes_por_negocio[negocio.get("title") or str(negocio["id"])] = sorted(
+                {str(a.get("due_date")) for a in reunioes}
+            )
+            for a in reunioes:
+                try:
+                    quando = datetime.strptime(str(a.get("due_date")), "%Y-%m-%d").date()
+                except (ValueError, TypeError):
+                    continue
+                if abs((quando - alvo).days) <= TOLERANCIA_DIAS:
+                    candidatas.append({**a, "_negocio": negocio})
 
     base = {
         "nome_buscado": nome_cliente,
-        "negocio": negocio.get("title"),
-        "deal_id": negocio["id"],
-        "score": round(score, 2),
+        "score": round(melhor_score, 2),
         "data_reuniao": str(alvo),
+        "desempate": desempate,
+        "negocios_avaliados": [
+            {"id": n["id"], "titulo": n.get("title")} for n in empatados
+        ],
     }
 
     if len(candidatas) == 1:
-        return candidatas[0], "OK", base
+        escolhida = candidatas[0]
+        negocio = escolhida.pop("_negocio")
+        base["negocio"] = negocio.get("title")
+        base["deal_id"] = negocio["id"]
+        # Empate desfeito pela data merece revisão amostral: o nome sozinho não
+        # bastava para saber de quem era a reunião.
+        if len(empatados) > 1:
+            base["desempate"] = "data"
+        return escolhida, "OK", base
+
     if len(candidatas) > 1:
         base["candidatas"] = [
-            {"id": a["id"], "tipo": TIPOS_REUNIAO.get(a.get("type")), "data": a.get("due_date")}
+            {
+                "id": a["id"],
+                "tipo": TIPOS_REUNIAO.get(a.get("type")),
+                "data": a.get("due_date"),
+                "negocio": a["_negocio"].get("title"),
+            }
             for a in candidatas
         ]
         return None, "MULTIPLAS_CANDIDATAS", base
 
-    base["reunioes_no_negocio"] = sorted({str(a.get("due_date")) for a in reunioes})
+    base["reunioes_no_negocio"] = sorted(
+        {d for datas in reunioes_por_negocio.values() for d in datas}
+    )
+    base["reunioes_por_negocio"] = reunioes_por_negocio
     base["tolerancia_dias"] = TOLERANCIA_DIAS
+    if empatados:
+        base["negocio"] = empatados[0].get("title")
+        base["deal_id"] = empatados[0]["id"]
     return None, "SEM_ATIVIDADE_NA_DATA", base
 
 
@@ -797,7 +875,7 @@ async def vincular_briefing_na_atividade(
     """
     nome = (briefing_json.get("dados_cliente") or {}).get("nome") or ""
     atividade, motivo, detalhe = await encontrar_atividade_da_reuniao(
-        nome, briefing_json.get("data_reuniao")
+        nome, briefing_json.get("data_reuniao"), meeting_title
     )
     agora = datetime.utcnow().isoformat() + "Z"
 
