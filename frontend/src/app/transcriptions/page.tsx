@@ -298,6 +298,29 @@ export default function TranscriptionsPage() {
     }
   }
 
+  /**
+   * Tira o card da lista pelo botão do cabeçalho.
+   *
+   * Confirma só quando há vínculo: nesse caso ignorar não é apenas esconder —
+   * o backend apaga a nota e a atividade que esta transcrição criou no
+   * Pipedrive. Sem vínculo não há o que apagar, e pedir confirmação para uma
+   * ação reversível e sem efeito externo seria atrito à toa.
+   */
+  const handleOcultarCard = (item: Transcription, isIgnored: boolean, isLinked: boolean) => {
+    if (!isIgnored && isLinked) {
+      const titulo = item.meeting_title || 'Esta reunião'
+      const ok = window.confirm(
+        `${titulo}\n\n` +
+          'Esta transcrição está vinculada no Pipedrive. Ocultar aqui também remove de lá ' +
+          'a nota e a atividade criadas por ela.\n\n' +
+          'O card continua acessível pelo filtro "Internas / Ignoradas".\n\n' +
+          'Ocultar mesmo assim?'
+      )
+      if (!ok) return
+    }
+    handleToggleIgnore(item.id)
+  }
+
   // Autocomplete search for Persons
   useEffect(() => {
     if (searchPersonTerm.trim().length < 2) {
@@ -519,6 +542,10 @@ export default function TranscriptionsPage() {
         t.briefing_json?.pipedrive?.deal_id || t.briefing_json?.pipedrive?.person_id
       )
 
+      // Ignorada sai de todas as visões menos a dela. Antes ela continuava no
+      // "Todas" só com a tag trocada, então marcar como interna não tirava nada
+      // da frente — a lista crescia igual.
+      if (crmFilter === 'all' && isIgnored) return false
       if (crmFilter === 'ignored' && !isIgnored) return false
       if (crmFilter === 'linked' && (!isLinked || isIgnored)) return false
       if (crmFilter === 'unlinked' && (isLinked || isIgnored)) return false
@@ -669,7 +696,9 @@ export default function TranscriptionsPage() {
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-[11px] font-bold text-slate-400 mr-1 uppercase">Filtro:</span>
               {[
-                { id: 'all', label: 'Todas' },
+                // "Ativas" e não "Todas": o filtro deixou de mostrar as
+                // ignoradas, e o rótulo antigo passaria a mentir.
+                { id: 'all', label: 'Ativas' },
                 { id: 'linked', label: 'Vinculadas no CRM' },
                 { id: 'unlinked', label: 'Pendentes de Vínculo' },
                 { id: 'ignored', label: 'Internas / Ignoradas' },
@@ -720,6 +749,13 @@ export default function TranscriptionsPage() {
                 const personUrl = briefing?.pipedrive?.person_url || (personId ? `https://investimentosblue.pipedrive.com/person/${personId}` : null)
                 const dealUrl = briefing?.pipedrive?.deal_url || (dealId ? `https://investimentosblue.pipedrive.com/deal/${dealId}` : null)
                 const aberto = expandidos.has(item.id)
+                // Evita a faixa com borda superior vazia quando a transcrição
+                // não está vinculada mas já foi avaliada com sucesso.
+                const temAcoes =
+                  !isIgnored &&
+                  (isLinked ||
+                    briefing?.vinculo?.status === 'nao_vinculado' ||
+                    !briefing?.vinculo)
 
                 return (
                   <div
@@ -750,9 +786,39 @@ export default function TranscriptionsPage() {
                           </span>
                         )}
 
-                        <span className="text-[11px] text-slate-400 font-medium flex-shrink-0">
-                          {formatDate(item.meeting_date || item.created_at)}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <span className="text-[11px] text-slate-400 font-medium">
+                            {formatDate(item.meeting_date || item.created_at)}
+                          </span>
+
+                          <button
+                            onClick={() => handleOcultarCard(item, isIgnored, isLinked)}
+                            disabled={togglingIgnoreId === item.id}
+                            aria-label={
+                              isIgnored
+                                ? `Reativar ${item.meeting_title || 'esta reunião'}`
+                                : `Ocultar ${item.meeting_title || 'esta reunião'} da lista`
+                            }
+                            title={
+                              isIgnored
+                                ? 'Reativar e devolver à lista'
+                                : isLinked
+                                  ? 'Ocultar da lista (remove a nota e a atividade do Pipedrive)'
+                                  : 'Ocultar da lista'
+                            }
+                            className={`p-1 rounded-lg transition-colors disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0092FF] ${
+                              isIgnored
+                                ? 'text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/40'
+                                : 'text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40'
+                            }`}
+                          >
+                            {isIgnored ? (
+                              <Eye className="w-3.5 h-3.5" aria-hidden="true" />
+                            ) : (
+                              <EyeOff className="w-3.5 h-3.5" aria-hidden="true" />
+                            )}
+                          </button>
+                        </div>
                       </div>
 
                       <h3
@@ -796,19 +862,10 @@ export default function TranscriptionsPage() {
                         </span>
 
                         {isIgnored ? (
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-slate-400 italic text-[11px]">
-                              Marcada como reunião interna
-                            </span>
-                            <button
-                              onClick={() => handleToggleIgnore(item.id)}
-                              disabled={togglingIgnoreId === item.id}
-                              className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center space-x-1 disabled:opacity-50"
-                            >
-                              <Eye className="w-3 h-3" aria-hidden="true" />
-                              <span>Reativar</span>
-                            </button>
-                          </div>
+                          /* Reativar fica no botão do cabeçalho, não aqui. */
+                          <span className="text-slate-400 italic text-[11px]">
+                            Marcada como reunião interna
+                          </span>
                         ) : isLinked ? (
                           <div className="flex flex-wrap items-center gap-1.5">
                             {personUrl && (
@@ -888,7 +945,7 @@ export default function TranscriptionsPage() {
                         </div>
                       )}
 
-                      {!isIgnored && (
+                      {temAcoes && (
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-2 border-t border-slate-100 dark:border-[#002060]">
                           {isLinked && (
                             <>
@@ -948,17 +1005,6 @@ export default function TranscriptionsPage() {
                             </button>
                           )}
 
-                          {!isLinked && (
-                            <button
-                              onClick={() => handleToggleIgnore(item.id)}
-                              disabled={togglingIgnoreId === item.id}
-                              className="text-[11px] font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-300 flex items-center space-x-1 transition-colors disabled:opacity-50"
-                              title="Marcar como reunião interna e não gerar pendência"
-                            >
-                              <EyeOff className="w-3 h-3" aria-hidden="true" />
-                              <span>Ignorar</span>
-                            </button>
-                          )}
                         </div>
                       )}
                     </div>
