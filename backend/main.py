@@ -2535,9 +2535,16 @@ async def fetch_birthdays_data() -> Dict[str, Any]:
 # R1, R2 e R3 são TIPOS DE ATIVIDADE nesta conta, não só etapas do funil. Por
 # isso rotular uma reunião não exige buscar o negócio associado.
 GRUPOS_AGENDA: List[Tuple[str, str, Tuple[str, ...]]] = [
-    ("reunioes", "Reuniões", ("teams", "meeting", "reuniao_2", "r3", "outlook")),
+    # Só R1/R2/R3. `teams` e `outlook` são a agenda sincronizada do calendário —
+    # medido no período de 01/08 a 04/09: 91 atividades `teams`, e só 9 eram
+    # reunião de cliente. O resto é Daily, KIHAP, Casa, aniversário. Misturadas
+    # com R1/R2/R3, o grupo deixava de responder "que cliente eu atendo hoje?".
+    ("reunioes", "Reuniões", ("meeting", "reuniao_2", "r3")),
     ("ligacoes", "Ligações", ("call",)),
     ("mensagens", "Mensagens", ("email", "whatsapp")),
+    # Compromisso de calendário que não é atendimento. Continua visível, porque
+    # ocupa a agenda de verdade, mas fora do grupo de reuniões com cliente.
+    ("compromissos", "Compromissos", ("teams", "outlook")),
     # Falta é categoria própria na conta, com quatro tipos dedicados. Misturar
     # com reuniões daria a impressão de compromisso a cumprir.
     ("no_show", "No Show", ("no_show", "r2_no_show", "r3_no_show", "lunch")),
@@ -2565,16 +2572,47 @@ async def buscar_rotulos_de_tipo(client: httpx.AsyncClient) -> Dict[str, str]:
     }
 
 
+# Brasília. O Pipedrive devolve `due_time` em UTC e o usuário opera em UTC-3.
+FUSO_BRASILIA = timedelta(hours=-3)
+
+
+def _para_horario_local(due_date: Optional[str], due_time: Optional[str]) -> Tuple[Optional[str], str]:
+    """
+    Converte o par (data, hora) do Pipedrive de UTC para Brasília.
+
+    A conversão é do instante inteiro, não só da hora: 01:00 UTC é 22:00 do dia
+    anterior. Ajustar só `due_time` mostraria o horário certo na data errada.
+
+    Atividade sem hora é dia inteiro e não se converte — subtrair 3h de uma
+    tarefa sem horário a jogaria para o dia anterior sem motivo.
+    """
+    hora = (due_time or "").strip()
+    if not due_date or not hora:
+        return due_date, ""
+    try:
+        partes = [int(p) for p in hora.split(":")[:3]]
+        while len(partes) < 3:
+            partes.append(0)
+        utc = datetime.strptime(due_date, "%Y-%m-%d").replace(
+            hour=partes[0], minute=partes[1], second=partes[2]
+        )
+    except (ValueError, TypeError):
+        return due_date, hora
+    local = utc + FUSO_BRASILIA
+    return local.strftime("%Y-%m-%d"), local.strftime("%H:%M")
+
+
 def _formatar_atividade(a: Dict[str, Any], rotulos: Dict[str, str]) -> Dict[str, Any]:
     atividade_id = str(a.get("id"))
     chave = a.get("type") or "task"
+    data_local, hora_local = _para_horario_local(a.get("due_date"), a.get("due_time"))
     return {
         "id": atividade_id,
         "subject": a.get("subject") or "Sem assunto",
         "type": chave,
         "type_label": rotulos.get(chave, chave),
-        "due_date": a.get("due_date"),
-        "due_time": a.get("due_time") or "",
+        "due_date": data_local,
+        "due_time": hora_local,
         "person_name": a.get("person_name"),
         # A organização vinculada à atividade é, nesta conta, o assessor
         # responsável — não uma empresa cliente. Preenchida em ~40% dos casos.
@@ -2629,15 +2667,32 @@ async def fetch_agenda(periodo: str = "hoje", dias: int = 7) -> Dict[str, Any]:
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         rotulos = await buscar_rotulos_de_tipo(client)
+        # Um dia a mais de cada lado porque a API filtra pela data em UTC e a
+        # conversão para Brasília move o compromisso de dia: 01:00 UTC é 22:00
+        # do dia anterior. Sem a folga, a reunião das 21h sumiria de "hoje".
         atividades = await paginar_pipedrive(
             client,
             "/activities",
             {
-                "start_date": str(inicio),
-                "end_date": str(fim + timedelta(days=1)),  # exclusivo
+                "start_date": str(inicio - timedelta(days=1)),
+                "end_date": str(fim + timedelta(days=2)),  # exclusivo
                 "done": 0,
             },
         )
+
+    # Recorta pela data já convertida. Sem horário é dia inteiro e continua
+    # valendo a data que o Pipedrive devolveu.
+    def no_periodo(a: Dict[str, Any]) -> bool:
+        data_local, _ = _para_horario_local(a.get("due_date"), a.get("due_time"))
+        if not data_local:
+            return False
+        try:
+            d = datetime.strptime(data_local, "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            return False
+        return inicio <= d <= fim
+
+    atividades = [a for a in atividades if no_periodo(a)]
 
     return {
         "periodo": periodo,

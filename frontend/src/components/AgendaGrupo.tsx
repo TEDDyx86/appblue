@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useId, useState } from 'react'
-import { ExternalLink, Video, Phone, Mail, CheckSquare, UserX, ChevronDown } from 'lucide-react'
+import { ExternalLink, Video, Phone, Mail, CheckSquare, UserX, ChevronDown, CalendarClock } from 'lucide-react'
 
 export interface AgendaItem {
   id: string
@@ -34,6 +34,7 @@ const iconePorGrupo: Record<string, typeof Video> = {
   reunioes: Video,
   ligacoes: Phone,
   mensagens: Mail,
+  compromissos: CalendarClock,
   tarefas: CheckSquare,
   no_show: UserX,
 }
@@ -42,6 +43,9 @@ const corPorGrupo: Record<string, string> = {
   reunioes: 'from-[#0092FF] to-[#001D99]',
   ligacoes: 'from-emerald-500 to-emerald-700',
   mensagens: 'from-amber-400 to-amber-600',
+  // Cinza-azulado: é compromisso de agenda, não atendimento de cliente. A cor
+  // forte fica reservada para R1/R2/R3.
+  compromissos: 'from-slate-400 to-slate-600',
   tarefas: 'from-slate-500 to-slate-700',
   no_show: 'from-rose-500 to-rose-700',
 }
@@ -155,7 +159,10 @@ export default function AgendaGrupo({ grupo, mostrarData = false }: AgendaGrupoP
 
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-1.5 min-w-0">
-                {/* Tag do assessor, antes do texto da atividade */}
+                {/* Quem é o compromisso vem antes; o assessor é qualificação. */}
+                <span className="text-sm text-slate-900 dark:text-white truncate">
+                  {a.person_name || a.subject}
+                </span>
                 {a.org_name && (
                   <span
                     className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold whitespace-nowrap ${corDaTag(a.org_name)}`}
@@ -163,9 +170,6 @@ export default function AgendaGrupo({ grupo, mostrarData = false }: AgendaGrupoP
                     {a.org_name}
                   </span>
                 )}
-                <span className="text-sm text-slate-900 dark:text-white truncate">
-                  {a.person_name || a.subject}
-                </span>
               </span>
               {a.person_name && a.subject !== a.person_name && (
                 <span className="block text-xs text-slate-500 dark:text-slate-400 truncate">

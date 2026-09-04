@@ -62,14 +62,15 @@ export default function ProximoCompromisso({ item, minutosAte }: ProximoCompromi
           </p>
 
           <p className="mt-1.5 flex items-center gap-2 min-w-0">
+            {/* Quem é o compromisso vem antes; o assessor é qualificação. */}
+            <span className="text-base font-bold text-slate-900 dark:text-white truncate">
+              {item.person_name || item.subject}
+            </span>
             {item.org_name && (
               <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 dark:bg-[#00061A] text-slate-600 dark:text-slate-300 whitespace-nowrap">
                 {item.org_name}
               </span>
             )}
-            <span className="text-base font-bold text-slate-900 dark:text-white truncate">
-              {item.person_name || item.subject}
-            </span>
           </p>
           {item.person_name && item.subject !== item.person_name && (
             <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{item.subject}</p>
