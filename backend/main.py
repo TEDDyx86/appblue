@@ -11,6 +11,7 @@ import base64
 import time
 import asyncio
 import unicodedata
+import html as html_lib
 from difflib import SequenceMatcher
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple, Union
@@ -861,8 +862,96 @@ async def encontrar_atividade_da_reuniao(
     return None, "SEM_ATIVIDADE_NA_DATA", base
 
 
+def _texto_seguro(v: Any) -> str:
+    """Escapa o texto da transcrição antes de virar HTML de nota."""
+    return html_lib.escape(str(v or "").strip())
+
+
+def gerar_nota_da_atividade(
+    briefing_json: Dict[str, Any], client_name: str, google_doc_id: Optional[str] = None
+) -> str:
+    """
+    Nota enxuta anexada à atividade da reunião: quem, quando e onde ler.
+
+    O briefing inteiro saiu daqui de propósito. Ele já existe no documento do
+    Drive e na transcrição do Tactiq, e repetido dentro da atividade só deixava
+    a timeline do negócio ilegível — eram ~3.600 caracteres por reunião.
+    """
+    nome = _texto_seguro(
+        client_name or (briefing_json.get("dados_cliente") or {}).get("nome") or "Cliente"
+    )
+    data = _texto_seguro(briefing_json.get("data_reuniao"))
+    hora = _texto_seguro(briefing_json.get("hora_reuniao"))
+    quando = f"{data} às {hora}" if data and hora else data
+
+    partes = [f"<p><strong>{nome}</strong>{f' — {quando}' if quando else ''}</p>"]
+
+    tactiq = briefing_json.get("tactiq_link")
+    if tactiq:
+        url = _texto_seguro(tactiq)
+        partes.append(f"<p><strong>Transcrição (Tactiq):</strong> <a href='{url}'>{url}</a></p>")
+
+    if google_doc_id:
+        url = f"https://docs.google.com/document/d/{_texto_seguro(google_doc_id)}/edit"
+        partes.append(f"<p><strong>Documento (Google Drive):</strong> <a href='{url}'>{url}</a></p>")
+
+    return "".join(partes)
+
+
+def gerar_nota_proximos_passos(briefing_json: Dict[str, Any]) -> str:
+    """O bloco DECISÕES E PRÓXIMOS PASSOS em bullets. Vazio quando não há nada."""
+    itens = briefing_json.get("decisoes_proximos_passos") or []
+    if isinstance(itens, str):
+        # Formato antigo guardava tudo num texto só.
+        itens = [linha.strip(" *-•\t") for linha in itens.splitlines()]
+    itens = [_texto_seguro(i) for i in itens if str(i or "").strip()]
+    if not itens:
+        return ""
+    return "<ul>" + "".join(f"<li>{i}</li>" for i in itens) + "</ul>"
+
+
+async def criar_atividade_proximos_passos(
+    briefing_json: Dict[str, Any], atividade: Dict[str, Any], detalhe: Dict[str, Any]
+) -> Optional[str]:
+    """
+    Abre a tarefa "PRÓXIMOS PASSOS" com o que ficou combinado na reunião.
+
+    Só roda depois do vínculo confirmado: sem atividade vinculada não há negócio
+    de que se tenha certeza, e tarefa solta no CRM é pior que tarefa ausente.
+
+    Reexecução **atualiza** a tarefa já criada em vez de abrir outra — o id fica
+    guardado no briefing. Sem isso cada reavaliação deixaria mais uma "PRÓXIMOS
+    PASSOS" no negócio, que é exatamente a duplicidade que o vínculo evita.
+    """
+    corpo = gerar_nota_proximos_passos(briefing_json)
+    if not corpo:
+        return None
+
+    pipedrive = briefing_json.setdefault("pipedrive", {})
+    existente = pipedrive.get("proximos_passos_activity_id")
+    if existente:
+        atualizada = await update_pipedrive_activity(str(existente), {"note": corpo})
+        return str(existente) if atualizada else None
+
+    nova = await create_pipedrive_activity(
+        subject="PRÓXIMOS PASSOS",
+        activity_type="task",
+        due_date=atividade.get("due_date"),
+        note_content=corpo,
+        deal_id=str(detalhe["deal_id"]) if detalhe.get("deal_id") else None,
+        person_id=str(atividade["person_id"]) if atividade.get("person_id") else None,
+        done=False,  # é o que ainda falta fazer
+    )
+    if not nova:
+        return None
+
+    novo_id = str(nova.get("id"))
+    pipedrive["proximos_passos_activity_id"] = novo_id
+    return novo_id
+
+
 async def vincular_briefing_na_atividade(
-    briefing_json: Dict[str, Any], meeting_title: str
+    briefing_json: Dict[str, Any], meeting_title: str, google_doc_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Anexa o briefing na atividade da reunião e a marca como concluída.
@@ -883,8 +972,9 @@ async def vincular_briefing_na_atividade(
     if not atividade:
         return {"status": "nao_vinculado", "motivo": motivo, "detalhe": detalhe, "avaliado_em": agora}
 
-    html = generate_pipedrive_briefing_html(briefing_json, meeting_title, nome)
-    campos: Dict[str, Any] = {"note": html}
+    campos: Dict[str, Any] = {
+        "note": gerar_nota_da_atividade(briefing_json, nome, google_doc_id)
+    }
     ja_concluida = bool(atividade.get("done"))
     if not ja_concluida:
         campos["done"] = True
@@ -898,6 +988,14 @@ async def vincular_briefing_na_atividade(
             "avaliado_em": agora,
         }
 
+    # Só depois da atribuição confirmada. Uma falha aqui não desfaz o vínculo:
+    # a reunião documentada vale por si, e a tarefa pode ser recriada depois.
+    try:
+        proximos_id = await criar_atividade_proximos_passos(briefing_json, atividade, detalhe)
+    except Exception as e:
+        logger.error(f"Falha ao criar PRÓXIMOS PASSOS de '{meeting_title}': {e}")
+        proximos_id = None
+
     return {
         "status": "vinculado",
         "motivo": "OK",
@@ -905,6 +1003,7 @@ async def vincular_briefing_na_atividade(
         "activity_type": TIPOS_REUNIAO.get(atividade.get("type")),
         "activity_url": f"https://investimentosblue.pipedrive.com/activities/list#dialog/activity/{atividade['id']}",
         "ja_estava_concluida": ja_concluida,
+        "proximos_passos_activity_id": proximos_id,
         "detalhe": detalhe,
         "avaliado_em": agora,
     }
@@ -1061,6 +1160,47 @@ def extrair_dados_cliente(bloco: str) -> Dict[str, Any]:
     return campos
 
 
+# Cabeçalhos de seção do documento do Tactiq. Usados como delimitadores: uma
+# seção vai até o próximo cabeçalho.
+_CABECALHOS_TACTIQ = (
+    r"RESUMO R[AÁ]PIDO",
+    r"PRINCIPAIS T[ÓO]PICOS",
+    r"DADOS DO CLIENTE",
+    r"DECIS[OÕ]ES E PR[ÓO]XIMOS PASSOS",
+    r"PONTOS DE ATEN[CÇ][AÃ]O",
+    r"====",
+)
+
+
+def _bloco_da_secao(texto: str, cabecalho: str) -> Optional[str]:
+    """
+    Conteúdo de uma seção, do seu cabeçalho até o próximo.
+
+    O cabeçalho seguinte é reconhecido **só no início de uma linha**. Sem essa
+    âncora, a frase "…a leitura da apólice e os pontos de atenção da cobertura"
+    dentro de um bullet era lida como o começo da seção PONTOS DE ATENÇÃO: o
+    documento do Douglas tinha 6 decisões e só 4 chegavam ao briefing, a quarta
+    cortada no meio. Silencioso — nada falhava, o texto só sumia.
+    """
+    outros = "|".join(c for c in _CABECALHOS_TACTIQ if c != cabecalho)
+    m = re.search(
+        rf"^[ \t]*{cabecalho}[^\n]*\n(.*?)(?=^[ \t]*(?:{outros})|\Z)",
+        texto,
+        re.IGNORECASE | re.DOTALL | re.MULTILINE,
+    )
+    return m.group(1) if m else None
+
+
+def _itens_da_lista(bloco: str) -> List[str]:
+    """Linhas do bloco sem o marcador de bullet, descartando as vazias."""
+    itens = []
+    for linha in bloco.strip().split("\n"):
+        limpa = re.sub(r"^[\*\-\•\d\.]+\s*", "", linha).strip()
+        if limpa and len(limpa) > 3:
+            itens.append(limpa)
+    return itens
+
+
 def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
     """
     Parser para extrair dados estruturados dos Google Docs gerados pelo Tactiq
@@ -1132,20 +1272,17 @@ def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
         data["participantes"] = parts
 
     # 3. Resumo Rápido
-    resumo_match = re.search(r"RESUMO R[AÁ]PIDO\s*\n(.*?)(?=(PRINCIPAIS T[ÓO]PICOS|DADOS DO CLIENTE|DECIS[OÕ]ES|====|$))", text, re.IGNORECASE | re.DOTALL)
+    resumo_match = _bloco_da_secao(text, r"RESUMO R[AÁ]PIDO")
     if resumo_match:
-        data["resumo_rapido"] = resumo_match.group(1).strip()
+        data["resumo_rapido"] = resumo_match.strip()
         
     # 4. Dados do Cliente — lidos por rótulo dentro da própria seção.
     #
     # Delimitar a seção importa: fora dela existem linhas com `*` e dois-pontos
     # (tópicos, decisões) que a busca solta no texto inteiro capturava por engano.
-    bloco_cliente = re.search(
-        r"DADOS DO CLIENTE\s*\n(.*?)(?=(DECIS[OÕ]ES|PONTOS DE ATEN[CÇ][AÃ]O|Link da reuni[aã]o|====|$))",
-        text, re.IGNORECASE | re.DOTALL,
-    )
+    bloco_cliente = _bloco_da_secao(text, r"DADOS DO CLIENTE")
     if bloco_cliente:
-        data["dados_cliente"].update(extrair_dados_cliente(bloco_cliente.group(1)))
+        data["dados_cliente"].update(extrair_dados_cliente(bloco_cliente))
 
     # `herdeiros_filhos` é o nome histórico do campo de filhos.
     if data["dados_cliente"].get("filhos"):
@@ -1160,37 +1297,19 @@ def parse_tactiq_doc(text: str, file_name: str = "") -> dict:
 
 
     # 5. Principais Tópicos
-    topicos_section = re.search(r"PRINCIPAIS T[ÓO]PICOS\s*\n(.*?)(?=(DADOS DO CLIENTE|DECIS[OÕ]ES|PONTOS DE ATEN[CÇ][AÃ]O|Link da reuni[aã]o|====|$))", text, re.IGNORECASE | re.DOTALL)
+    topicos_section = _bloco_da_secao(text, r"PRINCIPAIS T[ÓO]PICOS")
     if topicos_section:
-        raw_topicos = topicos_section.group(1).strip().split("\n")
-        topicos = []
-        for line in raw_topicos:
-            line_clean = re.sub(r"^[\*\-\•\d\.]+\s*", "", line).strip()
-            if line_clean and len(line_clean) > 3:
-                topicos.append(line_clean)
-        data["principais_topicos"] = topicos
+        data["principais_topicos"] = _itens_da_lista(topicos_section)
 
     # 6. Decisões e Próximos Passos
-    decisoes_section = re.search(r"DECIS[OÕ]ES E PR[ÓO]XIMOS PASSOS\s*\n(.*?)(?=(PONTOS DE ATEN[CÇ][AÃ]O|DADOS DO CLIENTE|====|$))", text, re.IGNORECASE | re.DOTALL)
+    decisoes_section = _bloco_da_secao(text, r"DECIS[OÕ]ES E PR[ÓO]XIMOS PASSOS")
     if decisoes_section:
-        raw_decisoes = decisoes_section.group(1).strip().split("\n")
-        decisoes = []
-        for line in raw_decisoes:
-            line_clean = re.sub(r"^[\*\-\•\d\.]+\s*", "", line).strip()
-            if line_clean and len(line_clean) > 3:
-                decisoes.append(line_clean)
-        data["decisoes_proximos_passos"] = decisoes
+        data["decisoes_proximos_passos"] = _itens_da_lista(decisoes_section)
 
     # 7. Pontos de Atenção
-    atencao_section = re.search(r"PONTOS DE ATEN[CÇ][AÃ]O[^\n]*\s*\n(.*?)(?=(DECIS[OÕ]ES|====|$))", text, re.IGNORECASE | re.DOTALL)
+    atencao_section = _bloco_da_secao(text, r"PONTOS DE ATEN[CÇ][AÃ]O")
     if atencao_section:
-        raw_atencao = atencao_section.group(1).strip().split("\n")
-        pontos = []
-        for line in raw_atencao:
-            line_clean = re.sub(r"^[\*\-\•\d\.]+\s*", "", line).strip()
-            if line_clean and len(line_clean) > 3:
-                pontos.append(line_clean)
-        data["pontos_atencao"] = pontos
+        data["pontos_atencao"] = _itens_da_lista(atencao_section)
 
     # 8. Extração de Data e Horário da Reunião (quando presente no documento)
     # 8.1 Padrão combinado (ex: "Data e horário da reunião: 25/08/2026 às 00:00" ou "Data e Hora: 25/08/2026 14:30")
@@ -1515,7 +1634,9 @@ async def process_new_transcription(user_id: Optional[str] = None) -> Dict[str, 
                 # para a tela poder explicar e a regra poder ser melhorada.
                 if should_link_crm:
                     try:
-                        vinculo = await vincular_briefing_na_atividade(briefing_json, meeting_title)
+                        vinculo = await vincular_briefing_na_atividade(
+                            briefing_json, meeting_title, google_doc_id
+                        )
                     except Exception as e:
                         logger.error(f"Falha ao vincular atividade de '{meeting_title}': {e}")
                         vinculo = {
@@ -3646,15 +3767,29 @@ async def revincular_transcricao(
     user: dict = Depends(require_admin),
 ):
     """Reavalia o vínculo de uma transcrição, sem reprocessar o documento."""
-    res = supabase.table("transcriptions").select("briefing_json, meeting_title").eq(
-        "id", transcription_id
-    ).execute()
+    res = supabase.table("transcriptions").select(
+        "briefing_json, meeting_title, google_doc_id, transcription_text"
+    ).eq("id", transcription_id).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Transcrição não encontrada")
 
     briefing = res.data[0].get("briefing_json") or {}
     titulo = res.data[0].get("meeting_title") or "Reunião"
-    vinculo = await vincular_briefing_na_atividade(briefing, titulo)
+
+    # Relê as decisões do documento antes de montar a tarefa. O briefing gravado
+    # guarda o resultado do parser da época, e o de antes desta correção cortava
+    # a seção no meio quando um bullet dizia "pontos de atenção".
+    texto = res.data[0].get("transcription_text")
+    if texto:
+        try:
+            frescas = _bloco_da_secao(texto, r"DECIS[OÕ]ES E PR[ÓO]XIMOS PASSOS")
+            if frescas:
+                briefing["decisoes_proximos_passos"] = _itens_da_lista(frescas)
+        except Exception as e:
+            logger.warning(f"Falha ao reler decisões de '{titulo}': {e}")
+    vinculo = await vincular_briefing_na_atividade(
+        briefing, titulo, res.data[0].get("google_doc_id")
+    )
     briefing["vinculo"] = vinculo
     if vinculo["status"] == "vinculado":
         briefing.setdefault("pipedrive", {})["activity_id"] = vinculo["activity_id"]
