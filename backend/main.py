@@ -1611,23 +1611,10 @@ async def process_new_transcription(user_id: Optional[str] = None) -> Dict[str, 
                             briefing_json["pipedrive"]["deal_id"] = deal_id
                             briefing_json["pipedrive"]["deal_url"] = f"https://investimentosblue.pipedrive.com/deal/{deal_id}"
                         
-                        if matching_confidence >= 0.70:
-                            briefing_note_html = generate_pipedrive_briefing_html(
-                                briefing_json=briefing_json,
-                                meeting_title=meeting_title,
-                                client_name=cliente_nome
-                            )
-                            
-                            note_res = await create_pipedrive_note(
-                                content=briefing_note_html,
-                                person_id=person_id,
-                                deal_id=deal_id
-                            )
-                            if note_res:
-                                note_id = str(note_res.get("id"))
-                                briefing_json["pipedrive"]["note_id"] = note_id
-                                briefing_json["pipedrive"]["activity_id"] = None
-                                logger.info(f"Nota Pipedrive criada com sucesso: #{note_id} para {cliente_nome}")
+                        # A busca acima serve para guardar pessoa e negócio no
+                        # briefing. A nota solta na pessoa/negócio deixou de ser
+                        # criada: o registro da reunião vive na atividade, e ter
+                        # o mesmo texto nos dois lugares poluía a timeline.
 
                 # Vincula o briefing à atividade da reunião (R1/R2/R3) que já
                 # existe na agenda. Toda falha registra o motivo e a evidência,
@@ -3366,24 +3353,10 @@ async def assign_transcription_to_crm(
         except Exception:
             pass
 
-    # 6. Cria Nota no Pipedrive com o Briefing
+    # 6. A atribuição manual não cria mais nota na pessoa/negócio. O conteúdo da
+    # reunião vive na atividade; aqui só se registra a quem ela pertence.
     note_id = None
-    if req.create_activity or getattr(req, "create_note", True):
-        briefing_note_html = generate_pipedrive_briefing_html(
-            briefing_json=briefing_json,
-            meeting_title=meeting_title,
-            client_name=client_name
-        )
-        note_res = await create_pipedrive_note(
-            content=briefing_note_html,
-            person_id=person_id,
-            deal_id=deal_id
-        )
-        if note_res:
-            note_id = str(note_res.get("id"))
-            briefing_json["pipedrive"]["note_id"] = note_id
-            briefing_json["pipedrive"]["activity_id"] = None
-            
+
     # 7. Atualiza registro da Transcrição
     supabase.table("transcriptions").update({
         "processing_status": "completed",
