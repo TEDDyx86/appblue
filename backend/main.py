@@ -950,6 +950,123 @@ async def criar_atividade_proximos_passos(
     return novo_id
 
 
+async def anexar_transcricao_no_negocio(
+    briefing_json: Dict[str, Any],
+    meeting_title: str,
+    google_doc_id: Optional[str],
+    deal_id: Optional[str],
+    person_id: Optional[str],
+) -> Dict[str, Any]:
+    """
+    Registra a transcrição no negócio escolhido na atribuição manual.
+
+    Prefere a atividade da reunião que já está na agenda — é onde o registro
+    pertence e é o que o fluxo automático faz. Não havendo exatamente uma na
+    data, cria uma atividade `tactiq`, que é o tipo que a conta já usa para
+    transcrição. Nota solta na pessoa ou no negócio, não: o conteúdo da reunião
+    vive em atividade.
+
+    Havendo mais de uma candidata, também cria a `tactiq`. Escolher uma das duas
+    no chute escreveria na reunião errada, e aqui não há o desempate por nome
+    que o fluxo automático tem.
+    """
+    nome = (briefing_json.get("dados_cliente") or {}).get("nome")
+    nota = gerar_nota_da_atividade(briefing_json, nome, google_doc_id)
+
+    alvo = None
+    m = re.match(r"(\d{2})/(\d{2})/(\d{4})", str(briefing_json.get("data_reuniao") or ""))
+    if m:
+        try:
+            alvo = datetime(int(m.group(3)), int(m.group(2)), int(m.group(1))).date()
+        except ValueError:
+            alvo = None
+
+    candidatas: List[Dict[str, Any]] = []
+    if deal_id and alvo:
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                res = await client.get(
+                    f"https://api.pipedrive.com/v1/deals/{deal_id}/activities",
+                    params={"api_token": PIPEDRIVE_API_TOKEN, "limit": 50},
+                )
+            if res.status_code == 200:
+                for a in res.json().get("data") or []:
+                    if a.get("type") not in TIPOS_REUNIAO:
+                        continue
+                    try:
+                        quando = datetime.strptime(str(a.get("due_date")), "%Y-%m-%d").date()
+                    except (ValueError, TypeError):
+                        continue
+                    if abs((quando - alvo).days) <= TOLERANCIA_DIAS:
+                        candidatas.append(a)
+        except Exception as e:
+            logger.warning(f"Falha ao listar atividades do negócio {deal_id}: {e}")
+
+    if len(candidatas) == 1:
+        atividade = candidatas[0]
+        campos: Dict[str, Any] = {"note": nota}
+        if not atividade.get("done"):
+            campos["done"] = True
+        if await update_pipedrive_activity(str(atividade["id"]), campos):
+            return {
+                "activity_id": str(atividade["id"]),
+                "activity_origem": "existente",
+                "activity_type": TIPOS_REUNIAO.get(atividade.get("type")),
+            }
+
+    nova = await create_pipedrive_activity(
+        subject=(meeting_title or "Transcrição Tactiq")[:255],
+        activity_type="tactiq",
+        due_date=str(alvo) if alvo else None,
+        note_content=nota,
+        deal_id=str(deal_id) if deal_id else None,
+        person_id=str(person_id) if person_id else None,
+        done=True,  # é registro do que já aconteceu
+    )
+    if not nova:
+        return {}
+    return {
+        "activity_id": str(nova.get("id")),
+        "activity_origem": "criada",
+        "activity_type": "tactiq",
+    }
+
+
+async def desanexar_transcricao_do_crm(briefing_json: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Desfaz no Pipedrive o que a transcrição escreveu.
+
+    Atividade que já existia na agenda é do cliente, não nossa: limpa-se a nota
+    que escrevemos e ela continua lá. Apagá-la removeria a reunião do histórico
+    do negócio — e era exatamente o que acontecia em Desvincular, Ignorar e
+    Excluir, porque `activity_id` passou a apontar para a R1/R2/R3 real quando o
+    vínculo automático entrou.
+
+    Só se apaga o que este sistema criou: a `tactiq` da atribuição manual e a
+    tarefa PRÓXIMOS PASSOS.
+    """
+    pipe = briefing_json.get("pipedrive") or {}
+    r = {"atividade_apagada": False, "nota_limpa": False, "proximos_passos_apagada": False}
+
+    activity_id = pipe.get("activity_id")
+    if activity_id:
+        if pipe.get("activity_origem") == "criada":
+            r["atividade_apagada"] = await delete_pipedrive_activity(str(activity_id))
+        else:
+            r["nota_limpa"] = bool(await update_pipedrive_activity(str(activity_id), {"note": ""}))
+
+    proximos = pipe.get("proximos_passos_activity_id")
+    if proximos:
+        r["proximos_passos_apagada"] = await delete_pipedrive_activity(str(proximos))
+
+    # Zera as referências: id de atividade apagada que sobrevive no briefing
+    # vira PUT em atividade inexistente na próxima execução.
+    pipe["proximos_passos_activity_id"] = None
+    pipe["activity_origem"] = None
+
+    return r
+
+
 async def vincular_briefing_na_atividade(
     briefing_json: Dict[str, Any], meeting_title: str, google_doc_id: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -1637,6 +1754,8 @@ async def process_new_transcription(user_id: Optional[str] = None) -> Dict[str, 
                     if vinculo["status"] == "vinculado":
                         activity_id = vinculo["activity_id"]
                         briefing_json["pipedrive"]["activity_id"] = activity_id
+                        # A atividade já estava na agenda: nunca deve ser apagada.
+                        briefing_json["pipedrive"]["activity_origem"] = "existente"
 
                     log_audit_event(
                         action="TRANSCRIPTION_LINKED" if vinculo["status"] == "vinculado"
@@ -3278,7 +3397,8 @@ async def assign_transcription_to_crm(
     old_note_deleted = False
     
     if req.delete_old_activity and old_activity_id:
-        old_act_deleted = await delete_pipedrive_activity(old_activity_id)
+        limpeza = await desanexar_transcricao_do_crm(briefing_json)
+        old_act_deleted = limpeza["atividade_apagada"] or limpeza["nota_limpa"]
     if req.delete_old_note and old_note_id:
         old_note_deleted = await delete_pipedrive_note(old_note_id)
     
@@ -3353,9 +3473,19 @@ async def assign_transcription_to_crm(
         except Exception:
             pass
 
-    # 6. A atribuição manual não cria mais nota na pessoa/negócio. O conteúdo da
-    # reunião vive na atividade; aqui só se registra a quem ela pertence.
+    # 6. Registra a transcrição na atividade do negócio escolhido. Nota na
+    # pessoa/negócio não se cria mais: o conteúdo da reunião vive em atividade.
     note_id = None
+    anexo = await anexar_transcricao_no_negocio(
+        briefing_json, meeting_title, t.get("google_doc_id"), deal_id, person_id
+    )
+    if anexo:
+        briefing_json["pipedrive"]["activity_id"] = anexo["activity_id"]
+        briefing_json["pipedrive"]["activity_origem"] = anexo["activity_origem"]
+        briefing_json["pipedrive"]["activity_type"] = anexo.get("activity_type")
+    else:
+        briefing_json["pipedrive"]["activity_id"] = None
+        briefing_json["pipedrive"]["activity_origem"] = None
 
     # 7. Atualiza registro da Transcrição
     supabase.table("transcriptions").update({
@@ -3421,10 +3551,12 @@ async def unlink_transcription_from_crm(
     old_person = briefing_json.get("dados_cliente", {}).get("nome") or pipe_info.get("person_id")
     old_deal = pipe_info.get("deal_id")
     
-    # 1. Apaga atividade no Pipedrive se existir
+    # 1. Desfaz o que a transcrição escreveu. Atividade que já existia na agenda
+    # tem só a nota limpa — apagá-la tiraria a reunião do histórico do cliente.
     act_deleted = False
     if delete_activity and old_activity_id:
-        act_deleted = await delete_pipedrive_activity(old_activity_id)
+        limpeza = await desanexar_transcricao_do_crm(briefing_json)
+        act_deleted = limpeza["atividade_apagada"] or limpeza["nota_limpa"]
         
     # 2. Apaga nota se existir
     note_deleted = False
@@ -3765,7 +3897,9 @@ async def revincular_transcricao(
     )
     briefing["vinculo"] = vinculo
     if vinculo["status"] == "vinculado":
-        briefing.setdefault("pipedrive", {})["activity_id"] = vinculo["activity_id"]
+        pipe = briefing.setdefault("pipedrive", {})
+        pipe["activity_id"] = vinculo["activity_id"]
+        pipe["activity_origem"] = "existente"
 
     supabase.table("transcriptions").update({"briefing_json": briefing}).eq(
         "id", transcription_id
@@ -3805,9 +3939,11 @@ async def toggle_ignore_transcription(
     act_deleted = False
     note_deleted = False
     if new_ignored:
-        # Se for marcada como ignorada / reunião interna, remove nota/atividade existente do Pipedrive para não poluir o CRM
+        # Marcada como reunião interna: tira do CRM o que a transcrição escreveu.
+        # A atividade que já estava na agenda fica — só perde a nota.
         if old_activity_id:
-            act_deleted = await delete_pipedrive_activity(old_activity_id)
+            limpeza = await desanexar_transcricao_do_crm(briefing_json)
+            act_deleted = limpeza["atividade_apagada"] or limpeza["nota_limpa"]
         if old_note_id:
             note_deleted = await delete_pipedrive_note(old_note_id)
             
@@ -3867,10 +4003,12 @@ async def delete_transcription_endpoint(
     activity_id = pipe_info.get("activity_id")
     note_id = pipe_info.get("note_id")
     
-    # 1. Apaga do Pipedrive se houver atividade ou nota
+    # 1. Desfaz no Pipedrive. Excluir a transcrição do nosso painel não pode
+    # excluir a reunião do cliente: atividade preexistente só perde a nota.
     act_deleted = False
     if activity_id:
-        act_deleted = await delete_pipedrive_activity(activity_id)
+        limpeza = await desanexar_transcricao_do_crm(briefing_json)
+        act_deleted = limpeza["atividade_apagada"] or limpeza["nota_limpa"]
         
     note_deleted = False
     if note_id:
