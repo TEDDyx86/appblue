@@ -11,7 +11,10 @@ Uso:
     backend/venv/Scripts/python.exe test_chatbot_ferramentas.py
     backend/venv/Scripts/python.exe test_chatbot_ferramentas.py --modelos
 
-Precisa de GEMINI_API_KEY no backend/.env. Opcionalmente GEMINI_MODEL.
+    backend/venv/Scripts/python.exe test_chatbot_ferramentas.py --nvidia
+
+Precisa de GEMINI_API_KEY (ou NVIDIA_API_KEY com --nvidia) no backend/.env.
+Opcionalmente GEMINI_MODEL / NVIDIA_MODEL.
 """
 
 import io
@@ -27,6 +30,14 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+
+NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
+# meta/llama-3.3-70b-instruct chegou ao fim de vida em 26/08/2026 (HTTP 410).
+# Dos candidatos sondados, este foi o unico que escolheu certo: mistral-large-2 e
+# llama-3.1-nemotron-70b dao 404 nesta conta, e nemotron-3.5-lightning inventou
+# o nome da ferramenta ("list_transcricoes" em vez de "listar_transcricoes").
+NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "nvidia/nemotron-3-super-120b-a12b")
+NVIDIA_BASE = "https://integrate.api.nvidia.com/v1"
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # Versão fixa, não `gemini-flash-latest`: alias muda sozinho e o resultado do
@@ -223,6 +234,71 @@ PERGUNTAS = [
 ]
 
 
+async def perguntar_nvidia(client: httpx.AsyncClient, pergunta: str, tentativas: int = 3):
+    """
+    Mesma pergunta, provedor compatível com OpenAI.
+
+    O catálogo FERRAMENTAS é reaproveitado sem alteração: os dois formatos
+    diferem só no invólucro — Gemini agrupa em `functionDeclarations`, OpenAI
+    embrulha cada uma em `{"type": "function", "function": {...}}`. Nome,
+    descrição e parâmetros são os mesmos, e é isso que torna o fallback viável.
+    """
+    corpo = {
+        "model": NVIDIA_MODEL,
+        "messages": [
+            {"role": "system", "content": INSTRUCAO},
+            {"role": "user", "content": pergunta},
+        ],
+        "tools": [{"type": "function", "function": f} for f in FERRAMENTAS],
+        "tool_choice": "auto",
+        "max_tokens": 512,
+    }
+    cabecalhos = {"Authorization": f"Bearer {NVIDIA_API_KEY}"}
+
+    for tentativa in range(tentativas):
+        r = await client.post(
+            f"{NVIDIA_BASE}/chat/completions", headers=cabecalhos, json=corpo, timeout=90.0
+        )
+        if r.status_code in (429, 500, 503) and tentativa < tentativas - 1:
+            espera = 5.0 * (2 ** tentativa)
+            print(f"         (provedor ocupado, aguardando {espera:.0f}s)")
+            await asyncio.sleep(espera)
+            continue
+        break
+
+    if r.status_code != 200:
+        return None, {}, f"HTTP {r.status_code}: {r.text[:200]}"
+
+    escolhas = r.json().get("choices") or []
+    if not escolhas:
+        return None, {}, "resposta sem choices"
+    chamadas = escolhas[0].get("message", {}).get("tool_calls") or []
+    if not chamadas:
+        return None, {}, None  # respondeu em texto
+
+    fn = chamadas[0].get("function", {})
+    try:
+        # Diferença do Gemini: aqui os argumentos vêm como string JSON.
+        args = json.loads(fn.get("arguments") or "{}")
+    except json.JSONDecodeError:
+        args = {"_bruto": fn.get("arguments")}
+    return fn.get("name"), args, None
+
+
+async def listar_modelos_nvidia(client: httpx.AsyncClient) -> None:
+    r = await client.get(
+        f"{NVIDIA_BASE}/models", headers={"Authorization": f"Bearer {NVIDIA_API_KEY}"}
+    )
+    if r.status_code != 200:
+        print(f"Falha ao listar: {r.status_code} {r.text[:300]}")
+        return
+    nomes = sorted(m["id"] for m in r.json().get("data", []))
+    print(f"{len(nomes)} modelos na plataforma NVIDIA. Instruct/chat mais prováveis:\n")
+    for n in nomes:
+        if any(t in n.lower() for t in ("instruct", "nemotron", "qwen", "llama", "mistral")):
+            print(f"   {n}")
+
+
 async def listar_modelos(client: httpx.AsyncClient) -> None:
     r = await client.get(f"{BASE}/models", params={"key": GEMINI_API_KEY})
     if r.status_code != 200:
@@ -267,10 +343,11 @@ async def perguntar(client: httpx.AsyncClient, pergunta: str, tentativas: int = 
             json=corpo,
             timeout=60.0,
         )
-        # 429 = cota; 503 = "high demand" do lado do Google. Os dois são
-        # transitórios e sem retry viram falso negativo: na primeira execução
-        # dois 503 apareceram como se o modelo tivesse escolhido errado.
-        if r.status_code in (429, 503) and tentativa < tentativas - 1:
+        # 429 = cota; 500/503 = falha do provedor. Todos transitórios, e sem
+        # retry viram falso negativo: medindo, o Gemini devolveu 503 duas vezes
+        # e a NVIDIA 500 três — todas apareceram no relatório como se o modelo
+        # tivesse escolhido errado.
+        if r.status_code in (429, 500, 503) and tentativa < tentativas - 1:
             try:
                 espera = _espera_sugerida(r.json(), tentativa)
             except Exception:
@@ -295,20 +372,29 @@ async def perguntar(client: httpx.AsyncClient, pergunta: str, tentativas: int = 
 
 
 async def run() -> int:
-    if not GEMINI_API_KEY:
-        print("GEMINI_API_KEY não está no backend/.env — adicione a linha e rode de novo.")
+    nvidia = "--nvidia" in sys.argv
+    chave = NVIDIA_API_KEY if nvidia else GEMINI_API_KEY
+    nome_chave = "NVIDIA_API_KEY" if nvidia else "GEMINI_API_KEY"
+    modelo = NVIDIA_MODEL if nvidia else GEMINI_MODEL
+
+    if not chave:
+        print(f"{nome_chave} não está no backend/.env — adicione a linha e rode de novo.")
         return 2
 
     async with httpx.AsyncClient() as client:
         if "--modelos" in sys.argv:
-            await listar_modelos(client)
+            await (listar_modelos_nvidia(client) if nvidia else listar_modelos(client))
             return 0
 
-        print(f"modelo: {GEMINI_MODEL} | {len(FERRAMENTAS)} ferramentas | {len(PERGUNTAS)} perguntas\n")
+        provedor = "NVIDIA" if nvidia else "Gemini"
+        print(f"{provedor} | modelo: {modelo} | {len(FERRAMENTAS)} ferramentas | {len(PERGUNTAS)} perguntas\n")
         acertos, erros = 0, []
 
         for pergunta, esperado in PERGUNTAS:
-            escolhida, args, erro = await perguntar(client, pergunta)
+            if nvidia:
+                escolhida, args, erro = await perguntar_nvidia(client, pergunta)
+            else:
+                escolhida, args, erro = await perguntar(client, pergunta)
 
             if erro:
                 print(f"  ERRO   {pergunta[:46]:48} {erro}")
