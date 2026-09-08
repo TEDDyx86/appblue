@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Plus_Jakarta_Sans, Inter, JetBrains_Mono } from 'next/font/google'
 import { ThemeProvider } from '@/context/ThemeContext'
+import Assistente from '@/components/Assistente'
 import './globals.css'
 
 const jakarta = Plus_Jakarta_Sans({
@@ -45,7 +46,11 @@ export default function RootLayout({
   return (
     <html lang="pt-BR" className={`${inter.variable} ${jakarta.variable} ${jetbrains.variable}`} suppressHydrationWarning>
       <body className="font-sans antialiased bg-[#F8FAFC] text-[#000D38] dark:bg-[#00061A] dark:text-slate-100 transition-colors duration-200">
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          {children}
+          {/* Some sozinho nas rotas públicas e sem sessão. */}
+          <Assistente />
+        </ThemeProvider>
       </body>
     </html>
   )

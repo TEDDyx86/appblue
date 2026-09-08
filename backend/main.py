@@ -5709,6 +5709,46 @@ async def sync_person_ficha_endpoint(
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
 # ============================================================================
+# ASSISTENTE DE CONSULTA
+# ============================================================================
+#
+# A lógica vive em `assistente.py`; aqui fica só a rota, porque é aqui que a
+# autenticação existe. O import é no fim do arquivo de propósito: `assistente`
+# chama funções deste módulo (fetch_agenda, supabase, ...) e importar mais cedo
+# fecharia o ciclo.
+
+from assistente import PerguntaRequest, responder as _responder_assistente
+
+
+@app.post("/api/assistente/perguntar")
+async def assistente_perguntar(
+    req: PerguntaRequest,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Pergunta em português sobre a agenda, as transcrições e o CRM.
+
+    Somente leitura: nenhuma ferramenta do assistente escreve no Pipedrive ou no
+    Supabase. Exige autenticação como todo o resto — o assistente não é uma porta
+    lateral para dados que a tela já protege.
+    """
+    resposta = await _responder_assistente(req.mensagem)
+
+    log_audit_event(
+        action="ASSISTENTE_CONSULTA",
+        resource_type="assistente",
+        resource_id=resposta.get("ferramenta") or "nenhuma",
+        user_id=user.get("id", user.get("sub")),
+        details={
+            "pergunta": req.mensagem[:500],
+            "ferramenta": resposta.get("ferramenta"),
+            "argumentos": resposta.get("argumentos"),
+        },
+    )
+    return resposta
+
+
+# ============================================================================
 # MAIN
 # ============================================================================
 

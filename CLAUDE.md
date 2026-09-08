@@ -30,9 +30,19 @@ Python 3.11 (`.python-version`). O venv fica em `backend/venv`.
 
 Três peças: **Next.js 14 (App Router)** → **FastAPI** → **Supabase (Postgres)**, com **Pipedrive CRM** e **Google Drive** como sistemas externos. O `README.md` descreve as funcionalidades; o que segue é o que exige ler vários arquivos para entender.
 
-### O backend é um arquivo só
+### O backend é quase um arquivo só
 
 `backend/main.py` tem ~5.400 linhas, dividido por comentários `# ====`. Não há ORM nem camada de repositório: os endpoints chamam `supabase.table(...)` e `httpx` direto. Para achar código, procure pelo cabeçalho da seção (`PIPEDRIVE INTEGRATION`, `VÍNCULO: transcrição -> atividade`, etc.), não por arquivo.
+
+A exceção é `backend/assistente.py` — o assistente de consulta em linguagem natural. Ficou fora por ser subsistema fechado (dois provedores de LLM, catálogo de ferramentas, despacho) e por `main.py` já ser difícil de navegar. `main.py` importa dele **no fim do arquivo**, porque `assistente` chama funções de `main` e importar antes fecharia o ciclo.
+
+### O assistente é somente leitura
+
+`assistente.py` mapeia perguntas para endpoints que já existem (`fetch_agenda`, busca no Pipedrive, transcrições). Nenhuma ferramenta escreve. Ao adicionar uma, mantenha assim — e note que `FERRAMENTAS` e `EXECUTORES` têm um `assert` que quebra o import se saírem de sincronia.
+
+**Valide o nome da ferramenta antes de despachar.** Um modelo já devolveu `list_transcricoes` em vez de `listar_transcricoes`; nome inventado nunca pode chegar ao `EXECUTORES[...]`.
+
+Provedores em cascata (Gemini → NVIDIA) porque **medimos**: cada um sozinho falhou em ~10% e ~14% das chamadas, sempre por indisponibilidade (429/500/503), nunca por escolha errada. `backend/test_chatbot_ferramentas.py` roda 21 perguntas e mede a escolha sem chamar endpoint nenhum — use antes de mexer nas descrições das ferramentas.
 
 ### `briefing_json` é o esquema de verdade
 
