@@ -15,6 +15,7 @@ if sys.platform == "win32":
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from base_clientes.planilha import ler_export_mag
+from base_clientes.reconciliacao import calcular_diff
 
 RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 BRUTA = os.path.join(RAIZ, "PRODUTOS CONTRATADOS POR PROPOSTA - VIDA INDIVIDUAL (16).xlsx")
@@ -50,8 +51,51 @@ def teste_leitura():
     checar("agregado: capital segurado", round(cli["total_capital_segurado"], 2), 456902.55)
 
 
+def teste_reconciliacao():
+    print("\n=== reconciliacao ===")
+    with open(BRUTA, "rb") as f:
+        lido = ler_export_mag(f.read())
+
+    # Base vazia: tudo é novo.
+    d = calcular_diff(lido, coberturas_atuais={}, clientes_atuais={})
+    checar("base vazia: novos", len(d["novos"]), 371)
+    checar("base vazia: alterados", len(d["alterados"]), 0)
+    checar("base vazia: inalterados", d["inalterados"], 0)
+
+    # Idempotência: importar de novo o que já está gravado não muda nada.
+    atuais = {c["item_contratado"]: dict(c) for c in lido.coberturas}
+    cli_atuais = {k: dict(v) for k, v in lido.clientes.items()}
+    d2 = calcular_diff(lido, coberturas_atuais=atuais, clientes_atuais=cli_atuais)
+    checar("reimportacao: novos", len(d2["novos"]), 0)
+    checar("reimportacao: alterados", len(d2["alterados"]), 0)
+    checar("reimportacao: inalterados", d2["inalterados"], 371)
+    checar("reimportacao: sumidos", len(d2["sumidos"]), 0)
+
+    # Um campo comparado muda -> vira alterado.
+    alterada = {k: dict(v) for k, v in atuais.items()}
+    alvo = lido.coberturas[0]["item_contratado"]
+    alterada[alvo]["status_cobertura"] = "REMIDO - D02"
+    d3 = calcular_diff(lido, coberturas_atuais=alterada, clientes_atuais=cli_atuais)
+    checar("status mudou: alterados", len(d3["alterados"]), 1)
+    checar("status mudou: campo certo",
+           list(d3["alterados"][0]["campos"]), ["status_cobertura"])
+
+    # Um campo NÃO comparado muda -> continua inalterado (evita ruído semanal).
+    ruido = {k: dict(v) for k, v in atuais.items()}
+    ruido[alvo]["am"] = "AM9999"
+    d4 = calcular_diff(lido, coberturas_atuais=ruido, clientes_atuais=cli_atuais)
+    checar("campo nao comparado: alterados", len(d4["alterados"]), 0)
+
+    # Item que existia e não veio -> sumido, e nunca apagado.
+    com_extra = {k: dict(v) for k, v in atuais.items()}
+    com_extra["999999999999999999"] = {"item_contratado": "999999999999999999", "cpf": "00000000000"}
+    d5 = calcular_diff(lido, coberturas_atuais=com_extra, clientes_atuais=cli_atuais)
+    checar("sumido detectado", len(d5["sumidos"]), 1)
+
+
 if __name__ == "__main__":
     teste_leitura()
+    teste_reconciliacao()
     print(f"\n{'FALHOU' if falhas else 'TUDO OK'}")
     for f in falhas:
         print(f"   {f}")
