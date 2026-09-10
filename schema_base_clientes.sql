@@ -83,6 +83,13 @@ ALTER TABLE base_importacoes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE base_clientes   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE base_coberturas ENABLE ROW LEVEL SECURITY;
 
+-- CREATE POLICY não aceita IF NOT EXISTS. Sem o DROP antes, rodar este arquivo
+-- uma segunda vez quebraria em "policy already exists" — e o resto do script é
+-- idempotente, então ele precisa ser re-executável inteiro.
+DROP POLICY IF EXISTS svc_base_importacoes ON base_importacoes;
+DROP POLICY IF EXISTS svc_base_clientes    ON base_clientes;
+DROP POLICY IF EXISTS svc_base_coberturas  ON base_coberturas;
+
 CREATE POLICY svc_base_importacoes ON base_importacoes FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY svc_base_clientes    ON base_clientes    FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY svc_base_coberturas  ON base_coberturas  FOR ALL USING (true) WITH CHECK (true);
