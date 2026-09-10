@@ -60,3 +60,10 @@ scratch/
 
 # Temporary Screenshots
 duvida.png
+
+# Exports da MAG usados como fixture de teste da Base de Clientes.
+# Carregam CPF, telefone, e-mail, endereco e renda de 209 pessoas reais —
+# ficam na maquina, nunca no historico do git.
+*.xlsx
+*.xls
+*.csv
