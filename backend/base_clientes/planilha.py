@@ -86,6 +86,10 @@ class IdDuplicado(Exception):
     """Dois itens com o mesmo ITEM CONTRATADO: sem identidade não há reconciliação."""
 
 
+class CabecalhoAmbiguo(Exception):
+    """Duas colunas com o mesmo nome normalizado: não dá para saber qual ler."""
+
+
 @dataclass
 class ExportLido:
     coberturas: List[Dict[str, Any]] = field(default_factory=list)
@@ -151,21 +155,30 @@ def _data_hora(v: Any) -> Optional[datetime]:
     return v if isinstance(v, datetime) else None
 
 
-def _converter(campo: str, bruto: Any) -> Any:
+def _converter(campo: str, bruto: Any, avisos: Optional[List[str]] = None,
+               linha: Optional[int] = None) -> Any:
     if campo == "cpf":
         d = _so_digitos(bruto)
-        return d.zfill(11) if d else None
-    if campo in TEXTO:
-        return _texto(bruto)
-    if campo in NUMERO:
-        return _numero(bruto)
-    if campo in INTEIRO:
-        return _inteiro(bruto)
-    if campo in DATA:
-        return _data(bruto)
-    if campo in DATA_HORA:
-        return _data_hora(bruto)
-    return _texto(bruto)
+        valor = d.zfill(11) if d else None
+    elif campo in TEXTO:
+        valor = _texto(bruto)
+    elif campo in NUMERO:
+        valor = _numero(bruto)
+    elif campo in INTEIRO:
+        valor = _inteiro(bruto)
+    elif campo in DATA:
+        valor = _data(bruto)
+    elif campo in DATA_HORA:
+        valor = _data_hora(bruto)
+    else:
+        valor = _texto(bruto)
+
+    # Valor preenchido que não converteu não pode virar null calado: some da
+    # base sem ninguém saber. Vai para avisos, que a tela de conferência mostra.
+    if valor is None and bruto is not None and str(bruto).strip() != "" and avisos is not None:
+        avisos.append(f"linha {linha}: {campo} ilegível ({bruto!r})")
+
+    return valor
 
 
 def ler_export_mag(conteudo: bytes) -> ExportLido:
@@ -184,9 +197,24 @@ def ler_export_mag(conteudo: bytes) -> ExportLido:
         raise ColunasFaltando("Planilha vazia.")
 
     cabecalho = [_normalizar_cabecalho(c) for c in linhas[0]]
+
+    # Cabeçalho duplicado faz a última ocorrência ganhar em silêncio no dict
+    # abaixo, e todas as leituras daquele nome passam a ler a coluna errada sem
+    # erro nenhum. Recusa é o certo aqui, como em ColunasFaltando/IdDuplicado:
+    # continuar produziria uma base em que ninguém pode confiar.
+    usadas = {_normalizar_cabecalho(c) for c in COLUNAS_COBERTURA} | {
+        _normalizar_cabecalho(c) for c in COLUNAS_CLIENTE
+    }
+    contagem: Dict[str, int] = {}
+    for h in cabecalho:
+        contagem[h] = contagem.get(h, 0) + 1
+    duplicadas = sorted(h for h, qtd in contagem.items() if qtd > 1 and h in usadas)
+    if duplicadas:
+        raise CabecalhoAmbiguo("Colunas duplicadas no cabeçalho: " + ", ".join(duplicadas))
+
     posicao = {h: i for i, h in enumerate(cabecalho)}
 
-    exigidas = {_normalizar_cabecalho(c) for c in COLUNAS_COBERTURA}
+    exigidas = usadas
     faltando = sorted(exigidas - set(posicao))
     if faltando:
         raise ColunasFaltando("Colunas ausentes: " + ", ".join(faltando))
@@ -208,11 +236,22 @@ def ler_export_mag(conteudo: bytes) -> ExportLido:
             r.avisos.append(f"linha {n}: sem ITEM CONTRATADO, descartada")
             r.linhas_descartadas += 1
             continue
+        if not cpf:
+            # Item preenchido sem CPF: não tem a quem atribuir a cobertura. Sem
+            # esse descarte, setdefault(None, ...) juntaria coberturas de
+            # pessoas diferentes num cliente fantasma de chave None, que depois
+            # não vira linha válida em base_clientes (PK é cpf).
+            r.avisos.append(f"linha {n}: sem CPF, descartada")
+            r.linhas_descartadas += 1
+            continue
         if item in vistos:
             raise IdDuplicado(f"ITEM CONTRATADO repetido no arquivo: {item} (linha {n})")
         vistos.add(item)
 
-        cob = {campo: _converter(campo, bruto(col)) for col, campo in COLUNAS_COBERTURA.items()}
+        cob = {
+            campo: _converter(campo, bruto(col), r.avisos, n)
+            for col, campo in COLUNAS_COBERTURA.items()
+        }
         r.coberturas.append(cob)
 
         c = r.clientes.setdefault(cpf, {
@@ -222,7 +261,7 @@ def ler_export_mag(conteudo: bytes) -> ExportLido:
         for col, campo in COLUNAS_CLIENTE.items():
             if campo == "cpf":
                 continue
-            valor = _converter(campo, bruto(col))
+            valor = _converter(campo, bruto(col), r.avisos, n)
             if valor is not None:
                 c[campo] = valor
         c["total_capital_segurado"] += cob.get("capital_segurado") or 0.0
