@@ -135,9 +135,10 @@ subir o arquivo corrigido — não aplicar 340 de 371.
 Sumido não apaga porque a causa é ambígua: pode ser cancelamento, pode ser um
 recorte diferente do export. Apagar por engano é irreversível; sinalizar não é.
 
-## As cinco abas
+## As quatro abas
 
-Submenu no topo da página `/base-clientes`.
+Submenu no topo da página `/base-clientes`: **Dashboard**, **Clientes**,
+**Fila de processamento**, **Exportar dados**.
 
 ### Dashboard
 
@@ -148,13 +149,41 @@ ocupa a maior parte da tela:
 - **Cobertura única** (162 hoje) — cliente com exatamente uma cobertura, listando
   quais dos três riders da carteira ele não tem: `DOENÇAS GRAVES PLUS`,
   `IPA COM MAJORAÇÃO + IFPD`, `DIH ADICIONAL UTI`.
-- **Subsegurado** — capital segurado total abaixo de **24× a renda mensal
-  declarada**. Dois anos de renda é o piso conservador da categoria; o número é
-  editável em Configurações, e a régua serve para ordenar a fila, não para
-  precificar nada.
+- **Maior lacuna de cobertura** — ver abaixo. Sem limiar: a lista é ordenada, não
+  filtrada.
 - **Status virou `REMIDO`** — parou de pagar. Detectado no diff da última
   importação, é ligação do dia.
 - **Aniversariantes do mês** — com idade e profissão à mão.
+
+#### Por que "subsegurado" não é um filtro
+
+A primeira versão deste spec marcava como subsegurado quem tivesse capital
+abaixo de 24× a renda mensal. Medindo contra a base real, isso marcaria **119 de
+209 clientes (56%)** — e a régua de mercado (10× a renda anual) marcaria **201 de
+209 (96%)**.
+
+A mediana da carteira é **1,7× a renda anual**, contra 10× de referência de
+mercado. Ou seja: por qualquer régua absoluta, quase todo mundo está
+subsegurado, e a "lista de prioridade" vira a lista de clientes com outro nome.
+
+Distribuição da razão capital / renda anual: p10 = 0,9× · p25 = 1,3× ·
+**mediana 1,7×** · p75 = 3,3× · p90 = 6,3×.
+
+O limiar então some e vira **ordenação**:
+
+```
+lacuna_em_reais = (renda_anual × 10) − capital_segurado_atual
+```
+
+O `10` só decide a **ordem** da fila, não quem entra nela. Errar esse número
+reordena a lista; não exclui ninguém nem inunda de falso positivo — que é
+exatamente o modo de falha que um limiar teria.
+
+Ordenar por **reais** e não por proporção põe no topo quem vale mais: renda de
+R$ 30 mil com razão 1,5× vale mais que R$ 5 mil com a mesma razão.
+
+A linha mostra o cliente, a razão atual ("1,3× a renda anual") e a lacuna em
+reais.
 
 Cada linha termina em nome e telefone. Um dashboard que não termina num contato
 informa, mas não vende — e a queixa registrada sobre o dashboard principal foi
@@ -168,21 +197,43 @@ Busca por nome, CPF ou profissão. Ao abrir um cliente, as coberturas dele.
 
 Histórico de importações com status, e a tela de conferência descrita acima.
 
+**O export chega semanalmente**, então esta tela é usada ~52 vezes por ano. O caso
+comum — poucas mudanças — precisa ser resolvível em segundos: contagem grande de
+inalterados, lista curta do resto, um botão. Uma conferência que exige dez
+minutos toda segunda-feira deixa de ser feita em um mês.
+
 ### Exportar dados
 
 Gera o `.xlsx` de duas abas no formato tratado que já é usado hoje. CSV como
 alternativa.
 
-### Configurações
+### Não há aba de Configurações
 
-Três coisas concretas, não um painel genérico:
+Foi cortada na revisão do spec. As três coisas que ela guardaria se resolvem sem
+tela:
 
-- **Mapeamento de colunas** — se a MAG renomear uma coluna, ajusta aqui em vez
-  de no código.
-- **Campos que contam como alteração** — `DATA STATUS` muda sozinha e geraria
-  371 alertas por importação. Precisa ser desligável.
-- **Limiares da fila de oportunidade** — o que é "renda alta", o que é
-  "subsegurado".
+- **Limiares da fila** — deixaram de existir quando "subsegurado" virou ordenação
+  em vez de filtro (acima).
+- **Campos que contam como alteração** — vira constante no código, documentada
+  abaixo. Mudar é uma linha.
+- **Mapeamento de colunas** — só faz sentido quando a MAG renomear alguma coluna,
+  o que ainda não aconteceu. Quando acontecer, é uma linha também. Construir a
+  tela antes disso é resolver um problema que não existe.
+
+### Campos que contam como "alterado"
+
+Comparar todas as 27 colunas geraria ruído: `DATA STATUS` muda sozinha a cada
+export e acusaria 371 alterações por semana, tornando a conferência inútil.
+
+Contam como alteração, e só eles:
+
+`status_cobertura` · `capital_segurado` · `premio_atual` · `premio_mensalizado` ·
+`premio_anualizado` · `periodicidade` · `forma_pagamento` · `dia_vencimento` ·
+`fim_vigencia` · `produto`
+
+E no cliente: `telefone` · `email` · `endereco` · `profissao` · `renda`.
+
+Os demais são gravados na aplicação da importação, mas não disparam conferência.
 
 ## Erros
 
