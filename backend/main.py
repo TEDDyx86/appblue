@@ -5749,6 +5749,174 @@ async def assistente_perguntar(
 
 
 # ============================================================================
+# BASE DE CLIENTES
+# ============================================================================
+#
+# A lógica vive no pacote `base_clientes`; aqui ficam as rotas, porque é aqui
+# que a autenticação existe.
+
+import base_clientes as _base
+from base_clientes.persistencia import carregar_estado_atual, aplicar_importacao
+
+
+@app.post("/api/base/importar")
+async def base_importar(
+    file: UploadFile = File(...),
+    user: dict = Depends(require_admin),
+):
+    """
+    Recebe o .xlsx, calcula o diff e guarda aguardando confirmação.
+
+    NÃO grava em base_clientes/base_coberturas — só o diff. Aplicar é um
+    segundo passo, explícito.
+    """
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Envie um arquivo .xlsx")
+
+    conteudo = await file.read()
+    try:
+        lido = _base.ler_export_mag(conteudo)
+    except (_base.ColunasFaltando, _base.IdDuplicado, _base.CabecalhoAmbiguo) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    cob_atuais, cli_atuais = carregar_estado_atual(supabase)
+    diff = _base.calcular_diff(lido, cob_atuais, cli_atuais)
+
+    res = supabase.table("base_importacoes").insert({
+        "arquivo_nome": file.filename,
+        "status": "aguardando_confirmacao",
+        "linhas_arquivo": lido.linhas_arquivo,
+        "linhas_descartadas": lido.linhas_descartadas,
+        "diff_json": diff,
+        "enviado_por": user["sub"],
+    }).execute()
+
+    if not res.data:
+        raise HTTPException(status_code=500, detail="Falha ao gravar a importação.")
+    importacao = res.data[0]
+    log_audit_event(
+        action="BASE_IMPORTACAO_RECEBIDA",
+        resource_type="base_importacao",
+        resource_id=importacao["id"],
+        user_id=user["sub"],
+        details={
+            "arquivo": file.filename,
+            "novos": len(diff["novos"]),
+            "alterados": len(diff["alterados"]),
+            "inalterados": diff["inalterados"],
+            "sumidos": len(diff["sumidos"]),
+        },
+    )
+    return {"importacao_id": importacao["id"], **diff,
+            "linhas_arquivo": lido.linhas_arquivo,
+            "linhas_descartadas": lido.linhas_descartadas}
+
+
+@app.get("/api/base/importacoes")
+async def base_listar_importacoes(user: dict = Depends(get_current_user)):
+    """Histórico da fila, sem o diff (que é grande)."""
+    r = (
+        supabase.table("base_importacoes")
+        .select("id, arquivo_nome, status, linhas_arquivo, linhas_descartadas, created_at, aplicada_em")
+        .order("created_at", desc=True).limit(50).execute()
+    )
+    return {"itens": r.data or []}
+
+
+@app.get("/api/base/importacoes/{importacao_id}")
+async def base_detalhe_importacao(importacao_id: str, user: dict = Depends(get_current_user)):
+    r = supabase.table("base_importacoes").select("*").eq("id", importacao_id).execute()
+    if not r.data:
+        raise HTTPException(status_code=404, detail="Importação não encontrada")
+    return r.data[0]
+
+
+@app.post("/api/base/importacoes/{importacao_id}/aplicar")
+async def base_aplicar(
+    importacao_id: str,
+    file: UploadFile = File(...),
+    user: dict = Depends(require_admin),
+):
+    """
+    Aplica a importação conferida.
+
+    O arquivo é reenviado porque o conteúdo não é guardado no banco — só o diff.
+    O diff serve para conferir; a fonte da verdade continua sendo a planilha.
+
+    Checagem barata de que o arquivo reenviado é o mesmo que gerou o diff:
+    compara nome e contagem de linhas contra o que foi gravado em
+    `base_importar`. Não é à prova de troca deliberada (não guardamos hash nem
+    o conteúdo, por decisão), mas pega o caso óbvio de reenvio errado.
+    """
+    r = supabase.table("base_importacoes").select("*").eq("id", importacao_id).execute()
+    if not r.data:
+        raise HTTPException(status_code=404, detail="Importação não encontrada")
+    importacao = r.data[0]
+    if importacao["status"] != "aguardando_confirmacao":
+        raise HTTPException(status_code=409, detail="Esta importação já foi resolvida.")
+
+    if file.filename != importacao["arquivo_nome"]:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"O arquivo reenviado ({file.filename}) não é o mesmo que gerou "
+                f"este diff ({importacao['arquivo_nome']}). Reenvie o arquivo original."
+            ),
+        )
+
+    conteudo = await file.read()
+    try:
+        lido = _base.ler_export_mag(conteudo)
+    except (_base.ColunasFaltando, _base.IdDuplicado, _base.CabecalhoAmbiguo) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if lido.linhas_arquivo != importacao["linhas_arquivo"]:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "O arquivo reenviado tem um número de linhas diferente do que "
+                "gerou este diff. Reenvie o arquivo original."
+            ),
+        )
+
+    contagem = aplicar_importacao(supabase, importacao_id, lido)
+
+    supabase.table("base_importacoes").update({
+        "status": "aplicada",
+        "aplicada_em": datetime.utcnow().isoformat(),
+    }).eq("id", importacao_id).execute()
+
+    log_audit_event(
+        action="BASE_IMPORTACAO_APLICADA",
+        resource_type="base_importacao",
+        resource_id=importacao_id,
+        user_id=user["sub"],
+        details=contagem,
+    )
+    return {"status": "aplicada", **contagem}
+
+
+@app.post("/api/base/importacoes/{importacao_id}/descartar")
+async def base_descartar(importacao_id: str, user: dict = Depends(require_admin)):
+    r = supabase.table("base_importacoes").select("id, status").eq("id", importacao_id).execute()
+    if not r.data:
+        raise HTTPException(status_code=404, detail="Importação não encontrada")
+    if r.data[0]["status"] != "aguardando_confirmacao":
+        raise HTTPException(status_code=409, detail="Esta importação já foi resolvida.")
+
+    supabase.table("base_importacoes").update({"status": "descartada"}).eq(
+        "id", importacao_id
+    ).execute()
+    log_audit_event(
+        action="BASE_IMPORTACAO_DESCARTADA",
+        resource_type="base_importacao",
+        resource_id=importacao_id,
+        user_id=user["sub"],
+    )
+    return {"status": "descartada"}
+
+
+# ============================================================================
 # MAIN
 # ============================================================================
 
