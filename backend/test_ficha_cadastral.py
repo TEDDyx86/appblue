@@ -130,12 +130,50 @@ def teste_invariantes_nos_reais():
                bool(re.fullmatch(r"R\$ [\d.]+,\d{2}", r["renda_mensal_fmt"] or "")), True)
 
 
+def teste_ficha_achatada_se_declara():
+    """
+    Ficha sem formulário: a leitura cai no parser por coordenadas.
+
+    Esse caminho erra — pai e mãe colados, cidade partida — e errava **em
+    silêncio**, o que é o pior modo de falha: quem confere não tem como saber
+    que deveria desconfiar. Não é hipotético: basta imprimir a ficha para PDF ou
+    recebê-la digitalizada e o formulário some.
+
+    A ficha achatada é gerada aqui com `bake()`, que é exatamente o que uma
+    impressão faz: converte os campos em conteúdo de página.
+    """
+    print("\n=== ficha sem formulario (impressa/digitalizada) ===")
+    import pymupdf
+
+    with open(os.path.join(PASTA, FICTICIO), "rb") as f:
+        original = f.read()
+
+    checar("com formulario: origem declarada",
+           main.parse_xp_ficha_cadastral(original)["origem_extracao"], "formulario")
+
+    doc = pymupdf.open(stream=original, filetype="pdf")
+    doc.bake()
+    achatada = doc.tobytes()
+    checar("achatada nao tem mais formulario",
+           len(list(pymupdf.open(stream=achatada, filetype="pdf")[0].widgets() or [])), 0)
+
+    r = main.parse_xp_ficha_cadastral(achatada)
+    checar("sem formulario: origem declarada", r["origem_extracao"], "aproximada")
+    # Ainda precisa extrair alguma coisa: é reserva, não desistência.
+    checar("ainda acha o nome", r["nome_completo"], "JOAO CARLOS PEREIRA DA SILVA")
+    checar("ainda acha o cpf", r["cpf"], "111.444.777-35")
+    # A regra do código da conta vale nos dois caminhos.
+    checar("codigo_xp sem o digito tambem aqui",
+           bool(re.fullmatch(r"\d+", r["codigo_xp"] or "")), True)
+
+
 if __name__ == "__main__":
     if not os.path.isdir(PASTA):
         print(f"Pasta {PASTA} ausente — os PDFs não acompanham o repositório.")
         sys.exit(0)
     teste_valores_exatos()
     teste_invariantes_nos_reais()
+    teste_ficha_achatada_se_declara()
     print(f"\n{'FALHOU' if falhas else 'TUDO OK'}")
     for f in falhas:
         print(f"   {f}")

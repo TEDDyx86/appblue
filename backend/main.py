@@ -5564,12 +5564,20 @@ def parse_xp_ficha_cadastral(doc_bytes_or_path) -> Dict[str, Any]:
         "renda_mensal": None,
         "renda_mensal_fmt": None,
         "codigo_xp": None,
-        "dados_bancarios": None
+        "dados_bancarios": None,
+        # "formulario" = lido dos campos nomeados, exato.
+        # "aproximada"  = deduzido por posição na página, porque o PDF veio sem
+        # formulário. Quem exibe precisa avisar: este caminho erra e errava em
+        # silêncio, que é o pior modo de falha para uma tela de conferência.
+        "origem_extracao": None,
     }
 
     if _ficha_por_formulario(doc, extracted):
+        extracted["origem_extracao"] = "formulario"
         extracted["endereco_completo"] = _montar_endereco(extracted)
         return extracted
+
+    extracted["origem_extracao"] = "aproximada"
 
     for b in blocks:
         txt = b[4].strip()

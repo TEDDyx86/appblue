@@ -43,6 +43,12 @@ interface ExtractedData {
   cpf: string | null
   nome_mae: string | null
   nome_pai: string | null
+  /**
+   * Como a ficha foi lida. "formulario" vem dos campos nomeados do PDF e é
+   * exato; "aproximada" foi deduzido por posição na página, porque o arquivo
+   * chegou sem formulário (impresso ou digitalizado) — e esse caminho erra.
+   */
+  origem_extracao: 'formulario' | 'aproximada' | null
   data_nascimento: string | null
   data_nascimento_iso: string | null
   nacionalidade: string | null
@@ -835,6 +841,31 @@ export default function CadastrosPage() {
                     </div>
                   </div>
                 </div>
+
+                {/* Ficha sem formulário: a leitura foi por posição na página e
+                    erra com frequência. Avisar é o ponto — antes essa leitura
+                    chegava com a mesma cara de uma leitura exata. */}
+                {extractedData?.origem_extracao === 'aproximada' && (
+                  <div
+                    role="alert"
+                    className="flex items-start gap-2.5 rounded-xl border border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 px-4 py-3"
+                  >
+                    <AlertTriangle
+                      className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5"
+                      aria-hidden="true"
+                    />
+                    <div className="text-xs leading-relaxed text-amber-800 dark:text-amber-200">
+                      <strong className="font-bold">Confira todos os campos antes de salvar.</strong>{' '}
+                      Este PDF chegou sem os campos de formulário — provavelmente foi impresso ou
+                      digitalizado. A leitura foi feita pela posição do texto na página, que é
+                      aproximada: nome do pai e da mãe podem vir juntos, cidades de duas palavras
+                      podem ser partidas e a profissão pode vir cortada.
+                      <span className="block mt-1 text-amber-700 dark:text-amber-300">
+                        Se puder, peça o arquivo original da XP em vez da versão impressa.
+                      </span>
+                    </div>
+                  </div>
+                )}
 
                 {/* Match Action Selection */}
                 <div className="flex flex-wrap items-center gap-2.5">
