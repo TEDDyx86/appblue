@@ -6,10 +6,13 @@ import axios from 'axios'
 import { MessageSquare, X, Send, Loader2, Wrench } from 'lucide-react'
 
 /**
- * Telas sem sessão. O assistente consulta dado interno e só existe atrás do
- * login — na página pública de agendamento ele nem deve aparecer.
+ * O assistente só aparece na Base de Clientes.
+ *
+ * É uma lista de permissão, não de bloqueio: antes ele ficava em toda tela
+ * atrás do login, e uma rota nova passava a exibi-lo sem ninguém decidir isso.
+ * Continua valendo que ele consulta dado interno, então exige sessão.
  */
-const ROTAS_PUBLICAS = ['/login', '/agendar']
+const ROTAS_COM_ASSISTENTE = ['/base-clientes']
 
 interface Mensagem {
   autor: 'usuario' | 'assistente'
@@ -103,8 +106,8 @@ export default function Assistente() {
     }
   }
 
-  const escondido = ROTAS_PUBLICAS.some((r) => rota.startsWith(r)) || !temSessao
-  if (escondido) return null
+  const visivel = temSessao && ROTAS_COM_ASSISTENTE.some((r) => rota.startsWith(r))
+  if (!visivel) return null
 
   if (!aberto) {
     return (
