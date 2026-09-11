@@ -44,6 +44,50 @@ A exceção é `backend/assistente.py` — o assistente de consulta em linguagem
 
 Provedores em cascata (Gemini → NVIDIA) porque **medimos**: cada um sozinho falhou em ~10% e ~14% das chamadas, sempre por indisponibilidade (429/500/503), nunca por escolha errada. `backend/test_chatbot_ferramentas.py` roda 21 perguntas e mede a escolha sem chamar endpoint nenhum — use antes de mexer nas descrições das ferramentas.
 
+### Base de Clientes: o ID de 18 dígitos
+
+`backend/base_clientes/` importa o export semanal de apólices da MAG. A regra que
+não pode ser quebrada: **`ITEM CONTRATADO` é texto do começo ao fim.** São 18
+dígitos e não cabem em `float64` (15) — deixar virar número corrompe o ID
+(`...591` vira `...600`) e destrói a reconciliação entre importações. Vale na
+leitura, no banco (`TEXT`) e na exportação (`number_format = "@"`).
+
+O caminho inverso também importa: o Supabase devolve `NUMERIC` como **string** e
+`DATE` como texto. `consultas.py` coage com `_num`/`_data` e `exportacao.py`
+reconverte antes de escrever a célula — sem isso a coluna de capital segurado
+não soma no Excel, que é justamente para o que o arquivo serve.
+
+Nada é gravado antes da confirmação: a importação vira diff em
+`base_importacoes.diff_json` e só aplica com o aceite. O que sumiu do export é
+sinalizado, **nunca apagado** — a causa é ambígua (cancelamento ou recorte
+diferente do export) e apagar por engano não tem volta.
+
+Só os campos em `CAMPOS_COMPARADOS_*` disparam "alterado" — `DATA STATUS` muda
+sozinha a cada export e acusaria 371 alterações por semana, tornando a
+conferência inútil e portanto ignorada em um mês.
+
+**A fila de oportunidade ordena, não filtra.** Medindo contra a base real, marcar
+"subsegurado" por 24× a renda mensal pegaria 119 de 209 clientes (56%); pela
+régua de mercado (10× a renda anual), 201 de 209 (96%). A mediana da carteira é
+1,7× a renda anual. Por qualquer limiar absoluto a lista de prioridade vira a
+lista de clientes com outro nome. O `REFERENCIA_RENDA_ANUAL = 10` só decide a
+**ordem**: errar reordena a fila, não exclui ninguém nem inunda de falso
+positivo.
+
+Quatro situações fazem o leitor **recusar** o arquivo em vez de seguir: coluna
+esperada faltando, `ITEM CONTRATADO` duplicado, cabeçalho ambíguo depois de
+normalizado, e arquivo que não é `.xlsx`. Valor preenchido que não converte não
+vira `null` calado — vai para `avisos`, que a tela de conferência mostra.
+
+`backend/test_base_clientes.py` roda contra a planilha real e prova o que
+importa: fidelidade (371 coberturas, 209 clientes, R$ 216.889.839),
+idempotência (reimportar dá 0 alterações) e os quatro caminhos de recusa, estes
+com planilhas montadas em memória.
+
+**As planilhas da MAG estão no `.gitignore`** (`*.xlsx`, `*.xls`, `*.csv`).
+Carregam CPF, telefone, e-mail, endereço e renda de 209 pessoas reais. Elas são
+fixture de teste e ficam na máquina, nunca no histórico do git.
+
 ### `briefing_json` é o esquema de verdade
 
 A tabela `transcriptions` guarda quase todo o estado num JSONB. O comentário no `schema.sql:56` está desatualizado — cita três chaves e o código usa muito mais. As que importam:
