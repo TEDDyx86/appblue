@@ -36,6 +36,8 @@ from dotenv import load_dotenv
 
 load_dotenv(os.path.join(AQUI, ".env"))
 
+import httpx
+
 import main
 
 PASTA = os.path.join(AQUI, "..", "Treinamento")
@@ -172,6 +174,98 @@ def teste_ficha_achatada_se_declara():
            bool(re.fullmatch(r"\d+", r["codigo_xp"] or "")), True)
 
 
+def teste_sync_usa_v1():
+    """
+    A gravação da pessoa tem que sair na v1, com PUT.
+
+    O payload é v1 do começo ao fim: campo customizado nas chaves de primeiro
+    nível, contato em `email`/`phone`. A v2 quer `custom_fields` aninhado e
+    `emails`/`phones`, e não aceita PUT — devolve 405 ERR_METHOD_NOT_ALLOWED.
+    Criar pela v2 era pior que o 405: não dava erro e a pessoa nascia só com o
+    nome, porque os campos customizados eram ignorados em silêncio.
+
+    Nada sai para o Pipedrive aqui: o cliente HTTP é dublado.
+    """
+    print("\n=== gravacao da pessoa: v1 e PUT ===")
+    import asyncio
+
+    chamadas = []
+
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"success": True, "data": {"id": 4242}}
+
+    class _Cliente:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def put(self, url, **kw):
+            chamadas.append(("PUT", url, kw.get("json") or {}))
+            return _Resp()
+
+        async def post(self, url, **kw):
+            chamadas.append(("POST", url, kw.get("json") or {}))
+            return _Resp()
+
+        async def get(self, url, **kw):
+            return _Resp()
+
+    class _Q:
+        def __getattr__(self, _):
+            return lambda *a, **k: self
+
+        def execute(self):
+            class R:
+                data = [{"role": "admin"}]
+
+            return R()
+
+    class _SB:
+        def table(self, _):
+            return _Q()
+
+    req = main.SyncPersonFichaRequest(
+        person_id="777",
+        create_new=False,
+        nome_completo="FULANO DE TESTE",
+        cpf="111.444.777-35",
+        endereco_completo="RUA X, 1, SAO PAULO - SP",
+        codigo_xp="8480811",
+        custom_field_mapping={"cpf": "chave_cpf", "endereco_completo": "chave_end",
+                              "codigo_xp": "chave_xp"},
+        create_history_activity=False,
+    )
+
+    originais = (httpx.AsyncClient, main.supabase)
+    httpx.AsyncClient = lambda *a, **k: _Cliente()
+    main.supabase = _SB()
+    try:
+        asyncio.run(main.sync_person_ficha_endpoint(req, user={"sub": "u1"}))
+    except Exception as e:
+        print(f"  (rota terminou com {type(e).__name__}, o que importa e a chamada HTTP)")
+    finally:
+        httpx.AsyncClient, main.supabase = originais
+
+    gravacoes = [c for c in chamadas if c[0] in ("PUT", "POST")]
+    checar("houve uma gravacao de pessoa", len(gravacoes) >= 1, True)
+    if gravacoes:
+        metodo, url, corpo = gravacoes[0]
+        checar("metodo PUT", metodo, "PUT")
+        checar("url na v1", "/v1/persons/" in url, True)
+        checar("nao usa a v2", "/api/v2/" in url, False)
+        # Campo customizado no topo é o formato v1; na v2 iria em custom_fields.
+        checar("campo customizado no primeiro nivel", corpo.get("chave_cpf"), "111.444.777-35")
+        checar("endereco mapeado", corpo.get("chave_end"), "RUA X, 1, SAO PAULO - SP")
+        checar("codigo xp mapeado", corpo.get("chave_xp"), "8480811")
+        checar("sem custom_fields aninhado", "custom_fields" in corpo, False)
+
+
 if __name__ == "__main__":
     if not os.path.isdir(PASTA):
         print(f"Pasta {PASTA} ausente — os PDFs não acompanham o repositório.")
@@ -179,6 +273,7 @@ if __name__ == "__main__":
     teste_valores_exatos()
     teste_invariantes_nos_reais()
     teste_ficha_achatada_se_declara()
+    teste_sync_usa_v1()
     print(f"\n{'FALHOU' if falhas else 'TUDO OK'}")
     for f in falhas:
         print(f"   {f}")

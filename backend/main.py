@@ -5942,16 +5942,26 @@ async def sync_person_ficha_endpoint(
             target_id = req.person_id
             
             # 1. Atualiza ou Cria Pessoa no Pipedrive
+            #
+            # v1, não `PIPEDRIVE_BASE_URL` (que aponta para v2). O payload acima
+            # é v1 do começo ao fim: campos customizados nas chaves de primeiro
+            # nível e contato em `email`/`phone`. A v2 usa `custom_fields`
+            # aninhado e `emails`/`phones`, e não aceita PUT — responde 405
+            # ERR_METHOD_NOT_ALLOWED, que era o erro visto ao atualizar.
+            #
+            # Criar pela v2 não dava erro e era pior: a pessoa nascia só com o
+            # nome, porque todo campo customizado do payload v1 era ignorado
+            # em silêncio.
             if target_id and not req.create_new:
                 res = await client.put(
-                    f"{PIPEDRIVE_BASE_URL}/persons/{target_id}",
+                    f"https://api.pipedrive.com/v1/persons/{target_id}",
                     params={"api_token": PIPEDRIVE_API_TOKEN},
                     json=payload
                 )
                 action_label = "atualizada"
             else:
                 res = await client.post(
-                    f"{PIPEDRIVE_BASE_URL}/persons",
+                    "https://api.pipedrive.com/v1/persons",
                     params={"api_token": PIPEDRIVE_API_TOKEN},
                     json=payload
                 )
