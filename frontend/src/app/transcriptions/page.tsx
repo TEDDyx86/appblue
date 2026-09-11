@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import axios from 'axios'
 import Sidebar from '@/components/Sidebar'
@@ -105,6 +105,51 @@ interface Transcription {
   created_at: string
 }
 
+/**
+ * Situação do negócio, ao lado do nome.
+ *
+ * Importa na hora de escolher: um cliente costuma ter um negócio aberto e
+ * outros perdidos de anos atrás, e anexar a reunião de hoje ao perdido é erro
+ * fácil de cometer quando os dois aparecem iguais na lista.
+ */
+function StatusNegocio({ status }: { status: string | null }) {
+  const mapa: Record<string, { texto: string; classe: string }> = {
+    open: {
+      texto: 'aberto',
+      classe: 'bg-emerald-100 dark:bg-emerald-900/50 text-emerald-800 dark:text-emerald-300',
+    },
+    won: {
+      texto: 'ganho',
+      classe: 'bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-300',
+    },
+    lost: {
+      texto: 'perdido',
+      classe: 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400',
+    },
+  }
+  const s = mapa[status || '']
+  if (!s) return null
+  return (
+    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${s.classe}`}>{s.texto}</span>
+  )
+}
+
+/** Um negócio do Pipedrive já com a pessoa dona, para a atribuição manual. */
+interface NegocioParaAtribuir {
+  deal_id: string
+  deal_titulo: string | null
+  status: string | null
+  person_id: string | null
+  person_nome: string | null
+  url: string
+}
+
+/** Pessoa encontrada que não tem negócio nenhum: ainda dá para anexar a ela. */
+interface PessoaSemNegocio {
+  person_id: string
+  person_nome: string | null
+}
+
 export default function TranscriptionsPage() {
   const router = useRouter()
   const { theme, isDark, toggleTheme } = useTheme()
@@ -131,16 +176,18 @@ export default function TranscriptionsPage() {
 
   // Assign Modal state
   const [assignItem, setAssignItem] = useState<Transcription | null>(null)
-  const [assignMode, setAssignMode] = useState<'person' | 'deal'>('person')
-  const [searchPersonTerm, setSearchPersonTerm] = useState('')
-  const [searchingPersons, setSearchingPersons] = useState(false)
-  const [personResults, setPersonResults] = useState<any[]>([])
-  const [selectedPerson, setSelectedPerson] = useState<any | null>(null)
+  // Uma busca só. Antes eram duas abas excludentes — pessoa OU negócio — e a de
+  // negócio pedia o ID, obrigando a garimpar no Pipedrive a cada transcrição.
+  const [termoAtribuir, setTermoAtribuir] = useState('')
+  const [buscandoAtribuir, setBuscandoAtribuir] = useState(false)
+  const [negociosEncontrados, setNegociosEncontrados] = useState<NegocioParaAtribuir[]>([])
+  const [pessoasSemNegocio, setPessoasSemNegocio] = useState<PessoaSemNegocio[]>([])
+  const [selectedPerson, setSelectedPerson] = useState<PessoaSemNegocio | null>(null)
+  const [selectedDeal, setSelectedDeal] = useState<NegocioParaAtribuir | null>(null)
+  const buscaAtribuirId = useRef(0)
 
-  const [searchDealTerm, setSearchDealTerm] = useState('')
-  const [searchingDeals, setSearchingDeals] = useState(false)
-  const [dealResults, setDealResults] = useState<any[]>([])
-  const [selectedDeal, setSelectedDeal] = useState<any | null>(null)
+  /** Saída de emergência: colar o ID do negócio direto na busca. */
+  const idDigitado = /^\d+$/.test(termoAtribuir.trim()) ? termoAtribuir.trim() : ''
 
   // Pipedrive Activity settings in Modal
   const [activityDate, setActivityDate] = useState('')
@@ -322,66 +369,48 @@ export default function TranscriptionsPage() {
     handleToggleIgnore(item.id)
   }
 
-  // Autocomplete search for Persons
+  // Busca do modal de atribuição: negócios já com a pessoa dona, mais as
+  // pessoas que não têm negócio nenhum.
   useEffect(() => {
-    if (searchPersonTerm.trim().length < 2) {
-      setPersonResults([])
+    if (termoAtribuir.trim().length < 2) {
+      setNegociosEncontrados([])
+      setPessoasSemNegocio([])
       return
     }
 
     const timer = setTimeout(async () => {
+      const idAtual = ++buscaAtribuirId.current
       try {
-        setSearchingPersons(true)
+        setBuscandoAtribuir(true)
         const token = localStorage.getItem('access_token')
-        const res = await axios.get(`${API_URL}/api/pipedrive/search-persons`, {
+        const res = await axios.get(`${API_URL}/api/pipedrive/buscar-para-atribuir`, {
           headers: { Authorization: `Bearer ${token}` },
-          params: { term: searchPersonTerm.trim() },
+          params: { term: termoAtribuir.trim() },
         })
-        setPersonResults(res.data.items || [])
+        if (idAtual !== buscaAtribuirId.current) return // busca já superada
+        setNegociosEncontrados(res.data.itens || [])
+        setPessoasSemNegocio(res.data.pessoas_sem_negocio || [])
       } catch (err) {
-        console.error('Erro ao buscar pessoas:', err)
+        if (idAtual === buscaAtribuirId.current) {
+          setNegociosEncontrados([])
+          setPessoasSemNegocio([])
+        }
+        console.error('Erro ao buscar no Pipedrive:', err)
       } finally {
-        setSearchingPersons(false)
+        if (idAtual === buscaAtribuirId.current) setBuscandoAtribuir(false)
       }
     }, 300)
 
     return () => clearTimeout(timer)
-  }, [searchPersonTerm, API_URL])
-
-  // Autocomplete search for Deals
-  useEffect(() => {
-    if (searchDealTerm.trim().length < 1) {
-      setDealResults([])
-      return
-    }
-
-    const timer = setTimeout(async () => {
-      try {
-        setSearchingDeals(true)
-        const token = localStorage.getItem('access_token')
-        const res = await axios.get(`${API_URL}/api/pipedrive/search-deals`, {
-          headers: { Authorization: `Bearer ${token}` },
-          params: { term: searchDealTerm.trim() },
-        })
-        setDealResults(res.data.items || [])
-      } catch (err) {
-        console.error('Erro ao buscar negócios:', err)
-      } finally {
-        setSearchingDeals(false)
-      }
-    }, 300)
-
-    return () => clearTimeout(timer)
-  }, [searchDealTerm, API_URL])
+  }, [termoAtribuir, API_URL])
 
   const handleOpenAssignModal = (item: Transcription) => {
     setAssignItem(item)
     setSelectedPerson(null)
     setSelectedDeal(null)
-    setSearchPersonTerm(item.briefing_json?.dados_cliente?.nome || '')
-    setSearchDealTerm('')
-    setAssignMode('person')
-    
+    setTermoAtribuir(item.briefing_json?.dados_cliente?.nome || '')
+
+
     // Define data da reunião padrão (ou data de hoje)
     const defaultDate = item.meeting_date || item.briefing_json?.pipedrive?.activity_date || new Date().toISOString().split('T')[0]
     setActivityDate(defaultDate)
@@ -393,17 +422,20 @@ export default function TranscriptionsPage() {
 
   const handleConfirmAssign = async () => {
     if (!assignItem) return
-    if (!selectedPerson && !selectedDeal && !searchDealTerm.trim()) {
-      alert('Por favor selecione uma Pessoa ou informe um Negócio (Deal) do Pipedrive.')
+    if (!selectedPerson && !selectedDeal && !idDigitado) {
+      alert('Escolha um negócio ou uma pessoa na busca antes de atribuir.')
       return
     }
 
     try {
       setSubmittingAssign(true)
       const token = localStorage.getItem('access_token')
-      const dealIdToAssign = selectedDeal?.id || (searchDealTerm.trim() && !isNaN(Number(searchDealTerm)) ? searchDealTerm.trim() : undefined)
-      const personIdToAssign = selectedPerson?.id || undefined
-      const clientNameToAssign = selectedPerson?.name || selectedDeal?.person_name || undefined
+      // Escolher o negócio já traz a pessoa junto — é o caminho normal. Digitar
+      // o ID cru continua valendo como saída de emergência.
+      const dealIdToAssign = selectedDeal?.deal_id || idDigitado || undefined
+      const personIdToAssign = selectedDeal?.person_id || selectedPerson?.person_id || undefined
+      const clientNameToAssign =
+        selectedDeal?.person_nome || selectedDeal?.deal_titulo || selectedPerson?.person_nome || undefined
 
       const res = await axios.post(
         `${API_URL}/api/transcriptions/${assignItem.id}/assign-pipedrive`,
@@ -1055,138 +1087,113 @@ export default function TranscriptionsPage() {
 
             {/* Modal Body */}
             <div className="p-6 overflow-y-auto space-y-5">
-              {/* Mode Selection Tabs */}
-              <div className="flex bg-slate-100 dark:bg-[#00061A] p-1 rounded-xl border border-slate-200 dark:border-[#002060]">
-                <button
-                  type="button"
-                  onClick={() => setAssignMode('person')}
-                  className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
-                    assignMode === 'person'
-                      ? 'bg-white dark:bg-[#000D38] text-[#0092FF] dark:text-[#00FFFF] shadow-xs'
-                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                  }`}
+              {/* Uma busca só. Escolher o negócio já traz a pessoa junto, que é o
+                  que a atribuição precisa: antes eram duas abas excludentes e a
+                  de negócio pedia o ID, obrigando a garimpar no Pipedrive. */}
+              <div className="space-y-3">
+                <label
+                  htmlFor="busca-atribuir"
+                  className="block text-xs font-bold text-slate-700 dark:text-slate-300"
                 >
-                  👤 Buscar Pessoa / Cliente no CRM
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAssignMode('deal')}
-                  className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
-                    assignMode === 'deal'
-                      ? 'bg-white dark:bg-[#000D38] text-[#0092FF] dark:text-[#00FFFF] shadow-xs'
-                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                  }`}
-                >
-                  💼 Inserir / Buscar Negócio (Deal)
-                </button>
-              </div>
+                  Busque pelo nome do cliente — os negócios dele aparecem abaixo:
+                </label>
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+                  <input
+                    id="busca-atribuir"
+                    type="text"
+                    value={termoAtribuir}
+                    onChange={(e) => {
+                      setTermoAtribuir(e.target.value)
+                      setSelectedDeal(null)
+                      setSelectedPerson(null)
+                    }}
+                    placeholder="Ex: Douglas, Márcio, Pamela..."
+                    className="w-full pl-9 pr-9 py-2.5 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:bg-white focus:ring-2 focus:ring-[#0092FF] outline-none"
+                  />
+                  {buscandoAtribuir && (
+                    <RefreshCw className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 text-[#0092FF] animate-spin" aria-hidden="true" />
+                  )}
+                </div>
 
-              {/* MODE 1: SEARCH PERSON */}
-              {assignMode === 'person' && (
-                <div className="space-y-3">
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Digite o nome ou e-mail do contato no Pipedrive:
-                  </label>
-                  <div className="relative">
-                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input
-                      type="text"
-                      value={searchPersonTerm}
-                      onChange={(e) => setSearchPersonTerm(e.target.value)}
-                      placeholder="Ex: Carlos Eduardo, Felipe, Maria..."
-                      className="w-full pl-9 pr-4 py-2.5 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:bg-white focus:ring-2 focus:ring-[#0092FF] outline-none"
-                    />
-                    {searchingPersons && (
-                      <RefreshCw className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 text-[#0092FF] animate-spin" />
-                    )}
-                  </div>
+                <div className="space-y-1.5 max-h-64 overflow-y-auto" aria-live="polite">
+                  {negociosEncontrados.map((d) => {
+                    const isSel = selectedDeal?.deal_id === d.deal_id
+                    return (
+                      <button
+                        key={d.deal_id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedDeal(d)
+                          setSelectedPerson(null)
+                        }}
+                        className={`w-full text-left p-3 rounded-xl border text-xs transition-all flex items-center justify-between gap-3 ${
+                          isSel
+                            ? 'bg-blue-50 dark:bg-blue-950/60 border-[#0092FF] text-[#0092FF] dark:text-[#00FFFF]'
+                            : 'bg-white dark:bg-[#00061A]/80 border-slate-200 dark:border-[#002060] text-slate-800 dark:text-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        <span className="min-w-0">
+                          <span className="font-bold flex items-center gap-1.5 flex-wrap">
+                            <span className="truncate">{d.deal_titulo || 'sem título'}</span>
+                            <span className="text-[10px] font-mono text-slate-400">#{d.deal_id}</span>
+                            <StatusNegocio status={d.status} />
+                          </span>
+                          {d.person_nome && d.person_nome !== d.deal_titulo && (
+                            <span className="block text-[11px] text-slate-400 truncate">
+                              {d.person_nome}
+                            </span>
+                          )}
+                        </span>
+                        {isSel && <Check className="w-4 h-4 text-[#0092FF] flex-shrink-0" aria-hidden="true" />}
+                      </button>
+                    )
+                  })}
 
-                  {/* Person Results list */}
-                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                    {personResults.map((p) => {
-                      const isSel = selectedPerson?.id === p.id
-                      return (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => setSelectedPerson(p)}
-                          className={`w-full text-left p-3 rounded-xl border text-xs transition-all flex items-center justify-between ${
-                            isSel
-                              ? 'bg-blue-50 dark:bg-blue-950/60 border-[#0092FF] text-[#0092FF] dark:text-[#00FFFF]'
-                              : 'bg-white dark:bg-[#00061A]/80 border-slate-200 dark:border-[#002060] text-slate-800 dark:text-slate-200 hover:border-slate-300'
-                          }`}
-                        >
-                          <div>
-                            <p className="font-bold flex items-center space-x-1.5">
-                              <span>{p.name}</span>
-                              <span className="text-[10px] font-mono text-slate-400">#{p.id}</span>
-                            </p>
-                            {p.email && <p className="text-[11px] text-slate-400">{p.email}</p>}
-                          </div>
-                          {isSel && <Check className="w-4 h-4 text-[#0092FF]" />}
-                        </button>
-                      )
-                    })}
-                    {searchPersonTerm.trim().length >= 2 && personResults.length === 0 && !searchingPersons && (
+                  {pessoasSemNegocio.map((p) => {
+                    const isSel = selectedPerson?.person_id === p.person_id
+                    return (
+                      <button
+                        key={`p-${p.person_id}`}
+                        type="button"
+                        onClick={() => {
+                          setSelectedPerson(p)
+                          setSelectedDeal(null)
+                        }}
+                        className={`w-full text-left p-3 rounded-xl border border-dashed text-xs transition-all flex items-center justify-between gap-3 ${
+                          isSel
+                            ? 'bg-blue-50 dark:bg-blue-950/60 border-[#0092FF] text-[#0092FF] dark:text-[#00FFFF]'
+                            : 'bg-white dark:bg-[#00061A]/80 border-slate-300 dark:border-[#002060] text-slate-800 dark:text-slate-200 hover:border-slate-400'
+                        }`}
+                      >
+                        <span className="min-w-0">
+                          <span className="font-bold truncate block">{p.person_nome || 'sem nome'}</span>
+                          <span className="block text-[11px] text-slate-400">
+                            Pessoa sem negócio — anexa só ao contato
+                          </span>
+                        </span>
+                        {isSel && <Check className="w-4 h-4 text-[#0092FF] flex-shrink-0" aria-hidden="true" />}
+                      </button>
+                    )
+                  })}
+
+                  {termoAtribuir.trim().length >= 2 &&
+                    !buscandoAtribuir &&
+                    negociosEncontrados.length === 0 &&
+                    pessoasSemNegocio.length === 0 && (
                       <p className="text-xs text-slate-400 italic text-center py-3">
-                        Nenhuma pessoa encontrada no Pipedrive com esse termo.
+                        Nada encontrado no Pipedrive com esse termo.
                       </p>
                     )}
-                  </div>
                 </div>
-              )}
 
-              {/* MODE 2: SEARCH OR TYPE DEAL */}
-              {assignMode === 'deal' && (
-                <div className="space-y-3">
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Digite o ID numérico ou nome do Negócio (Deal) no Pipedrive:
-                  </label>
-                  <div className="relative">
-                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input
-                      type="text"
-                      value={searchDealTerm}
-                      onChange={(e) => setSearchDealTerm(e.target.value)}
-                      placeholder="Ex: 48, Planejamento Carlos, Holding..."
-                      className="w-full pl-9 pr-4 py-2.5 bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] rounded-xl text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:bg-white focus:ring-2 focus:ring-[#0092FF] outline-none"
-                    />
-                    {searchingDeals && (
-                      <RefreshCw className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 text-[#0092FF] animate-spin" />
-                    )}
-                  </div>
-
-                  {/* Deal Results list */}
-                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                    {dealResults.map((d) => {
-                      const isSel = selectedDeal?.id === d.id
-                      return (
-                        <button
-                          key={d.id}
-                          type="button"
-                          onClick={() => setSelectedDeal(d)}
-                          className={`w-full text-left p-3 rounded-xl border text-xs transition-all flex items-center justify-between ${
-                            isSel
-                              ? 'bg-blue-50 dark:bg-blue-950/60 border-[#0092FF] text-[#0092FF] dark:text-[#00FFFF]'
-                              : 'bg-white dark:bg-[#00061A]/80 border-slate-200 dark:border-[#002060] text-slate-800 dark:text-slate-200 hover:border-slate-300'
-                          }`}
-                        >
-                          <div>
-                            <p className="font-bold flex items-center space-x-1.5">
-                              <span>{d.title}</span>
-                              <span className="text-[10px] font-mono text-slate-400">Deal #{d.id}</span>
-                            </p>
-                            {d.person_name && (
-                              <p className="text-[11px] text-slate-400">👤 {d.person_name}</p>
-                            )}
-                          </div>
-                          {isSel && <Check className="w-4 h-4 text-[#0092FF]" />}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
+                {idDigitado && !selectedDeal && !selectedPerson && (
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Nada selecionado: vai usar o negócio <strong>#{idDigitado}</strong> direto,
+                    pelo número que você digitou.
+                  </p>
+                )}
+              </div>
 
               {/* Selected Summary Card */}
               {(selectedPerson || selectedDeal) && (
@@ -1196,7 +1203,9 @@ export default function TranscriptionsPage() {
                       Novo Vínculo Selecionado:
                     </span>
                     <p className="font-bold text-slate-900 dark:text-white mt-0.5">
-                      {selectedPerson ? `👤 ${selectedPerson.name} (#${selectedPerson.id})` : `💼 ${selectedDeal.title} (#${selectedDeal.id})`}
+                      {selectedPerson
+                        ? `👤 ${selectedPerson.person_nome} (pessoa #${selectedPerson.person_id})`
+                        : `💼 ${selectedDeal?.deal_titulo} (negócio #${selectedDeal?.deal_id})`}
                     </p>
                   </div>
                   <span className="px-2 py-1 bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 font-bold rounded-lg text-[10px]">
@@ -1303,7 +1312,7 @@ export default function TranscriptionsPage() {
                 <button
                   type="button"
                   onClick={handleConfirmAssign}
-                  disabled={submittingAssign || (!selectedPerson && !selectedDeal && !searchDealTerm.trim())}
+                  disabled={submittingAssign || (!selectedPerson && !selectedDeal && !idDigitado)}
                   className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-[#0092FF] hover:bg-[#007AFF] text-white font-bold text-xs shadow-lg shadow-blue-500/25 transition-all disabled:opacity-50"
                 >
                   <Sparkles className={`w-3.5 h-3.5 ${submittingAssign ? 'animate-spin' : ''}`} />

@@ -2007,6 +2007,99 @@ async def search_deals_autocomplete(
             })
         return {"items": formatted}
 
+@app.get("/api/pipedrive/buscar-para-atribuir")
+async def buscar_para_atribuir(
+    term: str,
+    user: dict = Depends(require_admin)
+):
+    """
+    Uma busca só para a atribuição manual: negócios já com a pessoa dona.
+
+    A tela tinha duas buscas excludentes — pessoa OU negócio — e a de negócio
+    pedia o ID. Quem atribui quer o negócio *daquela pessoa*, e procurar o ID no
+    Pipedrive a cada transcrição é trabalho que a busca deveria fazer.
+
+    Duas frentes, porque nenhuma sozinha basta: `deals/search` acha pelo título
+    do negócio, e `persons/search` + os negócios de cada pessoa achata o caso em
+    que o negócio se chama "Holding Familiar" e a pessoa se chama Douglas.
+
+    Devolve também as pessoas sem negócio nenhum — a transcrição pode ser
+    anexada só à pessoa, e sumir com ela esconderia essa opção.
+    """
+    termo = (term or "").strip()
+    if len(termo) < 2:
+        return {"itens": [], "pessoas_sem_negocio": []}
+
+    por_deal: Dict[str, Dict[str, Any]] = {}
+    pessoas_sem_negocio: List[Dict[str, Any]] = []
+
+    def registrar(deal: Dict[str, Any], pessoa: Optional[Dict[str, Any]] = None) -> None:
+        did = str(deal.get("id"))
+        p = pessoa or deal.get("person") or {}
+        por_deal[did] = {
+            "deal_id": did,
+            "deal_titulo": deal.get("title"),
+            "status": deal.get("status"),
+            "person_id": str(p.get("id")) if p.get("id") else None,
+            "person_nome": p.get("name"),
+            "url": f"https://investimentosblue.pipedrive.com/deal/{did}",
+        }
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        try:
+            res = await client.get(
+                "https://api.pipedrive.com/v1/deals/search",
+                params={"term": termo, "api_token": PIPEDRIVE_API_TOKEN, "limit": 10},
+            )
+            if res.status_code == 200:
+                for it in (res.json().get("data") or {}).get("items") or []:
+                    registrar(it.get("item", it))
+        except Exception as e:
+            logger.warning(f"busca de negócios por título falhou para '{termo}': {e}")
+
+        pessoas: List[Dict[str, Any]] = []
+        try:
+            res = await client.get(
+                "https://api.pipedrive.com/v1/persons/search",
+                params={"term": termo, "api_token": PIPEDRIVE_API_TOKEN, "limit": 5},
+            )
+            if res.status_code == 200:
+                pessoas = [it.get("item", it) for it in (res.json().get("data") or {}).get("items") or []]
+        except Exception as e:
+            logger.warning(f"busca de pessoas falhou para '{termo}': {e}")
+
+        # Limitado a 5 pessoas de propósito: são 5 requisições extras, e a API
+        # tem limite que já derrubou este painel antes.
+        for pessoa in pessoas[:5]:
+            pid = pessoa.get("id")
+            if not pid:
+                continue
+            try:
+                res = await client.get(
+                    f"https://api.pipedrive.com/v1/persons/{pid}/deals",
+                    params={"api_token": PIPEDRIVE_API_TOKEN, "limit": 10},
+                )
+            except Exception as e:
+                logger.warning(f"negócios da pessoa {pid} falharam: {e}")
+                continue
+            negocios = (res.json().get("data") or []) if res.status_code == 200 else []
+            if not negocios:
+                pessoas_sem_negocio.append({
+                    "person_id": str(pid),
+                    "person_nome": pessoa.get("name"),
+                })
+                continue
+            for d in negocios:
+                registrar(d, {"id": pid, "name": pessoa.get("name")})
+
+    # Aberto antes de ganho/perdido: é onde a reunião de hoje pertence.
+    itens = sorted(
+        por_deal.values(),
+        key=lambda x: (x.get("status") != "open", (x.get("person_nome") or x.get("deal_titulo") or "")),
+    )
+    return {"itens": itens, "pessoas_sem_negocio": pessoas_sem_negocio}
+
+
 @app.get("/api/pipedrive/deal/{deal_id}")
 async def get_deal_by_id(
     deal_id: str,
