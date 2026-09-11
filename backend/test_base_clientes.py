@@ -272,12 +272,55 @@ def teste_exportacao():
            all(isinstance(v, (date, datetime)) for v in datas if v is not None), True)
 
 
+def teste_arquivo_errado_se_explica():
+    """
+    Mandar a base tratada no lugar do export bruto é o engano provável.
+
+    Os dois arquivos moram na mesma pasta e têm nomes parecidos. Quando isso
+    acontece, faltam TODAS as 34 colunas — e listar as 34 é a mensagem menos
+    útil possível: o problema não é coluna faltando, é arquivo trocado. A
+    listagem continua valendo para o caso real de a MAG renomear uma ou outra.
+    """
+    print("\n=== recusa explica o arquivo trocado ===")
+
+    # A base tratada é o que a própria aba "Exportar dados" gera.
+    from base_clientes.exportacao import gerar_xlsx
+
+    tratada = gerar_xlsx(
+        [{"cpf": "07286584707", "nome": "FULANO"}],
+        [{"item_contratado": "112023223239210591", "cpf": "07286584707"}],
+    )
+    try:
+        ler_export_mag(tratada)
+        checar("recusou a base tratada", False, True)
+    except ColunasFaltando as e:
+        msg = str(e)
+        checar("recusou a base tratada", True, True)
+        checar("aponta que e a base tratada", "tratada" in msg.lower(), True)
+        checar("diz qual arquivo enviar", "export" in msg.lower(), True)
+        # 34 nomes de coluna não ajudam ninguém a entender que trocou o arquivo.
+        checar("nao despeja as 34 colunas", msg.count(",") < 10, True)
+
+    # Faltar UMA coluna continua listando a coluna, que é o caso útil.
+    cabecalho = [c for c in COLUNAS_COBERTURA] + [
+        c for c in COLUNAS_CLIENTE if c not in COLUNAS_COBERTURA
+    ]
+    cabecalho.remove("TELEFONE CLIENTE")
+    try:
+        ler_export_mag(_planilha(cabecalho, []))
+        checar("recusou por coluna faltando", False, True)
+    except ColunasFaltando as e:
+        checar("recusou por coluna faltando", True, True)
+        checar("cita a coluna que faltou", "TELEFONE CLIENTE" in str(e), True)
+
+
 if __name__ == "__main__":
     teste_leitura()
     teste_reconciliacao()
     teste_robustez()
     teste_fila()
     teste_exportacao()
+    teste_arquivo_errado_se_explica()
     print(f"\n{'FALHOU' if falhas else 'TUDO OK'}")
     for f in falhas:
         print(f"   {f}")

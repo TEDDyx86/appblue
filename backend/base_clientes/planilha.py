@@ -181,6 +181,37 @@ def _converter(campo: str, bruto: Any, avisos: Optional[List[str]] = None,
     return valor
 
 
+# Abas que a exportação deste próprio sistema gera. Enviar o arquivo tratado no
+# lugar do bruto é o engano provável: os dois moram na mesma pasta.
+ABAS_DA_BASE_TRATADA = {"1_CLIENTES", "2_APÓLICES_E_COBERTURAS"}
+
+
+def _recusa_por_coluna(faltando: List[str], exigidas: set, abas: List[str]) -> str:
+    """
+    Mensagem da recusa por coluna ausente.
+
+    Faltando tudo, o diagnóstico não é "faltam 34 colunas" — é arquivo errado, e
+    listar as 34 é a mensagem menos útil possível. Faltando uma ou outra, a
+    listagem é exatamente o que resolve, porque indica o que a MAG renomeou.
+    """
+    if ABAS_DA_BASE_TRATADA & set(abas):
+        return (
+            "Esta é a base já tratada que o próprio sistema gera (abas "
+            "1_CLIENTES e 2_APÓLICES_E_COBERTURAS). A importação precisa do "
+            "export bruto da MAG, o arquivo PRODUTOS CONTRATADOS POR PROPOSTA, "
+            "com a aba Export."
+        )
+
+    if len(faltando) > len(exigidas) / 2:
+        return (
+            f"Este arquivo não parece o export da MAG: {len(faltando)} das "
+            f"{len(exigidas)} colunas esperadas não estão nele. Confira se é o "
+            "PRODUTOS CONTRATADOS POR PROPOSTA, na aba Export."
+        )
+
+    return "Colunas ausentes: " + ", ".join(faltando)
+
+
 def ler_export_mag(conteudo: bytes) -> ExportLido:
     """
     Lê o .xlsx da MAG e devolve coberturas normalizadas + clientes agregados.
@@ -189,6 +220,7 @@ def ler_export_mag(conteudo: bytes) -> ExportLido:
     produziria uma base em que ninguém pode confiar.
     """
     wb = openpyxl.load_workbook(io.BytesIO(conteudo), read_only=True, data_only=True)
+    abas = list(wb.sheetnames)
     ws = wb[ABA] if ABA in wb.sheetnames else wb.worksheets[0]
     linhas = list(ws.iter_rows(values_only=True))
     wb.close()
@@ -217,7 +249,7 @@ def ler_export_mag(conteudo: bytes) -> ExportLido:
     exigidas = usadas
     faltando = sorted(exigidas - set(posicao))
     if faltando:
-        raise ColunasFaltando("Colunas ausentes: " + ", ".join(faltando))
+        raise ColunasFaltando(_recusa_por_coluna(faltando, exigidas, abas))
 
     r = ExportLido(linhas_arquivo=len(linhas) - 1)
     vistos = set()
