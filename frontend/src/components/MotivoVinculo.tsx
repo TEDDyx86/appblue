@@ -51,6 +51,11 @@ const EXPLICACAO: Record<string, { titulo: string; texto: string }> = {
     texto:
       'Há mais de uma atividade R1/R2/R3 na janela de datas — no mesmo negócio ou em clientes de nome parecido — e não dá para saber qual delas este briefing documenta.',
   },
+  ATIVIDADE_CRIADA: {
+    titulo: 'Registrada numa atividade Tactiq',
+    texto:
+      'O cliente foi identificado, mas o negócio não tinha reunião R1, R2 ou R3 na data. Em vez de deixar a conversa sem rastro no CRM, foi criada uma atividade Tactiq no negócio com os links da transcrição. Vale conferir se a reunião deveria estar na agenda.',
+  },
   ERRO_PIPEDRIVE: {
     titulo: 'O Pipedrive respondeu com erro',
     texto: 'Falha de comunicação com a API. Tentar novamente costuma resolver.',

@@ -13,7 +13,7 @@ import asyncio
 import unicodedata
 import html as html_lib
 from difflib import SequenceMatcher
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple, Union
 from functools import wraps
 
@@ -649,6 +649,17 @@ LIMIAR_COMPATIBILIDADE = 0.90
 TOLERANCIA_DIAS = 1
 
 
+def _data_da_reuniao(briefing_json: Dict[str, Any]) -> Optional[date]:
+    """Lê `data_reuniao` no formato dd/mm/aaaa que o parser do Tactiq grava."""
+    m = re.match(r"(\d{2})/(\d{2})/(\d{4})", str(briefing_json.get("data_reuniao") or ""))
+    if not m:
+        return None
+    try:
+        return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+    except ValueError:
+        return None
+
+
 def _normalizar_nome(txt: str) -> str:
     sem_acento = "".join(
         c for c in unicodedata.normalize("NFKD", str(txt or "")) if not unicodedata.combining(c)
@@ -857,8 +868,15 @@ async def encontrar_atividade_da_reuniao(
     base["reunioes_por_negocio"] = reunioes_por_negocio
     base["tolerancia_dias"] = TOLERANCIA_DIAS
     if empatados:
-        base["negocio"] = empatados[0].get("title")
-        base["deal_id"] = empatados[0]["id"]
+        # Empate sem atividade em nenhum dos lados: fica o negócio mais novo.
+        # O id do Pipedrive é sequencial, então o maior é o criado por último —
+        # conferido em #639 (2026, open) contra #81 (2024, lost), mesmo cliente.
+        # Antes daqui saía `empatados[0]`, que é a ordem em que a API devolveu.
+        mais_novo = max(empatados, key=lambda n: int(n["id"]))
+        base["negocio"] = mais_novo.get("title")
+        base["deal_id"] = mais_novo["id"]
+        if len(empatados) > 1:
+            base["desempate"] = "negocio_mais_novo"
     return None, "SEM_ATIVIDADE_NA_DATA", base
 
 
@@ -1014,10 +1032,36 @@ async def anexar_transcricao_no_negocio(
                 "activity_type": TIPOS_REUNIAO.get(atividade.get("type")),
             }
 
+    return await criar_atividade_tactiq(
+        nota, meeting_title, alvo, deal_id, person_id
+    )
+
+
+async def criar_atividade_tactiq(
+    nota: str,
+    meeting_title: str,
+    quando: Optional[date],
+    deal_id: Optional[Any],
+    person_id: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """
+    Cria a atividade `tactiq` que registra a reunião quando não há R1/R2/R3.
+
+    É o caminho dos dois fluxos: a atribuição manual sempre fez isso, e o
+    automático passou a fazer quando acha o negócio e não acha a atividade — sem
+    ela a reunião não deixava rastro nenhum no CRM.
+
+    `activity_origem = "criada"` não é rótulo: é o que autoriza o Desvincular a
+    apagar a atividade. Atividade "existente" é a reunião do cliente e apagá-la
+    tiraria a R1/R2/R3 do histórico do negócio.
+
+    Devolve `{}` se a criação falhar — quem chama precisa tratar, nunca assumir
+    sucesso.
+    """
     nova = await create_pipedrive_activity(
         subject=(meeting_title or "Transcrição Tactiq")[:255],
         activity_type="tactiq",
-        due_date=str(alvo) if alvo else None,
+        due_date=str(quando) if quando else None,
         note_content=nota,
         deal_id=str(deal_id) if deal_id else None,
         person_id=str(person_id) if person_id else None,
@@ -1085,13 +1129,44 @@ async def vincular_briefing_na_atividade(
         nome, briefing_json.get("data_reuniao"), meeting_title
     )
     agora = datetime.utcnow().isoformat() + "Z"
+    nota = gerar_nota_da_atividade(briefing_json, nome, google_doc_id)
+
+    # Achou o negócio e não achou a reunião: registra a transcrição numa
+    # `tactiq`, em vez de deixar a reunião sem rastro nenhum no CRM. É o que a
+    # atribuição manual já fazia nessa mesma situação.
+    #
+    # Só aqui: NEGOCIO_NAO_ENCONTRADO e COMPATIBILIDADE_BAIXA continuam
+    # desistindo, porque não se sabe de quem é a reunião, e MULTIPLAS_CANDIDATAS
+    # também, porque ali existem atividades de verdade e escolher uma no chute
+    # era exatamente o problema.
+    if not atividade and motivo == "SEM_ATIVIDADE_NA_DATA" and detalhe.get("deal_id"):
+        criada = await criar_atividade_tactiq(
+            nota, meeting_title, _data_da_reuniao(briefing_json), detalhe["deal_id"]
+        )
+        if not criada:
+            return {
+                "status": "nao_vinculado",
+                "motivo": "ERRO_PIPEDRIVE",
+                "detalhe": {**detalhe, "erro": "falha ao criar a atividade tactiq"},
+                "avaliado_em": agora,
+            }
+        return {
+            "status": "vinculado",
+            "motivo": "ATIVIDADE_CRIADA",
+            "activity_id": criada["activity_id"],
+            "activity_origem": "criada",
+            "activity_type": "tactiq",
+            "activity_url": f"https://investimentosblue.pipedrive.com/activities/list#dialog/activity/{criada['activity_id']}",
+            "ja_estava_concluida": False,
+            "proximos_passos_activity_id": None,
+            "detalhe": detalhe,
+            "avaliado_em": agora,
+        }
 
     if not atividade:
         return {"status": "nao_vinculado", "motivo": motivo, "detalhe": detalhe, "avaliado_em": agora}
 
-    campos: Dict[str, Any] = {
-        "note": gerar_nota_da_atividade(briefing_json, nome, google_doc_id)
-    }
+    campos: Dict[str, Any] = {"note": nota}
     ja_concluida = bool(atividade.get("done"))
     if not ja_concluida:
         campos["done"] = True
@@ -1117,6 +1192,9 @@ async def vincular_briefing_na_atividade(
         "status": "vinculado",
         "motivo": "OK",
         "activity_id": str(atividade["id"]),
+        # Reunião do cliente, não nossa: o Desvincular limpa a nota e deixa a
+        # atividade na agenda. Apagá-la tiraria a R1/R2/R3 do histórico.
+        "activity_origem": "existente",
         "activity_type": TIPOS_REUNIAO.get(atividade.get("type")),
         "activity_url": f"https://investimentosblue.pipedrive.com/activities/list#dialog/activity/{atividade['id']}",
         "ja_estava_concluida": ja_concluida,
@@ -1754,8 +1832,14 @@ async def process_new_transcription(user_id: Optional[str] = None) -> Dict[str, 
                     if vinculo["status"] == "vinculado":
                         activity_id = vinculo["activity_id"]
                         briefing_json["pipedrive"]["activity_id"] = activity_id
-                        # A atividade já estava na agenda: nunca deve ser apagada.
-                        briefing_json["pipedrive"]["activity_origem"] = "existente"
+                        # Quem decide é o vínculo: "existente" é reunião do
+                        # cliente e não se apaga; "criada" é nossa `tactiq` e o
+                        # Desvincular precisa poder removê-la. Fixar "existente"
+                        # aqui deixaria tactiq órfã no CRM para sempre.
+                        briefing_json["pipedrive"]["activity_origem"] = vinculo.get(
+                            "activity_origem", "existente"
+                        )
+                        briefing_json["pipedrive"]["activity_type"] = vinculo.get("activity_type")
 
                     log_audit_event(
                         action="TRANSCRIPTION_LINKED" if vinculo["status"] == "vinculado"
@@ -3944,7 +4028,10 @@ async def revincular_transcricao(
     if vinculo["status"] == "vinculado":
         pipe = briefing.setdefault("pipedrive", {})
         pipe["activity_id"] = vinculo["activity_id"]
-        pipe["activity_origem"] = "existente"
+        # Vem do vínculo, não fixo: "criada" autoriza o Desvincular a apagar a
+        # tactiq; "existente" protege a reunião do cliente.
+        pipe["activity_origem"] = vinculo.get("activity_origem", "existente")
+        pipe["activity_type"] = vinculo.get("activity_type")
 
     supabase.table("transcriptions").update({"briefing_json": briefing}).eq(
         "id", transcription_id

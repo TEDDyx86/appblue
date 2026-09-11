@@ -8,6 +8,7 @@ import {
   FileText,
   Clock,
   CheckCircle,
+  FilePlus,
   AlertTriangle,
   RefreshCw,
   UserCog,
@@ -773,6 +774,15 @@ export default function TranscriptionsPage() {
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-900/60 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-800 flex items-center space-x-1">
                             <EyeOff className="w-3 h-3" aria-hidden="true" />
                             <span>Interna / Ignorada</span>
+                          </span>
+                        ) : isLinked && briefing?.vinculo?.motivo === 'ATIVIDADE_CRIADA' ? (
+                          // Vinculado, mas não à reunião do cliente: a automação
+                          // não achou R1/R2/R3 na data e abriu uma Tactiq. É o
+                          // sinal de que falta a reunião na agenda, e some se
+                          // usar a mesma tag verde do vínculo normal.
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-400 border border-sky-200 dark:border-sky-800/60 flex items-center space-x-1">
+                            <FilePlus className="w-3 h-3" aria-hidden="true" />
+                            <span>Atividade Tactiq criada</span>
                           </span>
                         ) : isLinked ? (
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60 flex items-center space-x-1">
