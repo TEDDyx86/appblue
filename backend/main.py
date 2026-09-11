@@ -5360,19 +5360,177 @@ async def montar_sugestoes_cadastro(
     }
 
 
+def _moeda_br(valor: float) -> str:
+    """`f"{v:,.2f}"` formata no padrão americano; aqui é vírgula decimal."""
+    return f"R$ {valor:,.2f}".replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+
+
+def _numero_br(txt: Any) -> Optional[float]:
+    s = str(txt or "").replace("R$", "").replace(".", "").replace(",", ".").strip()
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _juntar(*partes: Any, sep: str = " ") -> Optional[str]:
+    itens = [str(p).strip() for p in partes if p and str(p).strip()]
+    return sep.join(itens) or None
+
+
+def _montar_endereco(e: Dict[str, Any]) -> str:
+    cidade_uf = f"{e['cidade']} - {e['uf']}" if e.get("cidade") and e.get("uf") else e.get("cidade")
+    partes = [e.get("logradouro"), e.get("bairro"), cidade_uf,
+              f"CEP: {e['cep']}" if e.get("cep") else None]
+    return ", ".join([p for p in partes if p])
+
+
+def _codigo_sem_digito(codigo: Any) -> Optional[str]:
+    """
+    O código da conta XP vem como `8480811-3`. Só interessa o que vem antes do
+    hífen — o dígito depois dele é verificador e não identifica a conta.
+    """
+    s = str(codigo or "").strip()
+    if not s:
+        return None
+    return s.split("-")[0].strip() or None
+
+
+# Campo do formulário -> chave do nosso dicionário, quando é cópia direta.
+CAMPOS_FICHA_XP = {
+    "Cliente_Nome_Completo": "nome_completo",
+    "Cliente_CPF": "cpf",
+    "Cliente_Nome_Pai": "nome_pai",
+    "Cliente_Nome_Mae": "nome_mae",
+    "Cliente_Nacionalidade": "nacionalidade",
+    "Cliente_Naturalidade": "naturalidade",
+    "Cliente_Nome_Conjuge": "nome_conjuge",
+    "Cliente_CPF_Conjuge": "cpf_conjuge",
+    "Cliente_Telefone_DDD": "telefone",
+    "Cliente_Celular_DDD": "celular",
+    "Cliente_Endereco_Bairro": "bairro",
+    "Cliente_Endereco_Cidade": "cidade",
+    "Cliente_Endereco_UF": "uf",
+    "Cliente_Endereco_CEP": "cep",
+    "Cliente_Profissao_Formacao": "profissao",
+    "Cliente_Profissao_Cargo": "ocupacao",
+    "Cliente_Profissao_Entidade_Descricao": "empresa_nome",
+    "Cliente_Profissao_Entidade_CNPJ": "empresa_cnpj",
+}
+
+ESTADOS_CIVIS = [
+    ("casado", "Casado(a)", 53),
+    ("uniao estavel", "União Estável", 54),
+    ("união", "União Estável", 54),
+    ("divorciado", "Divorciado(a)", None),
+    ("viuvo", "Viúvo(a)", None),
+    ("solteiro", "Solteiro(a)", 52),
+]
+
+
+def _ficha_por_formulario(doc, extracted: Dict[str, Any]) -> bool:
+    """
+    Lê a ficha pelos campos nomeados do formulário (AcroForm).
+
+    A ficha da XP é um PDF de formulário com 68 campos: `Cliente_Nome_Pai`,
+    `Cliente_Endereco_Cidade`, `Cliente_Chk_Sexo_Masculino` e assim por diante.
+    Ler o nome do campo é exato; deduzir por posição na página é chute, e era o
+    que produzia pai e mãe colados no mesmo campo e "SAO PAULO" partido em
+    bairro "... SAO" + cidade "PAULO".
+
+    Devolve False se o PDF não tiver formulário (arquivo achatado), para quem
+    chama cair no parser por coordenadas.
+    """
+    valores: Dict[str, str] = {}
+    for pagina in doc:
+        for w in pagina.widgets() or []:
+            nome = str(w.field_name or "")
+            valor = str(w.field_value or "").strip()
+            if nome and valor and not valores.get(nome):
+                valores[nome] = valor
+
+    if not valores:
+        return False
+
+    for campo, chave in CAMPOS_FICHA_XP.items():
+        if valores.get(campo):
+            extracted[chave] = valores[campo]
+
+    extracted["codigo_xp"] = _codigo_sem_digito(valores.get("Header_Codigo_Conta"))
+
+    nasc = valores.get("Cliente_Data_Nascimento") or ""
+    m = re.match(r"(\d{2})/(\d{2})/(\d{4})", nasc)
+    if m:
+        extracted["data_nascimento"] = nasc[:10]
+        extracted["data_nascimento_iso"] = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+
+    # Caixa de seleção: o valor "desmarcado" é "" ou "Off" conforme o gerador.
+    def _marcado(campo: str) -> bool:
+        return (valores.get(campo) or "").lower() not in ("", "off", "no", "nao", "não")
+
+    if _marcado("Cliente_Chk_Sexo_Masculino"):
+        extracted["sexo"] = "Masculino"
+    elif _marcado("Cliente_Chk_Sexo_Feminino"):
+        extracted["sexo"] = "Feminino"
+
+    civil = (valores.get("Cliente_Estado_Civil") or "").lower()
+    for chave, rotulo, ident in ESTADOS_CIVIS:
+        if chave in civil:
+            extracted["estado_civil"] = rotulo
+            extracted["estado_civil_id"] = ident
+            break
+
+    extracted["documento_identidade"] = _juntar(
+        valores.get("Cliente_Tipo_Documento"),
+        valores.get("Cliente_Numero_Documento"),
+        valores.get("Cliente_Orgao_Emissor_Documento"),
+        valores.get("Cliente_UF_Documento"),
+        valores.get("Cliente_Data_Emissao_Documento"),
+    )
+
+    if valores.get("Cliente_Email"):
+        extracted["email"] = valores["Cliente_Email"].lower()
+
+    extracted["logradouro"] = _juntar(
+        valores.get("Cliente_Endereco_Logradouro"),
+        valores.get("Cliente_Endereco_Numero"),
+        valores.get("Cliente_Endereco_Complemento"),
+        sep=", ",
+    )
+
+    renda = _numero_br(valores.get("Cliente_SFP_Renda_Mensal"))
+    if renda is not None:
+        extracted["renda_mensal"] = renda
+        extracted["renda_mensal_fmt"] = _moeda_br(renda)
+
+    banco = _juntar(
+        valores.get("DadosBancarios_Codigo_Banco_Desc_1"),
+        _juntar("Ag", valores.get("DadosBancarios_Agencia_1")),
+        _juntar("Conta", valores.get("DadosBancarios_Numero_Conta_1")),
+    )
+    if banco:
+        # O nome do banco vem com espaço duplo no PDF ("348 -  BCO XP").
+        extracted["dados_bancarios"] = re.sub(r"\s{2,}", " ", banco)
+
+    return True
+
+
 def parse_xp_ficha_cadastral(doc_bytes_or_path) -> Dict[str, Any]:
     """
-    Parser avançado para extrair dados estruturados de Fichas Cadastrais (ex: XP Investimentos)
-    usando análise espacial por coordenadas e blocos de texto do PyMuPDF.
+    Extrai os dados de uma Ficha Cadastral da XP.
+
+    Tenta primeiro os campos nomeados do formulário, que é o caminho exato.
+    Só cai na leitura por coordenadas quando o PDF veio achatado, sem formulário
+    — aí não há nome de campo e a posição na página é tudo que resta.
     """
     if isinstance(doc_bytes_or_path, bytes):
         doc = pymupdf.open(stream=doc_bytes_or_path, filetype="pdf")
     else:
         doc = pymupdf.open(doc_bytes_or_path)
-        
+
     page1 = doc[0]
     blocks = page1.get_text("blocks")
-    
+
     extracted = {
         "nome_completo": None,
         "cpf": None,
@@ -5408,7 +5566,11 @@ def parse_xp_ficha_cadastral(doc_bytes_or_path) -> Dict[str, Any]:
         "codigo_xp": None,
         "dados_bancarios": None
     }
-    
+
+    if _ficha_por_formulario(doc, extracted):
+        extracted["endereco_completo"] = _montar_endereco(extracted)
+        return extracted
+
     for b in blocks:
         txt = b[4].strip()
         if not txt:
@@ -5420,7 +5582,9 @@ def parse_xp_ficha_cadastral(doc_bytes_or_path) -> Dict[str, Any]:
         if 80 <= y <= 115 and x > 150:
             xp_m = re.search(r"(\d{7,8}-\d|\d{7,9})", txt)
             if xp_m:
-                extracted["codigo_xp"] = xp_m.group(1)
+                # Mesma regra do caminho por formulário: só o que vem antes do
+                # hífen. O dígito depois dele é verificador.
+                extracted["codigo_xp"] = _codigo_sem_digito(xp_m.group(1))
                 
         # Nome e CPF
         if 140 <= y <= 165 and x < 100:
@@ -5529,10 +5693,8 @@ def parse_xp_ficha_cadastral(doc_bytes_or_path) -> Dict[str, Any]:
             if not extracted["dados_bancarios"]:
                 extracted["dados_bancarios"] = txt.replace("\n", " ").strip()
 
-    # Formatar endereco completo
-    end_parts = [extracted["logradouro"], extracted["bairro"], f"{extracted['cidade']} - {extracted['uf']}" if extracted["cidade"] and extracted["uf"] else extracted["cidade"], f"CEP: {extracted['cep']}" if extracted["cep"] else None]
-    extracted["endereco_completo"] = ", ".join([p for p in end_parts if p])
-    
+    extracted["endereco_completo"] = _montar_endereco(extracted)
+
     return extracted
 
 
