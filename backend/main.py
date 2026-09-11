@@ -3479,13 +3479,37 @@ async def assign_transcription_to_crm(
     anexo = await anexar_transcricao_no_negocio(
         briefing_json, meeting_title, t.get("google_doc_id"), deal_id, person_id
     )
+    agora = datetime.utcnow().isoformat() + "Z"
+
+    # O `vinculo` é escrito nos dois caminhos. Sem isso a atribuição manual
+    # deixava o bloco intocado e a tela seguia mostrando o veredito da tentativa
+    # automática anterior — dizendo "não vinculado" sobre um vínculo que existe,
+    # ou o contrário.
     if anexo:
         briefing_json["pipedrive"]["activity_id"] = anexo["activity_id"]
         briefing_json["pipedrive"]["activity_origem"] = anexo["activity_origem"]
         briefing_json["pipedrive"]["activity_type"] = anexo.get("activity_type")
+        briefing_json["vinculo"] = {
+            "status": "vinculado",
+            "motivo": "OK",
+            "activity_id": anexo["activity_id"],
+            "activity_type": anexo.get("activity_type"),
+            "detalhe": {"origem": "atribuicao_manual", "deal_id": deal_id},
+            "avaliado_em": agora,
+        }
     else:
         briefing_json["pipedrive"]["activity_id"] = None
         briefing_json["pipedrive"]["activity_origem"] = None
+        briefing_json["vinculo"] = {
+            "status": "nao_vinculado",
+            "motivo": "ERRO_PIPEDRIVE",
+            "detalhe": {
+                "origem": "atribuicao_manual",
+                "deal_id": deal_id,
+                "erro": "não foi possível registrar a atividade no Pipedrive",
+            },
+            "avaliado_em": agora,
+        }
 
     # 7. Atualiza registro da Transcrição
     supabase.table("transcriptions").update({
@@ -3495,7 +3519,8 @@ async def assign_transcription_to_crm(
     
     # 8. Registra no Log de Auditoria
     log_audit_event(
-        action="DRIVE_DOC_REASSIGNED" if (old_activity_id or old_note_id) else "DRIVE_DOC_LINKED",
+        action="DRIVE_DOC_LINK_FAILED" if not anexo
+               else ("DRIVE_DOC_REASSIGNED" if (old_activity_id or old_note_id) else "DRIVE_DOC_LINKED"),
         resource_type="transcription",
         resource_id=transcription_id,
         user_id=user.get("id", user.get("sub")),
@@ -3512,12 +3537,32 @@ async def assign_transcription_to_crm(
             "deal_url": briefing_json["pipedrive"].get("deal_url"),
             "person_url": briefing_json["pipedrive"].get("person_url"),
             "proxima_acao": briefing_json.get("proxima_acao", {}).get("descricao"),
-            "is_linked_to_crm": True,
+            "is_linked_to_crm": bool(anexo),
             "assigned_manually": True,
-            "summary": f"Transcrição '{meeting_title}' " + (f"reatribuída (registro anterior removido) para '{client_name}'" if (old_activity_id or old_note_id) else f"vinculada ao cliente '{client_name}'") + (f" (Deal #{deal_id})" if deal_id else "") + (f" no Pipedrive com nota (#{note_id}) sincronizada." if note_id else " no Pipedrive.")
+            "summary": (
+                f"Transcrição '{meeting_title}': nada foi gravado no Pipedrive"
+                + (f" (Deal #{deal_id})" if deal_id else "")
+                + " — a atividade não pôde ser criada."
+            ) if not anexo else (
+                f"Transcrição '{meeting_title}' " + (f"reatribuída (registro anterior removido) para '{client_name}'" if (old_activity_id or old_note_id) else f"vinculada ao cliente '{client_name}'") + (f" (Deal #{deal_id})" if deal_id else "") + (f" no Pipedrive com nota (#{note_id}) sincronizada." if note_id else " no Pipedrive.")
+            )
         }
     )
-    
+
+    # A falha só é levantada depois de gravar e auditar: o estado no banco
+    # precisa refletir que não há vínculo, senão a próxima tela mente de novo.
+    # 502 e não 500 — quem falhou foi o Pipedrive, não este serviço.
+    if not anexo:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Nada foi gravado no Pipedrive: não foi possível criar a atividade"
+                + (f" no negócio #{deal_id}." if deal_id else ".")
+                + " A transcrição continua sem vínculo. Confira se o negócio existe"
+                  " e tente novamente."
+            ),
+        )
+
     return {
         "status": "success",
         "message": f"Transcrição vinculada com sucesso ao Pipedrive com Nota no cliente '{client_name}'!" + (" (Registro anterior substituído)" if (old_act_deleted or old_note_deleted) else ""),
