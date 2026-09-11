@@ -190,9 +190,6 @@ export default function TranscriptionsPage() {
   const idDigitado = /^\d+$/.test(termoAtribuir.trim()) ? termoAtribuir.trim() : ''
 
   // Pipedrive Activity settings in Modal
-  const [activityDate, setActivityDate] = useState('')
-  const [activitySubject, setActivitySubject] = useState('Transcrição Tactiq')
-  const [createActivity, setCreateActivity] = useState(true)
   const [deleteOldActivity, setDeleteOldActivity] = useState(true)
   const [submittingAssign, setSubmittingAssign] = useState(false)
   const [unlinkingId, setUnlinkingId] = useState<string | null>(null)
@@ -409,13 +406,6 @@ export default function TranscriptionsPage() {
     setSelectedPerson(null)
     setSelectedDeal(null)
     setTermoAtribuir(item.briefing_json?.dados_cliente?.nome || '')
-
-
-    // Define data da reunião padrão (ou data de hoje)
-    const defaultDate = item.meeting_date || item.briefing_json?.pipedrive?.activity_date || new Date().toISOString().split('T')[0]
-    setActivityDate(defaultDate)
-    setActivitySubject('Transcrição Tactiq')
-    setCreateActivity(true)
     setDeleteOldActivity(true)
     setAssignSuccess(false)
   }
@@ -443,10 +433,6 @@ export default function TranscriptionsPage() {
           person_id: personIdToAssign ? String(personIdToAssign) : undefined,
           deal_id: dealIdToAssign ? String(dealIdToAssign) : undefined,
           cliente_nome: clientNameToAssign,
-          activity_subject: activitySubject || 'Transcrição Tactiq',
-          activity_type: 'tactiq',
-          activity_date: activityDate || undefined,
-          create_activity: createActivity,
           delete_old_activity: deleteOldActivity,
         },
         {
@@ -1244,16 +1230,6 @@ export default function TranscriptionsPage() {
                 </div>
 
                 <div className="space-y-2 pt-1 border-t border-slate-200/60 dark:border-[#002060]/60">
-                  <label className="flex items-center space-x-2.5 text-slate-700 dark:text-slate-300 font-medium">
-                    <input
-                      type="checkbox"
-                      checked={createActivity}
-                      onChange={(e) => setCreateActivity(e.target.checked)}
-                      className="w-4 h-4 rounded text-[#0092FF] focus:ring-[#0092FF]"
-                    />
-                    <span>Criar Nota no Pipedrive com o Briefing da Reunião</span>
-                  </label>
-
                   {Boolean(assignItem.briefing_json?.pipedrive?.activity_id || assignItem.briefing_json?.pipedrive?.note_id) && (
                     <label className="flex items-center space-x-2.5 text-rose-700 dark:text-rose-400 font-bold">
                       <input

@@ -3500,20 +3500,26 @@ class TranscriptionResponse(BaseModel):
     created_at: str
 
 class AssignTranscriptionRequest(BaseModel):
+    """
+    O que a atribuição manual realmente usa.
+
+    Saíram daqui sete campos que a tela mandava e a rota nunca lia:
+    `activity_subject`, `activity_type`, `activity_date`, `activity_time`,
+    `duration`, `done`, `create_activity` e `create_note`. Um deles chegava à
+    tela como o botão "Criar Nota no Pipedrive com o Briefing da Reunião" — que
+    além de não fazer nada, prometia o oposto da decisão de parar de gravar
+    briefing em nota. Campo que ninguém lê é contrato mentindo.
+
+    O assunto e a data da atividade saem do próprio briefing, não da tela: é a
+    data da reunião que documenta, e deixar editável abria espaço para divergir
+    do que está na transcrição.
+    """
     person_id: Optional[str] = None
     deal_id: Optional[str] = None
     custom_client_name: Optional[str] = None
     cliente_nome: Optional[str] = None
-    activity_subject: Optional[str] = "Transcrição Tactiq"
-    activity_type: Optional[str] = "tactiq"
-    activity_date: Optional[str] = None
-    activity_time: Optional[str] = None
-    duration: Optional[str] = None
-    done: bool = True
-    create_activity: bool = True
     delete_old_activity: bool = True
     delete_old_note: bool = True
-    create_note: bool = False
 
 @app.get("/api/transcriptions", response_model=List[TranscriptionResponse])
 async def get_transcriptions(
