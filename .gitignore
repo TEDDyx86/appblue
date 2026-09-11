@@ -61,6 +61,11 @@ scratch/
 # Temporary Screenshots
 duvida.png
 
+# Fichas cadastrais. Sao formularios com nome, CPF, nome da mae, endereco,
+# renda e conta bancaria de pessoas reais. Ficam na maquina, nunca no git.
+Treinamento/
+*.pdf
+
 # Exports da MAG usados como fixture de teste da Base de Clientes.
 # Carregam CPF, telefone, e-mail, endereco e renda de 209 pessoas reais —
 # ficam na maquina, nunca no historico do git.
