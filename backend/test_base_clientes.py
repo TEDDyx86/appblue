@@ -8,6 +8,7 @@ Não há pytest no projeto — este arquivo é executável e imprime o resultado
 import io
 import os
 import sys
+from datetime import date, datetime
 
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
@@ -170,10 +171,113 @@ def teste_robustez():
     checar("numero ilegivel: vira aviso", any("capital_segurado" in a for a in r2.avisos), True)
 
 
+from base_clientes.consultas import montar_fila_oportunidade, montar_resumo, RIDERS
+
+
+def teste_fila():
+    print("\n=== fila de oportunidade ===")
+    with open(BRUTA, "rb") as f:
+        lido = ler_export_mag(f.read())
+
+    clientes = list(lido.clientes.values())
+    coberturas = lido.coberturas
+    fila = montar_fila_oportunidade(clientes, coberturas)
+
+    checar("cobertura unica: 162 clientes", len(fila["cobertura_unica"]), 162)
+    checar("lacuna: todos os clientes com renda", len(fila["maior_lacuna"]), 209)
+
+    # A fila de lacuna e ordenada decrescente por reais, nao filtrada.
+    valores = [c["lacuna"] for c in fila["maior_lacuna"]]
+    checar("lacuna ordenada decrescente", valores == sorted(valores, reverse=True), True)
+    checar("riders conhecidos", len(RIDERS), 3)
+    checar("parou de pagar (REMIDO) detectado", len(fila["parou_de_pagar"]) > 0, True)
+
+    resumo = montar_resumo(clientes, coberturas)
+    checar("resumo: clientes", resumo["clientes"], 209)
+    checar("resumo: coberturas", resumo["coberturas"], 371)
+    checar("resumo: capital segurado total",
+           round(resumo["capital_segurado_total"]), 216889839)
+
+    # Idade e a que a pessoa TEM, nao a que vai fazer: quem faz aniversario
+    # depois de hoje dentro do mes corrente ainda nao somou o ano.
+    for a in fila["aniversariantes"]:
+        if a["dia"] > date.today().day:
+            checar("aniversariante que ainda nao fez: idade nao adiantada",
+                   a["idade"] < date.today().year - 1900, True)
+            break
+
+    # O MESMO dicionario vindo do Supabase: NUMERIC volta string, DATE volta
+    # "1976-05-04". Sem coercao a fila funciona aqui e quebra em producao.
+    como_banco = [
+        {**c, "renda": str(c.get("renda") or 0),
+         "total_capital_segurado": str(c.get("total_capital_segurado") or 0),
+         "data_nascimento": (c["data_nascimento"].isoformat()
+                             if c.get("data_nascimento") else None)}
+        for c in clientes
+    ]
+    cob_banco = [{**c, "capital_segurado": str(c.get("capital_segurado") or 0)} for c in coberturas]
+    fila_banco = montar_fila_oportunidade(como_banco, cob_banco)
+    checar("vindo do banco: mesma cobertura unica",
+           len(fila_banco["cobertura_unica"]), len(fila["cobertura_unica"]))
+    checar("vindo do banco: mesma lacuna",
+           len(fila_banco["maior_lacuna"]), len(fila["maior_lacuna"]))
+    checar("vindo do banco: mesmos aniversariantes",
+           len(fila_banco["aniversariantes"]), len(fila["aniversariantes"]))
+    checar("vindo do banco: mesmo capital total",
+           round(montar_resumo(como_banco, cob_banco)["capital_segurado_total"]),
+           round(resumo["capital_segurado_total"]))
+
+
+def teste_exportacao():
+    print("\n=== exportacao xlsx ===")
+    import openpyxl
+
+    from base_clientes.exportacao import gerar_xlsx
+
+    with open(BRUTA, "rb") as f:
+        lido = ler_export_mag(f.read())
+
+    # Como o Supabase devolve: NUMERIC e DATE viram texto. O export precisa
+    # reconverter, senao a planilha sai com numero que nao soma e data que nao
+    # ordena — e o usuario abre o arquivo no Excel para justamente fazer isso.
+    cob_banco = [
+        {**c,
+         "capital_segurado": str(c.get("capital_segurado") or 0),
+         "inicio_vigencia": (c["inicio_vigencia"].isoformat()
+                             if c.get("inicio_vigencia") else None)}
+        for c in lido.coberturas
+    ]
+    wb = openpyxl.load_workbook(io.BytesIO(gerar_xlsx(list(lido.clientes.values()), cob_banco)))
+
+    checar("abas geradas", wb.sheetnames, ["1_CLIENTES", "2_APÓLICES_E_COBERTURAS"])
+
+    ws = wb["2_APÓLICES_E_COBERTURAS"]
+    cabecalho = [c.value for c in ws[1]]
+    col_id = cabecalho.index("ID Item Cobertura") + 1
+    col_cs = cabecalho.index("Capital Segurado (R$)") + 1
+    col_iv = cabecalho.index("Início Vigência") + 1
+
+    ids = {ws.cell(row=l, column=col_id).value for l in range(2, ws.max_row + 1)}
+    checar("ID sai como texto", all(isinstance(v, str) for v in ids), True)
+    checar("ID sem notacao cientifica", any("e+" in v.lower() for v in ids), False)
+    checar("ID de 18 digitos integro", "112023223239210591" in ids, True)
+    checar("linhas exportadas", ws.max_row - 1, 371)
+
+    valores_cs = [ws.cell(row=l, column=col_cs).value for l in range(2, ws.max_row + 1)]
+    checar("capital segurado e numero (da para somar)",
+           all(isinstance(v, (int, float)) for v in valores_cs if v is not None), True)
+
+    datas = [ws.cell(row=l, column=col_iv).value for l in range(2, ws.max_row + 1)]
+    checar("inicio de vigencia e data (da para ordenar)",
+           all(isinstance(v, (date, datetime)) for v in datas if v is not None), True)
+
+
 if __name__ == "__main__":
     teste_leitura()
     teste_reconciliacao()
     teste_robustez()
+    teste_fila()
+    teste_exportacao()
     print(f"\n{'FALHOU' if falhas else 'TUDO OK'}")
     for f in falhas:
         print(f"   {f}")

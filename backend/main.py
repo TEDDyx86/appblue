@@ -5916,6 +5916,92 @@ async def base_descartar(importacao_id: str, user: dict = Depends(require_admin)
     return {"status": "descartada"}
 
 
+from fastapi.responses import Response
+
+from base_clientes.consultas import montar_fila_oportunidade, montar_resumo
+from base_clientes.exportacao import gerar_xlsx
+
+
+def _carregar_base() -> tuple:
+    cob, cli = carregar_estado_atual(supabase)
+    return list(cli.values()), list(cob.values())
+
+
+def _filtro_busca_cliente(busca: str) -> Optional[str]:
+    """
+    Monta o filtro `or` do PostgREST sem deixar o termo quebrar a sintaxe.
+
+    O filtro é uma string com vírgulas e parênteses como separadores, então um
+    termo que contenha esses caracteres não é só inútil: ele corrompe a
+    expressão e a consulta passa a filtrar outra coisa. Além disso o CPF é
+    gravado só com dígitos — buscar "072.865.847-07" literalmente nunca acha
+    ninguém, por isso a comparação de CPF usa os dígitos do termo.
+    """
+    termo = (busca or "").strip()
+    if not termo:
+        return None
+
+    texto = re.sub(r"[,()*%\\]", " ", termo).strip()
+    digitos = re.sub(r"\D", "", termo)
+
+    filtros = []
+    if texto:
+        filtros.append(f"nome.ilike.%{texto}%")
+        filtros.append(f"profissao.ilike.%{texto}%")
+    if digitos:
+        filtros.append(f"cpf.ilike.%{digitos}%")
+    return ",".join(filtros) or None
+
+
+@app.get("/api/base/dashboard")
+async def base_dashboard(user: dict = Depends(get_current_user)):
+    clientes, coberturas = _carregar_base()
+    ultima = (
+        supabase.table("base_importacoes").select("diff_json, created_at")
+        .eq("status", "aplicada").order("created_at", desc=True).limit(1).execute()
+    )
+    mudancas = 0
+    if ultima.data:
+        d = ultima.data[0].get("diff_json") or {}
+        mudancas = len(d.get("novos") or []) + len(d.get("alterados") or [])
+
+    return {
+        "resumo": {**montar_resumo(clientes, coberturas), "mudancas_ultima_importacao": mudancas},
+        "fila": montar_fila_oportunidade(clientes, coberturas),
+    }
+
+
+@app.get("/api/base/clientes")
+async def base_clientes_listar(busca: str = "", user: dict = Depends(get_current_user)):
+    q = supabase.table("base_clientes").select("*")
+    filtro = _filtro_busca_cliente(busca)
+    if filtro:
+        q = q.or_(filtro)
+    r = q.order("nome").limit(200).execute()
+    return {"itens": r.data or []}
+
+
+@app.get("/api/base/clientes/{cpf}")
+async def base_cliente_detalhe(cpf: str, user: dict = Depends(get_current_user)):
+    c = supabase.table("base_clientes").select("*").eq("cpf", cpf).execute()
+    if not c.data:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+    cob = supabase.table("base_coberturas").select("*").eq("cpf", cpf).execute()
+    return {"cliente": c.data[0], "coberturas": cob.data or []}
+
+
+@app.get("/api/base/exportar")
+async def base_exportar(user: dict = Depends(get_current_user)):
+    clientes, coberturas = _carregar_base()
+    conteudo = gerar_xlsx(clientes, coberturas)
+    nome = f"BASE_MAG_{datetime.now().strftime('%Y%m%d')}.xlsx"
+    return Response(
+        content=conteudo,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nome}"'},
+    )
+
+
 # ============================================================================
 # MAIN
 # ============================================================================
