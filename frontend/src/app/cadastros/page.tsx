@@ -134,8 +134,8 @@ const NOMES_NO_PIPEDRIVE: Record<string, string[]> = {
   cep: ['cep'],
   codigo_xp: ['cod xp', 'codigo xp', 'conta xp', 'codigo de conta xp'],
   empresa_nome: ['empresa', 'entidade', 'empresa onde trabalha'],
-  empresa_cnpj: ['cnpj', 'cnpj da empresa'],
-  documento_identidade: ['documento de identidade', 'rg', 'cnh'],
+  empresa_cnpj: ['cnpj empresa', 'cnpj da empresa', 'cnpj'],
+  documento_identidade: ['documento', 'documento de identidade', 'rg', 'cnh'],
   naturalidade: ['naturalidade'],
 }
 
