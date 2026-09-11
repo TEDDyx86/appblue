@@ -147,6 +147,37 @@ def montar_fila_oportunidade(
     }
 
 
+def analisar_cliente(
+    cliente: Dict[str, Any], coberturas: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Os mesmos números da fila, para um cliente só.
+
+    Vive aqui e não na tela porque a régua é regra de negócio: se a referência
+    de 10x a renda anual mudar, ela muda em um lugar. Reimplementar no front
+    faria a tela do cliente e a fila discordarem sem ninguém perceber.
+    """
+    renda = _num(cliente.get("renda"))
+    capital = _num(cliente.get("total_capital_segurado"))
+    renda_anual = renda * 12
+    nasc = _data(cliente.get("data_nascimento"))
+    hoje = date.today()
+
+    return {
+        "renda_mensal": renda,
+        "capital_segurado": capital,
+        "razao_renda_anual": round(capital / renda_anual, 2) if renda_anual else None,
+        "lacuna": round(renda_anual * REFERENCIA_RENDA_ANUAL - capital, 2) if renda_anual else None,
+        "riders_que_faltam": [
+            n for n in RIDERS.values() if n not in _riders_do_cliente(coberturas)
+        ],
+        "idade": _idade_em(nasc, hoje) if nasc else None,
+        "parou_de_pagar": any(
+            "REMIDO" in (c.get("status_cobertura") or "").upper() for c in coberturas
+        ),
+    }
+
+
 def montar_resumo(clientes: List[Dict[str, Any]], coberturas: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {
         "clientes": len(clientes),

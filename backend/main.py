@@ -6246,7 +6246,7 @@ async def base_descartar(importacao_id: str, user: dict = Depends(require_admin)
 
 from fastapi.responses import Response
 
-from base_clientes.consultas import montar_fila_oportunidade, montar_resumo
+from base_clientes.consultas import analisar_cliente, montar_fila_oportunidade, montar_resumo
 from base_clientes.exportacao import gerar_xlsx
 
 
@@ -6315,7 +6315,12 @@ async def base_cliente_detalhe(cpf: str, user: dict = Depends(get_current_user))
     if not c.data:
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
     cob = supabase.table("base_coberturas").select("*").eq("cpf", cpf).execute()
-    return {"cliente": c.data[0], "coberturas": cob.data or []}
+    coberturas = cob.data or []
+    return {
+        "cliente": c.data[0],
+        "coberturas": coberturas,
+        "analise": analisar_cliente(c.data[0], coberturas),
+    }
 
 
 @app.get("/api/base/exportar")

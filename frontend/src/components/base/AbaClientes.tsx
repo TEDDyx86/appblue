@@ -12,6 +12,9 @@ interface Cliente {
   profissao: string | null
   renda: number | string | null
   data_nascimento: string | null
+  endereco: string | null
+  sexo: string | null
+  qtd_filhos: number | null
   total_capital_segurado: number | string | null
   total_premio_mensal: number | string | null
   qtd_propostas: number
@@ -26,9 +29,21 @@ interface Cobertura {
   premio_mensalizado: number | string | null
 }
 
+/** O gancho da conversa, calculado no backend com a mesma régua da fila. */
+interface Analise {
+  renda_mensal: number | string | null
+  capital_segurado: number | string | null
+  razao_renda_anual: number | string | null
+  lacuna: number | string | null
+  riders_que_faltam: string[]
+  idade: number | null
+  parou_de_pagar: boolean
+}
+
 interface DetalheCliente {
   cliente: Cliente
   coberturas: Cobertura[]
+  analise?: Analise
 }
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -36,10 +51,58 @@ const cab = () => ({ Authorization: `Bearer ${localStorage.getItem('access_token
 
 // O Postgres devolve NUMERIC como string (ex.: "456902.55"), nunca como number.
 // Converte antes de formatar; valores ausentes ou inválidos viram travessão.
-const reais = (v: number | string | null | undefined) => {
+const numero = (v: number | string | null | undefined) => {
   const n = Number(v)
-  if (v === null || v === undefined || Number.isNaN(n)) return '—'
-  return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
+  return v === null || v === undefined || v === '' || Number.isNaN(n) ? null : n
+}
+
+const reais = (v: number | string | null | undefined) => {
+  const n = numero(v)
+  return n === null
+    ? '—'
+    : n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
+}
+
+const juntar = (partes: (string | number | null | undefined)[]) =>
+  partes.filter((p) => p !== null && p !== undefined && p !== '').join(' · ')
+
+/**
+ * `2026-09-11` -> `11/09/2026`, sem passar por `Date`.
+ *
+ * `new Date('2026-09-11')` é meia-noite UTC e renderiza o dia anterior em
+ * UTC-3 — armadilha registrada no CLAUDE.md.
+ */
+const formatarData = (iso: string | null | undefined) => {
+  if (!iso || iso.length < 10) return null
+  const [a, m, d] = iso.slice(0, 10).split('-')
+  return `${d}/${m}/${a}`
+}
+
+function Verbete({
+  rotulo,
+  destaque,
+  children,
+}: {
+  rotulo: string
+  destaque?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <>
+      <dt className="text-[10px] uppercase tracking-wider font-bold text-slate-400 pt-0.5">
+        {rotulo}
+      </dt>
+      <dd
+        className={`min-w-0 ${
+          destaque
+            ? 'font-extrabold text-slate-900 dark:text-white'
+            : 'text-slate-700 dark:text-slate-200'
+        }`}
+      >
+        {children}
+      </dd>
+    </>
+  )
 }
 
 export default function AbaClientes() {
@@ -159,18 +222,87 @@ export default function AbaClientes() {
                 <X className="w-4 h-4" aria-hidden="true" />
               </button>
             </div>
-            <div className="overflow-y-auto p-5 space-y-2">
-              {(aberto.coberturas || []).length === 0 && (
-                <p className="text-xs text-slate-500 dark:text-slate-400">Nenhuma cobertura registrada.</p>
+            <div className="overflow-y-auto p-5 space-y-5">
+              {/* O briefing vem primeiro: é por isso que se abre um cliente.
+                  A ficha inteira continua disponível, só não recebe você. */}
+              {aberto.analise && (
+                <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
+                  <Verbete rotulo="Tem">
+                    {juntar([
+                      reais(aberto.analise.capital_segurado),
+                      `${aberto.cliente?.qtd_coberturas ?? 0} cobertura(s)`,
+                    ])}
+                  </Verbete>
+                  <Verbete rotulo="Renda">
+                    {numero(aberto.analise.renda_mensal)
+                      ? `${reais(aberto.analise.renda_mensal)}/mês`
+                      : 'não declarada'}
+                  </Verbete>
+                  {numero(aberto.analise.lacuna) !== null && (
+                    <Verbete rotulo="Lacuna" destaque>
+                      {reais(aberto.analise.lacuna)}
+                      <span className="ml-1.5 font-normal text-slate-500 dark:text-slate-400">
+                        (cobre {aberto.analise.razao_renda_anual}× a renda anual, referência 10×)
+                      </span>
+                    </Verbete>
+                  )}
+                  <Verbete rotulo="Falta">
+                    {(aberto.analise.riders_que_faltam || []).join(' · ') ||
+                      'já tem todos os riders da carteira'}
+                  </Verbete>
+                </dl>
               )}
-              {(aberto.coberturas || []).map((c) => (
-                <div key={c.item_contratado} className="rounded-xl border border-slate-200 dark:border-[#002060] p-3">
-                  <p className="text-xs font-semibold text-slate-900 dark:text-white">{c.produto}</p>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    {c.status_cobertura} · CS {reais(c.capital_segurado)} · prêmio {reais(c.premio_mensalizado)}/mês
-                  </p>
-                </div>
-              ))}
+
+              {aberto.analise?.parou_de_pagar && (
+                <p
+                  role="alert"
+                  className="rounded-xl border border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 px-3.5 py-2.5 text-[11px] text-amber-800 dark:text-amber-200"
+                >
+                  Este cliente tem cobertura com status <strong>REMIDO</strong> — parou de pagar.
+                </p>
+              )}
+
+              <details className="group">
+                <summary className="cursor-pointer text-[11px] font-bold text-[#0092FF] dark:text-[#00FFFF] hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0092FF] rounded">
+                  Ver ficha completa
+                </summary>
+                <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
+                  <Verbete rotulo="CPF">{aberto.cliente?.cpf || '—'}</Verbete>
+                  <Verbete rotulo="Nascimento">
+                    {juntar([
+                      formatarData(aberto.cliente?.data_nascimento),
+                      aberto.analise?.idade ? `${aberto.analise.idade} anos` : null,
+                    ]) || '—'}
+                  </Verbete>
+                  <Verbete rotulo="Profissão">{aberto.cliente?.profissao || '—'}</Verbete>
+                  <Verbete rotulo="E-mail">{aberto.cliente?.email || '—'}</Verbete>
+                  <Verbete rotulo="Endereço">{aberto.cliente?.endereco || '—'}</Verbete>
+                  <Verbete rotulo="Filhos">
+                    {aberto.cliente?.qtd_filhos ?? 'não informado'}
+                  </Verbete>
+                  <Verbete rotulo="Propostas">{aberto.cliente?.qtd_propostas ?? '—'}</Verbete>
+                  <Verbete rotulo="Prêmio">
+                    {reais(aberto.cliente?.total_premio_mensal)}/mês
+                  </Verbete>
+                </dl>
+              </details>
+
+              <div className="space-y-2">
+                <h3 className="text-[10px] uppercase tracking-wider font-bold text-slate-400">
+                  Coberturas
+                </h3>
+                {(aberto.coberturas || []).length === 0 && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Nenhuma cobertura registrada.</p>
+                )}
+                {(aberto.coberturas || []).map((c) => (
+                  <div key={c.item_contratado} className="rounded-xl border border-slate-200 dark:border-[#002060] p-3">
+                    <p className="text-xs font-semibold text-slate-900 dark:text-white">{c.produto}</p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                      {c.status_cobertura} · CS {reais(c.capital_segurado)} · prêmio {reais(c.premio_mensalizado)}/mês
+                    </p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
