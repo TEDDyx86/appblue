@@ -84,6 +84,11 @@ def teste_valores_exatos():
     checar("cidade com duas palavras inteira", r["cidade"], "SAO PAULO")
     checar("uf", r["uf"], "SP")
     checar("cep", r["cep"], "01415-000")
+    # Formato acordado: rua e numero, cidade, UF. Sem bairro e sem CEP.
+    checar("endereco_completo", r["endereco_completo"],
+           "RUA DAS ACACIAS, 150, APTO 72, SAO PAULO - SP")
+    checar("endereco sem bairro", "JARDIM PAULISTA" in (r["endereco_completo"] or ""), False)
+    checar("endereco sem cep", "01415-000" in (r["endereco_completo"] or ""), False)
     checar("profissao completa", r["profissao"], "ENGENHEIRO CIVIL")
     checar("ocupacao completa", r["ocupacao"], "DIRETOR TECNICO")
     checar("empresa_nome", r["empresa_nome"], "CONSTRUTORA MODELO LTDA")

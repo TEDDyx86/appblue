@@ -5379,10 +5379,15 @@ def _juntar(*partes: Any, sep: str = " ") -> Optional[str]:
 
 
 def _montar_endereco(e: Dict[str, Any]) -> str:
+    """
+    Endereço como vai para o CRM: rua e número, cidade, UF.
+
+    Bairro e CEP ficam de fora por decisão de produto — não são usados para
+    nada a jusante e só alongavam a linha. Os dois continuam extraídos e
+    disponíveis em campo próprio.
+    """
     cidade_uf = f"{e['cidade']} - {e['uf']}" if e.get("cidade") and e.get("uf") else e.get("cidade")
-    partes = [e.get("logradouro"), e.get("bairro"), cidade_uf,
-              f"CEP: {e['cep']}" if e.get("cep") else None]
-    return ", ".join([p for p in partes if p])
+    return ", ".join([p for p in (e.get("logradouro"), cidade_uf) if p])
 
 
 def _codigo_sem_digito(codigo: Any) -> Optional[str]:

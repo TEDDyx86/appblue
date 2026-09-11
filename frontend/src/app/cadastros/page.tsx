@@ -114,6 +114,51 @@ interface ReuniaoComDados {
   dispensada: boolean
 }
 
+/** Estilo único dos campos. Antes cada input repetia a classe inteira à mão. */
+const CLASSE_CAMPO =
+  'w-full h-9 px-3 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]'
+
+/**
+ * Uma linha de campo: rótulo à esquerda, destino no Pipedrive à direita, campo
+ * abaixo.
+ *
+ * O cabeçalho tem altura fixa de propósito. Sem isso, um campo com selo e outro
+ * sem ficavam com cabeçalhos de alturas diferentes, e os dois inputs lado a lado
+ * no mesmo grid começavam em alturas diferentes — era a origem do
+ * desalinhamento. `items-end` no grid não resolveria: o rótulo é que precisa
+ * ocupar sempre o mesmo espaço.
+ */
+function Campo({
+  rotulo,
+  selo,
+  children,
+}: {
+  rotulo: string
+  selo?: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex flex-col min-w-0">
+      <div className="flex items-center justify-between gap-2 mb-1 h-5">
+        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 truncate">
+          {rotulo}
+        </label>
+        {selo}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+/** Campo que o Pipedrive já tem de fábrica, sem mapeamento a escolher. */
+function SeloPadrao({ nome }: { nome: string }) {
+  return (
+    <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800/60 whitespace-nowrap flex-shrink-0">
+      ➔ {nome} (Padrão)
+    </span>
+  )
+}
+
 export default function CadastrosPage() {
   const router = useRouter()
   const { theme, isDark, toggleTheme } = useTheme()
@@ -374,7 +419,8 @@ export default function CadastrosPage() {
         empresa_nome: editFields.empresa_nome || undefined,
         empresa_cnpj: editFields.empresa_cnpj || undefined,
         codigo_xp: editFields.codigo_xp || undefined,
-        dados_bancarios: editFields.dados_bancarios || undefined,
+        // dados_bancarios saiu junto com o campo na tela: gravar no CRM algo
+        // que ninguém vê nem confere é pior que não gravar.
         create_history_activity: createHistoryActivity,
         custom_field_mapping: customMapping,
       }
@@ -961,45 +1007,31 @@ export default function CadastrosPage() {
                   </div>
 
                   <div className="space-y-3 text-xs">
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                          Nome Completo
-                        </label>
-                        <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800/60">
-                          ➔ Pipedrive: Nome (Padrão)
-                        </span>
-                      </div>
+                    <Campo rotulo="Nome Completo" selo={<SeloPadrao nome="Pipedrive: Nome" />}>
                       <input
                         type="text"
                         value={editFields.nome_completo || ''}
                         onChange={(e) => handleFieldChange('nome_completo', e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-medium text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                        className={`${CLASSE_CAMPO} font-medium`}
                       />
-                    </div>
+                    </Campo>
 
                     <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                            CPF
-                          </label>
-                          {renderFieldMapper('cpf', 'bccf793f30f8882dc987634461f65fcefe04c116')}
-                        </div>
+                      <Campo
+                        rotulo="CPF"
+                        selo={renderFieldMapper('cpf', 'bccf793f30f8882dc987634461f65fcefe04c116')}
+                      >
                         <input
                           type="text"
                           value={editFields.cpf || ''}
                           onChange={(e) => handleFieldChange('cpf', e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-mono text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                          className={`${CLASSE_CAMPO} font-mono`}
                         />
-                      </div>
-                      <div>
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                            Data de Nascimento
-                          </label>
-                          {renderFieldMapper('data_nascimento', 'c5f06bfce880ed2c3618d10b40eab28c4b31dd1c')}
-                        </div>
+                      </Campo>
+                      <Campo
+                        rotulo="Data de Nascimento"
+                        selo={renderFieldMapper('data_nascimento', 'c5f06bfce880ed2c3618d10b40eab28c4b31dd1c')}
+                      >
                         <input
                           type="date"
                           value={editFields.data_nascimento_iso || ''}
@@ -1011,55 +1043,34 @@ export default function CadastrosPage() {
                               handleFieldChange('data_nascimento', `${d}/${m}/${y}`)
                             }
                           }}
-                          className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-mono text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                          className={`${CLASSE_CAMPO} font-mono`}
                         />
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                          Documento de Identidade (RG/CNH)
-                        </label>
-                        {renderFieldMapper('documento_identidade', 'none')}
-                      </div>
-                      <input
-                        type="text"
-                        value={editFields.documento_identidade || ''}
-                        onChange={(e) => handleFieldChange('documento_identidade', e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-medium text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
-                      />
+                      </Campo>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                            Nome da Mãe
-                          </label>
-                          {renderFieldMapper('nome_mae', 'none')}
-                        </div>
+                      <Campo
+                        rotulo="Documento (RG/CNH)"
+                        selo={renderFieldMapper('documento_identidade', 'none')}
+                      >
                         <input
                           type="text"
-                          value={editFields.nome_mae || ''}
-                          onChange={(e) => handleFieldChange('nome_mae', e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-medium text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                          value={editFields.documento_identidade || ''}
+                          onChange={(e) => handleFieldChange('documento_identidade', e.target.value)}
+                          className={`${CLASSE_CAMPO} font-medium`}
                         />
-                      </div>
-                      <div>
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                            Nacionalidade / Naturalidade
-                          </label>
-                          {renderFieldMapper('naturalidade', 'none')}
-                        </div>
+                      </Campo>
+                      <Campo
+                        rotulo="Naturalidade"
+                        selo={renderFieldMapper('naturalidade', 'none')}
+                      >
                         <input
                           type="text"
                           value={editFields.naturalidade || editFields.nacionalidade || ''}
                           onChange={(e) => handleFieldChange('naturalidade', e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-medium text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                          className={`${CLASSE_CAMPO} font-medium`}
                         />
-                      </div>
+                      </Campo>
                     </div>
                   </div>
                 </div>
@@ -1076,103 +1087,52 @@ export default function CadastrosPage() {
                   </div>
 
                   <div className="space-y-3 text-xs">
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                          E-mail Principal
-                        </label>
-                        <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800/60">
-                          ➔ Pipedrive: E-mail (Padrão)
-                        </span>
-                      </div>
+                    <Campo rotulo="E-mail Principal" selo={<SeloPadrao nome="Pipedrive: E-mail" />}>
                       <input
                         type="email"
                         value={editFields.email || ''}
                         onChange={(e) => handleFieldChange('email', e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-medium text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                        className={`${CLASSE_CAMPO} font-medium`}
                       />
-                    </div>
+                    </Campo>
 
                     <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                            Celular / WhatsApp
-                          </label>
-                          <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800/60">
-                            ➔ Pipedrive: Telefone (Padrão)
-                          </span>
-                        </div>
+                      <Campo
+                        rotulo="Celular / WhatsApp"
+                        selo={<SeloPadrao nome="Pipedrive: Telefone" />}
+                      >
                         <input
                           type="text"
                           value={editFields.celular || editFields.telefone || ''}
                           onChange={(e) => handleFieldChange('celular', e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-medium text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                          className={`${CLASSE_CAMPO} font-medium`}
                         />
-                      </div>
-                      <div>
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                            CEP
-                          </label>
-                          {renderFieldMapper('endereco_completo', 'none')}
-                        </div>
+                      </Campo>
+                      <Campo rotulo="CEP">
                         <input
                           type="text"
                           value={editFields.cep || ''}
                           onChange={(e) => handleFieldChange('cep', e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-mono text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                          className={`${CLASSE_CAMPO} font-mono`}
                         />
-                      </div>
+                      </Campo>
                     </div>
 
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                        Logradouro & Número
-                      </label>
+                    {/* Um campo só, no formato que vai para o CRM: rua e número,
+                        cidade, UF. Bairro ficou de fora por decisão de produto, e
+                        editar aqui edita exatamente o que será gravado — antes
+                        eram quatro campos soltos e a composição acontecia escondida. */}
+                    <Campo
+                      rotulo="Endereço"
+                      selo={renderFieldMapper('endereco_completo', 'none')}
+                    >
                       <input
                         type="text"
-                        value={editFields.logradouro || ''}
-                        onChange={(e) => handleFieldChange('logradouro', e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-medium text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                        value={editFields.endereco_completo || ''}
+                        onChange={(e) => handleFieldChange('endereco_completo', e.target.value)}
+                        className={`${CLASSE_CAMPO} font-medium`}
                       />
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                          Bairro
-                        </label>
-                        <input
-                          type="text"
-                          value={editFields.bairro || ''}
-                          onChange={(e) => handleFieldChange('bairro', e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-medium text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                          Cidade
-                        </label>
-                        <input
-                          type="text"
-                          value={editFields.cidade || ''}
-                          onChange={(e) => handleFieldChange('cidade', e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-medium text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                          UF
-                        </label>
-                        <input
-                          type="text"
-                          value={editFields.uf || ''}
-                          onChange={(e) => handleFieldChange('uf', e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-medium text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
-                        />
-                      </div>
-                    </div>
+                    </Campo>
                   </div>
                 </div>
 
@@ -1189,66 +1149,51 @@ export default function CadastrosPage() {
 
                   <div className="space-y-3 text-xs">
                     <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                            Profissão
-                          </label>
-                          {renderFieldMapper('profissao', '079e39aaa3b5ec6782cdea922a29682f165d3953')}
-                        </div>
+                      <Campo
+                        rotulo="Profissão"
+                        selo={renderFieldMapper('profissao', '079e39aaa3b5ec6782cdea922a29682f165d3953')}
+                      >
                         <input
                           type="text"
                           value={editFields.profissao || ''}
                           onChange={(e) => handleFieldChange('profissao', e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-medium text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                          className={`${CLASSE_CAMPO} font-medium`}
                         />
-                      </div>
-                      <div>
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                            Renda Mensal (R$)
-                          </label>
-                          {renderFieldMapper('renda', '3b4aea4bd2e89b7859117ade965123b8580d2173')}
-                        </div>
+                      </Campo>
+                      <Campo
+                        rotulo="Renda Mensal (R$)"
+                        selo={renderFieldMapper('renda', '3b4aea4bd2e89b7859117ade965123b8580d2173')}
+                      >
                         <input
                           type="number"
                           step="1000"
                           value={editFields.renda_mensal || ''}
                           onChange={(e) => handleFieldChange('renda_mensal', parseFloat(e.target.value) || 0)}
-                          className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-mono text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                          className={`${CLASSE_CAMPO} font-mono`}
                         />
-                      </div>
+                      </Campo>
                     </div>
 
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                          Empresa / Entidade Onde Trabalha
-                        </label>
-                        {renderFieldMapper('empresa_nome', 'none')}
-                      </div>
+                    <Campo
+                      rotulo="Empresa / Entidade Onde Trabalha"
+                      selo={renderFieldMapper('empresa_nome', 'none')}
+                    >
                       <input
                         type="text"
                         value={editFields.empresa_nome || ''}
                         onChange={(e) => handleFieldChange('empresa_nome', e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-medium text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                        className={`${CLASSE_CAMPO} font-medium`}
                       />
-                    </div>
+                    </Campo>
 
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                          CNPJ da Empresa
-                        </label>
-                        {renderFieldMapper('empresa_cnpj', 'none')}
-                      </div>
+                    <Campo rotulo="CNPJ da Empresa" selo={renderFieldMapper('empresa_cnpj', 'none')}>
                       <input
                         type="text"
                         value={editFields.empresa_cnpj || ''}
                         onChange={(e) => handleFieldChange('empresa_cnpj', e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-mono text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                        className={`${CLASSE_CAMPO} font-mono`}
                       />
-                    </div>
+                    </Campo>
                   </div>
                 </div>
 
@@ -1258,76 +1203,49 @@ export default function CadastrosPage() {
                     <div className="flex items-center space-x-2">
                       <Heart className="w-4 h-4 text-[#0092FF]" />
                       <h4 className="font-bold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300 font-display">
-                        Família & Dados Bancários XP
+                        Família & Conta XP
                       </h4>
                     </div>
                   </div>
 
                   <div className="space-y-3 text-xs">
                     <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                            Estado Civil
-                          </label>
-                          {renderFieldMapper('estado_civil', '14a3f171ae02abe5a3e89333c707ed6f74df8837')}
-                        </div>
+                      <Campo
+                        rotulo="Estado Civil"
+                        selo={renderFieldMapper('estado_civil', '14a3f171ae02abe5a3e89333c707ed6f74df8837')}
+                      >
                         <select
                           value={editFields.estado_civil_id || 53}
                           onChange={(e) => handleFieldChange('estado_civil_id', parseInt(e.target.value))}
-                          className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-medium text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                          className={`${CLASSE_CAMPO} font-medium`}
                         >
                           <option value={53}>Casado(a)</option>
                           <option value={52}>Solteiro(a)</option>
                           <option value={54}>União Estável</option>
                         </select>
-                      </div>
+                      </Campo>
 
-                      <div>
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                            Código de Conta XP
-                          </label>
-                          {renderFieldMapper('codigo_xp', 'none')}
-                        </div>
+                      <Campo rotulo="Código de Conta XP" selo={renderFieldMapper('codigo_xp', 'none')}>
                         <input
                           type="text"
                           value={editFields.codigo_xp || ''}
                           onChange={(e) => handleFieldChange('codigo_xp', e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-mono text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                          className={`${CLASSE_CAMPO} font-mono`}
                         />
-                      </div>
+                      </Campo>
                     </div>
 
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                          Nome do(a) Cônjuge
-                        </label>
-                        {renderFieldMapper('nome_conjuge', 'dad66a725f4cce02a26669d26e4929cb1c816150')}
-                      </div>
+                    <Campo
+                      rotulo="Nome do(a) Cônjuge"
+                      selo={renderFieldMapper('nome_conjuge', 'dad66a725f4cce02a26669d26e4929cb1c816150')}
+                    >
                       <input
                         type="text"
                         value={editFields.nome_conjuge || ''}
                         onChange={(e) => handleFieldChange('nome_conjuge', e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-medium text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
+                        className={`${CLASSE_CAMPO} font-medium`}
                       />
-                    </div>
-
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                          Dados Bancários Cadastrados
-                        </label>
-                        {renderFieldMapper('dados_bancarios', 'none')}
-                      </div>
-                      <input
-                        type="text"
-                        value={editFields.dados_bancarios || ''}
-                        onChange={(e) => handleFieldChange('dados_bancarios', e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] font-medium text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
-                      />
-                    </div>
+                    </Campo>
                   </div>
                 </div>
               </div>
