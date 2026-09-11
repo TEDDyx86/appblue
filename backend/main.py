@@ -5782,9 +5782,12 @@ class SyncPersonFichaRequest(BaseModel):
     nome_conjuge: Optional[str] = None
     renda_mensal: Optional[float] = None
     endereco_completo: Optional[str] = None
+    cep: Optional[str] = None
     empresa_nome: Optional[str] = None
     empresa_cnpj: Optional[str] = None
     codigo_xp: Optional[str] = None
+    documento_identidade: Optional[str] = None
+    naturalidade: Optional[str] = None
     dados_bancarios: Optional[str] = None
     create_history_activity: bool = True
     custom_field_mapping: Optional[Dict[str, Optional[str]]] = None
@@ -5915,11 +5918,19 @@ async def sync_person_ficha_endpoint(
     if req.renda_mensal is not None and renda_key and renda_key != "none":
         payload[renda_key] = float(req.renda_mensal)
         
-    # Mapeamentos adicionais configurados pelo usuário
+    # Mapeamentos adicionais configurados pelo usuário.
+    #
+    # Todo campo que a tela deixa mapear precisa estar aqui. CEP, CNPJ,
+    # documento e naturalidade tinham seletor na tela e não tinham destino: o
+    # usuário escolhia o campo do CRM e nada era gravado, sem aviso nenhum.
     extra_field_mappings = {
         "endereco_completo": req.endereco_completo,
+        "cep": req.cep,
         "empresa_nome": req.empresa_nome,
+        "empresa_cnpj": req.empresa_cnpj,
         "codigo_xp": req.codigo_xp,
+        "documento_identidade": req.documento_identidade,
+        "naturalidade": req.naturalidade,
     }
     for field_name, field_val in extra_field_mappings.items():
         target_k = mapping.get(field_name)

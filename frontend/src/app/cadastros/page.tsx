@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import axios from 'axios'
 import Sidebar from '@/components/Sidebar'
@@ -114,6 +114,58 @@ interface ReuniaoComDados {
   dispensada: boolean
 }
 
+/**
+ * Como cada dado da ficha se chama no Pipedrive.
+ *
+ * O reconhecimento é pelo **nome** do campo, não por uma chave escrita no
+ * código: campo criado no CRM passa a ser usado sozinho, sem ninguém vir aqui
+ * editar um hash. A comparação é por nome inteiro, não por trecho — senão
+ * "Moeda de Renda" casaria com `renda` e o valor iria para o campo errado.
+ */
+const NOMES_NO_PIPEDRIVE: Record<string, string[]> = {
+  cpf: ['cpf', 'cpf cliente'],
+  data_nascimento: ['data de nascimento'],
+  profissao: ['profissao'],
+  estado_civil: ['estado civil'],
+  regime_casamento: ['regime de casamento'],
+  nome_conjuge: ['nome do conjuge', 'conjuge'],
+  renda: ['renda'],
+  endereco_completo: ['endereco', 'endereco completo'],
+  cep: ['cep'],
+  codigo_xp: ['cod xp', 'codigo xp', 'conta xp', 'codigo de conta xp'],
+  empresa_nome: ['empresa', 'entidade', 'empresa onde trabalha'],
+  empresa_cnpj: ['cnpj', 'cnpj da empresa'],
+  documento_identidade: ['documento de identidade', 'rg', 'cnh'],
+  naturalidade: ['naturalidade'],
+}
+
+/**
+ * Rede de segurança: se a busca dos campos falhar (sem token, API fora), o
+ * mapeamento por nome fica vazio e estes destinos conhecidos seguram o envio.
+ * Todos conferidos como existentes na conta; o reconhecimento por nome tem
+ * precedência sobre eles.
+ */
+const MAPA_DE_RESERVA: Record<string, string> = {
+  cpf: 'bccf793f30f8882dc987634461f65fcefe04c116',
+  data_nascimento: 'c5f06bfce880ed2c3618d10b40eab28c4b31dd1c',
+  profissao: '079e39aaa3b5ec6782cdea922a29682f165d3953',
+  estado_civil: '14a3f171ae02abe5a3e89333c707ed6f74df8837',
+  regime_casamento: '011f47eeeffdcd9977e52c2dd706e969a7d76abe',
+  nome_conjuge: 'dad66a725f4cce02a26669d26e4929cb1c816150',
+  renda: '3b4aea4bd2e89b7859117ade965123b8580d2173',
+}
+
+/** "Nome do (a) cônjuge" → "nome do conjuge" */
+function normalizarNomeDeCampo(nome: string): string {
+  return nome
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 /** Estilo único dos campos. Antes cada input repetia a classe inteira à mão. */
 const CLASSE_CAMPO =
   'w-full h-9 px-3 rounded-xl text-xs bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]'
@@ -198,21 +250,9 @@ export default function CadastrosPage() {
   const [personFields, setPersonFields] = useState<PipedriveField[]>([])
   const [loadingFields, setLoadingFields] = useState(false)
   const [showMappingModal, setShowMappingModal] = useState(false)
-  const [customMapping, setCustomMapping] = useState<Record<string, string>>({
-    cpf: 'bccf793f30f8882dc987634461f65fcefe04c116',
-    data_nascimento: 'c5f06bfce880ed2c3618d10b40eab28c4b31dd1c',
-    profissao: '079e39aaa3b5ec6782cdea922a29682f165d3953',
-    estado_civil: '14a3f171ae02abe5a3e89333c707ed6f74df8837',
-    regime_casamento: '011f47eeeffdcd9977e52c2dd706e969a7d76abe',
-    nome_conjuge: 'dad66a725f4cce02a26669d26e4929cb1c816150',
-    renda: '3b4aea4bd2e89b7859117ade965123b8580d2173',
-    endereco_completo: 'none',
-    empresa_nome: 'none',
-    codigo_xp: 'none',
-    documento_identidade: 'none',
-    nome_mae: 'none',
-    naturalidade: 'none',
-  })
+  // Só as escolhas feitas à mão. O padrão vem do reconhecimento por nome, que
+  // é recalculado a cada carga dos campos do Pipedrive.
+  const [customMapping, setCustomMapping] = useState<Record<string, string>>({})
 
   // Sync state
   const [syncing, setSyncing] = useState(false)
@@ -225,26 +265,65 @@ export default function CadastrosPage() {
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
+  const carregarCamposPipedrive = useCallback(async () => {
+    try {
+      setLoadingFields(true)
+      const token = localStorage.getItem('access_token')
+      if (!token) return
+      const res = await axios.get(`${API_URL}/api/pipedrive/person-fields`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.data?.fields) {
+        setPersonFields(res.data.fields)
+      }
+    } catch (err) {
+      console.warn('Não foi possível obter campos do Pipedrive:', err)
+    } finally {
+      setLoadingFields(false)
+    }
+  }, [API_URL])
+
   useEffect(() => {
-    const fetchPersonFields = async () => {
-      try {
-        setLoadingFields(true)
-        const token = localStorage.getItem('access_token')
-        if (!token) return
-        const res = await axios.get(`${API_URL}/api/pipedrive/person-fields`, {
-          headers: { Authorization: `Bearer ${token}` }
-        })
-        if (res.data?.fields) {
-          setPersonFields(res.data.fields)
+    carregarCamposPipedrive()
+  }, [carregarCamposPipedrive])
+
+  /**
+   * Destino de cada dado, deduzido do nome do campo no Pipedrive.
+   *
+   * Recalculado sempre que a lista de campos muda, então criar um campo no CRM
+   * e clicar em "Atualizar campos" já o coloca em uso.
+   */
+  const mapaAutomatico = useMemo(() => {
+    const porNome = new Map<string, string>()
+    for (const f of personFields) {
+      const n = normalizarNomeDeCampo(f.name)
+      if (!porNome.has(n)) porNome.set(n, f.key)
+    }
+    const saida: Record<string, string> = {}
+    for (const [nosso, apelidos] of Object.entries(NOMES_NO_PIPEDRIVE)) {
+      for (const apelido of apelidos) {
+        const chave = porNome.get(apelido)
+        if (chave) {
+          saida[nosso] = chave
+          break
         }
-      } catch (err) {
-        console.warn('Não foi possível obter campos do Pipedrive:', err)
-      } finally {
-        setLoadingFields(false)
       }
     }
-    fetchPersonFields()
-  }, [API_URL])
+    return saida
+  }, [personFields])
+
+  /** Escolha à mão > reconhecido pelo nome > o que a tela declara como padrão. */
+  const destinoDe = useCallback(
+    (chave: string, padrao: string) =>
+      customMapping[chave] ?? mapaAutomatico[chave] ?? padrao,
+    [customMapping, mapaAutomatico],
+  )
+
+  /** O que de fato é enviado ao backend, na mesma ordem de precedência. */
+  const mapeamentoEfetivo = useMemo(
+    () => ({ ...MAPA_DE_RESERVA, ...mapaAutomatico, ...customMapping }),
+    [mapaAutomatico, customMapping],
+  )
 
   const carregarReunioes = useCallback(
     async (incluirDispensadas: boolean) => {
@@ -416,13 +495,16 @@ export default function CadastrosPage() {
         nome_conjuge: editFields.nome_conjuge || undefined,
         renda_mensal: editFields.renda_mensal || undefined,
         endereco_completo: editFields.endereco_completo || undefined,
+        cep: editFields.cep || undefined,
         empresa_nome: editFields.empresa_nome || undefined,
         empresa_cnpj: editFields.empresa_cnpj || undefined,
         codigo_xp: editFields.codigo_xp || undefined,
+        documento_identidade: editFields.documento_identidade || undefined,
+        naturalidade: editFields.naturalidade || editFields.nacionalidade || undefined,
         // dados_bancarios saiu junto com o campo na tela: gravar no CRM algo
         // que ninguém vê nem confere é pior que não gravar.
         create_history_activity: createHistoryActivity,
-        custom_field_mapping: customMapping,
+        custom_field_mapping: mapeamentoEfetivo,
       }
 
       const res = await axios.post(`${API_URL}/api/pipedrive/sync-person-ficha`, payload, {
@@ -445,7 +527,7 @@ export default function CadastrosPage() {
   }
 
   const renderFieldMapper = (fieldKey: string, fallbackKey: string) => {
-    const currentVal = customMapping[fieldKey] !== undefined ? customMapping[fieldKey] : fallbackKey
+    const currentVal = destinoDe(fieldKey, fallbackKey)
     return (
       <div className="flex items-center space-x-1 flex-shrink-0">
         <span className="text-[10px] text-slate-400 font-bold hidden sm:inline">➔ Pipedrive:</span>
@@ -1343,12 +1425,12 @@ export default function CadastrosPage() {
                     { label: 'Renda Mensal', key: 'renda', defaultFallback: '3b4aea4bd2e89b7859117ade965123b8580d2173' },
                     { label: 'E-mail Principal', key: 'email', isDefaultFixed: true, defaultTarget: 'E-mail (email)' },
                     { label: 'Telefone / WhatsApp', key: 'celular', isDefaultFixed: true, defaultTarget: 'Telefone (phone)' },
-                    { label: 'Endereço / CEP', key: 'endereco_completo', defaultFallback: 'none' },
+                    { label: 'Endereço', key: 'endereco_completo', defaultFallback: 'none' },
+                    { label: 'CEP', key: 'cep', defaultFallback: 'none' },
                     { label: 'Empresa Onde Trabalha', key: 'empresa_nome', defaultFallback: 'none' },
                     { label: 'CNPJ da Empresa', key: 'empresa_cnpj', defaultFallback: 'none' },
                     { label: 'Código de Conta XP', key: 'codigo_xp', defaultFallback: 'none' },
                     { label: 'Documento (RG/CNH)', key: 'documento_identidade', defaultFallback: 'none' },
-                    { label: 'Nome da Mãe', key: 'nome_mae', defaultFallback: 'none' },
                     { label: 'Naturalidade / Nacionalidade', key: 'naturalidade', defaultFallback: 'none' },
                   ].map((row) => (
                     <div key={row.key} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -1370,7 +1452,7 @@ export default function CadastrosPage() {
                           </span>
                         ) : (
                           <select
-                            value={customMapping[row.key] !== undefined ? customMapping[row.key] : (row.defaultFallback || 'none')}
+                            value={destinoDe(row.key, row.defaultFallback || 'none')}
                             onChange={(e) => setCustomMapping((prev) => ({ ...prev, [row.key]: e.target.value }))}
                             className="w-full sm:w-64 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-50 dark:bg-[#00061A] border border-slate-200 dark:border-[#002060] text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#0092FF]"
                           >
@@ -1389,29 +1471,31 @@ export default function CadastrosPage() {
               </div>
 
               <div className="p-4 border-t border-slate-200 dark:border-[#002060] bg-slate-50 dark:bg-[#00061A] flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCustomMapping({
-                      cpf: 'bccf793f30f8882dc987634461f65fcefe04c116',
-                      data_nascimento: 'c5f06bfce880ed2c3618d10b40eab28c4b31dd1c',
-                      profissao: '079e39aaa3b5ec6782cdea922a29682f165d3953',
-                      estado_civil: '14a3f171ae02abe5a3e89333c707ed6f74df8837',
-                      regime_casamento: '011f47eeeffdcd9977e52c2dd706e969a7d76abe',
-                      nome_conjuge: 'dad66a725f4cce02a26669d26e4929cb1c816150',
-                      renda: '3b4aea4bd2e89b7859117ade965123b8580d2173',
-                      endereco_completo: 'none',
-                      empresa_nome: 'none',
-                      codigo_xp: 'none',
-                      documento_identidade: 'none',
-                      nome_mae: 'none',
-                      naturalidade: 'none',
-                    })
-                  }}
-                  className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-colors"
-                >
-                  Restaurar Padrões
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    // Descartar as escolhas manuais devolve o reconhecimento
+                    // automático pelo nome — que agora é o padrão de verdade.
+                    onClick={() => setCustomMapping({})}
+                    className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-colors"
+                  >
+                    Restaurar Padrões
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={carregarCamposPipedrive}
+                    disabled={loadingFields}
+                    title="Buscar de novo a lista de campos da Pessoa no Pipedrive"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-[#0092FF] dark:text-[#00FFFF] hover:bg-blue-50 dark:hover:bg-[#002060] transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw
+                      className={`w-3.5 h-3.5 ${loadingFields ? 'animate-spin' : ''}`}
+                      aria-hidden="true"
+                    />
+                    {loadingFields ? 'Buscando...' : `Atualizar campos (${personFields.length})`}
+                  </button>
+                </div>
 
                 <button
                   type="button"
