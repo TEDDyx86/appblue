@@ -1,0 +1,113 @@
+"""
+Regressão: vínculo bem-sucedido tem que aparecer como vinculado na tela.
+
+Rodar: backend/venv/Scripts/python.exe test_estado_vinculo.py
+Não há pytest no projeto — este arquivo é executável e imprime o resultado.
+
+O caso real: a transcrição do Carlos Eduardo teve a atividade #8196 criada no
+CRM e `vinculo.status = "vinculado"`, mas o card continuava mostrando "Pendente
+de Vínculo". A tela decide por `pipedrive.deal_id || pipedrive.person_id`, e o
+vínculo automático gravava só `activity_id`, `activity_origem` e
+`activity_type` — nunca o negócio.
+
+Dois lugares no código faziam essa gravação, copiada um do outro. Era também
+onde `activity_origem` ficava fixo em "existente". Agora há uma função só.
+"""
+
+import io
+import os
+import sys
+
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+
+import main
+
+falhas = []
+
+
+def checar(rotulo, obtido, esperado):
+    ok = obtido == esperado
+    print(f"  {'ok   ' if ok else 'FALHA'} {rotulo:56} obtido={obtido!r}")
+    if not ok:
+        falhas.append(f"{rotulo}: esperado {esperado!r}, obtido {obtido!r}")
+
+
+def tela_mostra_vinculado(briefing):
+    """A mesma condição que o card usa: deal_id ou person_id preenchidos."""
+    p = briefing.get("pipedrive") or {}
+    return bool(p.get("deal_id") or p.get("person_id"))
+
+
+def teste_atividade_existente():
+    print("\n=== anexou em reuniao existente ===")
+    b = {"pipedrive": {}}
+    main.gravar_vinculo_no_briefing(b, {
+        "status": "vinculado", "motivo": "OK",
+        "activity_id": "7618", "activity_origem": "existente", "activity_type": "R3",
+        "detalhe": {"deal_id": 622}, "proximos_passos_activity_id": "8217",
+    })
+    p = b["pipedrive"]
+    checar("activity_id gravado", p.get("activity_id"), "7618")
+    checar("origem preservada", p.get("activity_origem"), "existente")
+    checar("deal_id gravado", p.get("deal_id"), "622")
+    checar("deal_url montada", p.get("deal_url"), "https://investimentosblue.pipedrive.com/deal/622")
+    checar("proximos passos guardado", p.get("proximos_passos_activity_id"), "8217")
+    checar("a TELA mostra vinculado", tela_mostra_vinculado(b), True)
+
+
+def teste_atividade_criada():
+    """O caso do Carlos Eduardo: tactiq criada, card dizia pendente."""
+    print("\n=== criou atividade tactiq ===")
+    b = {"pipedrive": {}}
+    main.gravar_vinculo_no_briefing(b, {
+        "status": "vinculado", "motivo": "ATIVIDADE_CRIADA",
+        "activity_id": "8196", "activity_origem": "criada", "activity_type": "tactiq",
+        "detalhe": {"deal_id": 184},
+    })
+    p = b["pipedrive"]
+    checar("origem 'criada' preservada", p.get("activity_origem"), "criada")
+    checar("deal_id gravado", p.get("deal_id"), "184")
+    checar("a TELA mostra vinculado", tela_mostra_vinculado(b), True)
+
+
+def teste_nao_vinculado_nao_suja():
+    print("\n=== nao vinculou: nao inventa negocio ===")
+    b = {"pipedrive": {"deal_id": "999"}}
+    main.gravar_vinculo_no_briefing(b, {
+        "status": "nao_vinculado", "motivo": "COMPATIBILIDADE_BAIXA",
+        "detalhe": {"score": 0.64},
+    })
+    p = b["pipedrive"]
+    checar("nao grava activity_id", p.get("activity_id"), None)
+    # O que já estava lá foi posto por atribuição manual e não pode ser perdido.
+    checar("preserva deal que ja existia", p.get("deal_id"), "999")
+
+
+def teste_sem_deal_no_detalhe():
+    """SEM_NOME_CLIENTE e afins não trazem deal; não pode explodir."""
+    print("\n=== vinculo sem deal_id no detalhe ===")
+    b = {"pipedrive": {}}
+    main.gravar_vinculo_no_briefing(b, {
+        "status": "vinculado", "motivo": "OK",
+        "activity_id": "1", "activity_origem": "existente", "detalhe": {},
+    })
+    checar("nao inventa deal_id", (b["pipedrive"]).get("deal_id"), None)
+    checar("activity_id ainda gravado", (b["pipedrive"]).get("activity_id"), "1")
+
+
+if __name__ == "__main__":
+    teste_atividade_existente()
+    teste_atividade_criada()
+    teste_nao_vinculado_nao_suja()
+    teste_sem_deal_no_detalhe()
+    print(f"\n{'FALHOU' if falhas else 'TUDO OK'}")
+    for f in falhas:
+        print(f"   {f}")
+    sys.exit(1 if falhas else 0)

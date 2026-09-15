@@ -659,6 +659,37 @@ CONDUTORES = (
 SEM_CLIENTE = {"reuniao interna", "reunioes internas"}
 
 
+def gravar_vinculo_no_briefing(briefing_json: Dict[str, Any], vinculo: Dict[str, Any]) -> None:
+    """
+    Transfere o resultado do vínculo para o bloco `pipedrive` do briefing.
+
+    Existe uma função só porque havia duas cópias disso, e as duas erravam:
+    `activity_origem` ficava fixo em "existente" (o que impediria o Desvincular
+    de apagar uma `tactiq` nossa) e o **negócio nunca era gravado**. A tela
+    decide "vinculado" por `deal_id || person_id`, então um vínculo bem-sucedido
+    aparecia como "Pendente de Vínculo" — foi o caso da atividade #8196, criada
+    no CRM com o card dizendo o contrário.
+
+    Não escreve nada quando o vínculo falhou: o que já está no bloco pode ter
+    vindo de atribuição manual e perder isso seria pior que a inconsistência.
+    """
+    if vinculo.get("status") != "vinculado":
+        return
+
+    pipe = briefing_json.setdefault("pipedrive", {})
+    pipe["activity_id"] = vinculo.get("activity_id")
+    pipe["activity_origem"] = vinculo.get("activity_origem", "existente")
+    pipe["activity_type"] = vinculo.get("activity_type")
+
+    if vinculo.get("proximos_passos_activity_id"):
+        pipe["proximos_passos_activity_id"] = vinculo["proximos_passos_activity_id"]
+
+    deal_id = (vinculo.get("detalhe") or {}).get("deal_id")
+    if deal_id:
+        pipe["deal_id"] = str(deal_id)
+        pipe["deal_url"] = f"https://investimentosblue.pipedrive.com/deal/{deal_id}"
+
+
 def _e_reuniao_interna(nome_cliente: str) -> bool:
     """
     O nome recebido é de quem conduz, ou a declaração de que não há cliente?
@@ -1865,17 +1896,8 @@ async def process_new_transcription(user_id: Optional[str] = None) -> Dict[str, 
                         }
                     briefing_json["vinculo"] = vinculo
 
-                    if vinculo["status"] == "vinculado":
-                        activity_id = vinculo["activity_id"]
-                        briefing_json["pipedrive"]["activity_id"] = activity_id
-                        # Quem decide é o vínculo: "existente" é reunião do
-                        # cliente e não se apaga; "criada" é nossa `tactiq` e o
-                        # Desvincular precisa poder removê-la. Fixar "existente"
-                        # aqui deixaria tactiq órfã no CRM para sempre.
-                        briefing_json["pipedrive"]["activity_origem"] = vinculo.get(
-                            "activity_origem", "existente"
-                        )
-                        briefing_json["pipedrive"]["activity_type"] = vinculo.get("activity_type")
+                    gravar_vinculo_no_briefing(briefing_json, vinculo)
+                    activity_id = briefing_json["pipedrive"].get("activity_id")
 
                     log_audit_event(
                         action="TRANSCRIPTION_LINKED" if vinculo["status"] == "vinculado"
@@ -4160,13 +4182,7 @@ async def revincular_transcricao(
         briefing, titulo, res.data[0].get("google_doc_id")
     )
     briefing["vinculo"] = vinculo
-    if vinculo["status"] == "vinculado":
-        pipe = briefing.setdefault("pipedrive", {})
-        pipe["activity_id"] = vinculo["activity_id"]
-        # Vem do vínculo, não fixo: "criada" autoriza o Desvincular a apagar a
-        # tactiq; "existente" protege a reunião do cliente.
-        pipe["activity_origem"] = vinculo.get("activity_origem", "existente")
-        pipe["activity_type"] = vinculo.get("activity_type")
+    gravar_vinculo_no_briefing(briefing, vinculo)
 
     supabase.table("transcriptions").update({"briefing_json": briefing}).eq(
         "id", transcription_id
