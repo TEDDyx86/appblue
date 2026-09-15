@@ -104,13 +104,81 @@ def teste_ler_tabela():
     checar("lista vazia devolve None", versao_vigente([]), None)
 
 
+def teste_entidades_html_no_nome():
+    """
+    A SUSEP publica nome com acento em entidade numérica.
+
+    `3114 a 3116 &#8211; Condi&#231;&#245;es Gerais` precisa virar texto legível;
+    sem isso o nome aparecia cru na tela.
+    """
+    print("\n=== nome com acento codificado ===")
+    html = (
+        '<table class="table"><tbody><tr class="item">'
+        '<td><a class="linkDownloadRelatorio" onclick="location.href=\'/x/DownloadConsultaPublica/1\'">'
+        "<span>3114 a 3116 &#8211; Condi&#231;&#245;es Gerais</span>&nbsp;Download</a></td>"
+        "<td>11/03/2026</td><td></td></tr></tbody></table>"
+    )
+    v = ler_versoes_do_html(html)[0]
+    checar("acentos decodificados", v["nome_arquivo"], "3114 a 3116 – Condições Gerais")
+
+
+def teste_nome_do_arquivo():
+    """As duas formas do content-disposition, que não se decodificam igual."""
+    print("\n=== nome vindo do content-disposition ===")
+    from susep.consulta import _nome_do_cabecalho
+
+    checar(
+        "filename* vem percent-encoded e e decodificado",
+        _nome_do_cabecalho(
+            "attachment; filename*=UTF-8''3114%20a%203116%20%E2%80%93%20Condi%C3%A7%C3%B5es.pdf",
+            "1",
+        ),
+        "3114 a 3116 – Condições.pdf",
+    )
+    checar(
+        "filename simples fica literal",
+        _nome_do_cabecalho('attachment; filename="CG_Vida_Individual.pdf"', "1"),
+        "CG_Vida_Individual.pdf",
+    )
+    # A SUSEP devolve nomes sem extensão em alguns processos.
+    checar(
+        "acrescenta .pdf quando falta",
+        _nome_do_cabecalho("attachment; filename=15414900142201731", "1"),
+        "15414900142201731.pdf",
+    )
+    checar("sem cabecalho, usa o id", _nome_do_cabecalho(None, "482289"), "CG_482289.pdf")
+    # Barra no nome viraria caminho ao salvar.
+    checar(
+        "neutraliza separador de caminho",
+        _nome_do_cabecalho('attachment; filename="a/b:c.pdf"', "1"),
+        "a-b-c.pdf",
+    )
+
+
 def teste_apolices_reais():
+    """
+    As nove apólices de exemplo, de 3 a 321 páginas.
+
+    As grandes trazem as Condições Gerais anexadas ao contrato, o que levantava
+    a suspeita de haver mais de um processo no mesmo arquivo — nesse caso pegar
+    o primeiro seria chute. Medido: **cada apólice tem exatamente um número
+    distinto**, e o teste trava isso, não só o valor extraído.
+    """
     print("\n=== apolices de exemplo ===")
     import pymupdf
+
+    from susep.consulta import _RE_PROCESSO
 
     esperado = {
         "APOLICE_TESTE1.pdf": "15414.900142/2017-31",
         "APOLICE_TESTE2.pdf": "15414.902186/2014-52",
+        "Apolice_teste3.pdf": "15414.900141/2013-62",
+        "Apolice_teste4.pdf": "15414.900996/2016-36",
+        "Apolice_teste5.pdf": "15414.625886/2024-90",
+        "Apolice_teste6.pdf": "15414.625879/2024-98",
+        "Apolice_teste7.pdf": "15414.611834/2025-17",
+        "Apolice_teste8.pdf": "15414.900141/2013-62",
+        "Apolice_teste9.pdf": "15414.900141/2013-62",
     }
     for arquivo, numero in esperado.items():
         caminho = os.path.join(PASTA_APOLICES, arquivo)
@@ -119,7 +187,10 @@ def teste_apolices_reais():
             continue
         doc = pymupdf.open(caminho)
         texto = "".join(p.get_text() for p in doc)
+        doc.close()
         checar(f"{arquivo}", extrair_processo(texto), numero)
+        distintos = {m.group(1) for m in _RE_PROCESSO.finditer(texto)}
+        checar(f"  ^ um processo so no arquivo", len(distintos), 1)
 
 
 def teste_online():
@@ -142,6 +213,8 @@ def teste_online():
 if __name__ == "__main__":
     teste_extrair_numero_do_processo()
     teste_ler_tabela()
+    teste_entidades_html_no_nome()
+    teste_nome_do_arquivo()
     teste_apolices_reais()
     if "--online" in sys.argv:
         teste_online()

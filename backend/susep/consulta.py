@@ -18,8 +18,10 @@ duas requisições trazem em menos de um segundo.
 Nada aqui escreve em disco nem em banco: devolve os bytes a quem chamou.
 """
 
+import html as html_lib
 import re
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import unquote
 
 import httpx
 
@@ -66,8 +68,15 @@ def extrair_processo(texto: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
-def _limpar(html: str) -> str:
-    return _RE_TAG.sub(" ", html).replace("&nbsp;", " ").replace("&amp;", "&").strip()
+def _limpar(trecho: str) -> str:
+    """
+    Tira as tags e desfaz as entidades HTML.
+
+    `html.unescape` e não substituição à mão: a SUSEP publica nomes com acento
+    codificado em entidade numérica — `Condi&#231;&#245;es Gerais` —, e tratar
+    só `&nbsp;`/`&amp;` deixava isso aparecer cru na tela.
+    """
+    return " ".join(html_lib.unescape(_RE_TAG.sub(" ", trecho)).split()).strip()
 
 
 def ler_versoes_do_html(html: str) -> List[Dict[str, Any]]:
@@ -150,14 +159,33 @@ def baixar_versao(download_id: str) -> Tuple[bytes, str]:
             "A SUSEP devolveu algo que não é um PDF. O processo pode ter saído do ar."
         )
 
-    nome = f"CG_{download_id}.pdf"
-    disp = r.headers.get("content-disposition") or ""
-    m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', disp)
+    return r.content, _nome_do_cabecalho(r.headers.get("content-disposition"), download_id)
+
+
+def _nome_do_cabecalho(disposition: Optional[str], download_id: str) -> str:
+    """
+    Nome do arquivo a partir do `content-disposition`.
+
+    Há duas formas no cabeçalho e elas não se decodificam igual. A `filename*`
+    do RFC 5987 vem percent-encoded — a SUSEP devolve
+    `Condi%C3%A7%C3%B5es%20Gerais` —, e entregar isso ao navegador salvaria o
+    PDF com o nome ilegível. A `filename` simples é literal e não pode passar
+    por `unquote`, senão um `%` no nome viraria outra coisa.
+    """
+    disp = disposition or ""
+
+    m = re.search(r"filename\*\s*=\s*(?:UTF-8'[^']*')?\"?([^\";]+)\"?", disp, re.I)
     if m:
-        nome = m.group(1).strip()
+        nome = unquote(m.group(1).strip())
+    else:
+        m = re.search(r'filename\s*=\s*"?([^";]+)"?', disp, re.I)
+        nome = m.group(1).strip() if m else f"CG_{download_id}"
+
+    # Barra e dois-pontos no nome viram caminho no sistema de arquivos.
+    nome = re.sub(r'[\\/:*?"<>|]', "-", nome).strip() or f"CG_{download_id}"
     if not nome.lower().endswith(".pdf"):
         nome = f"{nome}.pdf"
-    return r.content, nome
+    return nome
 
 
 class SusepIndisponivel(Exception):
