@@ -637,6 +637,38 @@ async def update_pipedrive_activity(activity_id: str, updates: Dict) -> Optional
 # antigos gravados com esse tipo, mas é dívida do passado, não regra.
 TIPOS_REUNIAO = {"meeting": "R1", "reuniao_2": "R2", "r3": "R3"}
 
+# Todos os motivos que o vínculo pode registrar, e o que cada um quer dizer.
+#
+# Existe porque não existia: eram treze literais espalhados por outros tantos
+# `return`, sem lista nenhuma para consultar. Auditar isso à mão deu a resposta
+# errada na primeira tentativa — o grep não pegava a forma
+# `return None, "MOTIVO", detalhe` e acusou uma divergência que não havia.
+#
+# `backend/test_motivos_vinculo.py` confere que nenhum motivo do código ficou de
+# fora daqui e que cada um tem texto em MotivoVinculo.tsx. Sem isso, um motivo
+# novo aparece cru na tela do usuário e nada falha.
+MOTIVOS_VINCULO = {
+    "OK": "anexado à reunião R1/R2/R3 que já existia na agenda",
+    "ATIVIDADE_CRIADA": "sem reunião na data; criada uma atividade tactiq no negócio",
+    "SEM_NOME_CLIENTE": "a transcrição não identificou nenhum cliente",
+    "SEM_DATA_REUNIAO": "a transcrição não trouxe a data da reunião",
+    "NEGOCIO_NAO_ENCONTRADO": "a busca no Pipedrive não devolveu nenhum negócio",
+    "COMPATIBILIDADE_BAIXA": "existe negócio parecido, mas abaixo do limiar",
+    "SEM_ATIVIDADE_NA_DATA": "o negócio existe e não tem R1/R2/R3 na data",
+    "MULTIPLAS_CANDIDATAS": "mais de uma reunião possível na janela de datas",
+    "NOME_INSUFICIENTE_PARA_CRIAR": "sem reunião confirmando, o nome não basta para criar",
+    "REUNIAO_INTERNA": "o nome identificado é de quem conduz, não de um cliente",
+    "DESVINCULADO_MANUALMENTE": "o registro foi removido do CRM a pedido",
+    "ERRO_PIPEDRIVE": "a API do Pipedrive falhou durante a tentativa",
+    "NAO_AVALIADO": "transcrição anterior ao vínculo automático",
+}
+
+# `OK` é o único sem texto na tela, e de propósito: `MotivoVinculo.tsx` existe
+# para explicar por que NÃO vinculou, e aqui vinculou sem ressalva nenhuma.
+# `ATIVIDADE_CRIADA` também é sucesso, mas tem texto porque o usuário precisa
+# saber que a reunião não estava na agenda.
+MOTIVOS_SEM_TEXTO_NA_TELA = {"OK"}
+
 # Abaixo disto o candidato é tratado como outra pessoa. Calibrado com dados
 # reais: "Mariana Vicário" tinha "Sérgio Bressan" como melhor palpite (0.28), e
 # "Adilson Schelbauer" tinha "Radilson Carlos" (0.55). Vínculo errado é pior que
