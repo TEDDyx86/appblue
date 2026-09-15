@@ -127,13 +127,18 @@ class _ClienteSemAtividades:
         return R()
 
 
-def _executar(criacao_funciona):
+def _executar(criacao_funciona, com_decisoes=False):
     """Roda a rota com o negócio sem atividade e a criação dando certo ou não."""
     transcricao = _transcricao()
+    if com_decisoes:
+        transcricao["briefing_json"]["decisoes_proximos_passos"] = [
+            "Enviar a proposta até sexta",
+            "Cliente vai levantar os documentos",
+        ]
     gravacoes, escritas = [], []
 
     async def _create(**kwargs):
-        escritas.append("create")
+        escritas.append(kwargs.get("activity_type") or "create")
         return {"id": 4242} if criacao_funciona else None
 
     async def _update(activity_id, updates):
@@ -171,7 +176,7 @@ def teste_falha_nao_pode_virar_sucesso():
     print("\n=== negocio sem atividade e criacao falhando ===")
     resposta, erro, escritas, gravacoes = _executar(criacao_funciona=False)
 
-    checar("tentou criar a atividade", escritas, ["create"])
+    checar("tentou criar a atividade", escritas, ["tactiq"])
     checar("a rota nao devolveu sucesso", resposta, None)
     checar("a rota sinalizou erro ao chamador", erro is not None, True)
     if erro:
@@ -208,9 +213,39 @@ def teste_sucesso_continua_sucesso():
     checar("vinculo registrado como vinculado", vinculo.get("status"), "vinculado")
 
 
+def teste_proximos_passos_tambem_na_atribuicao_manual():
+    """
+    As decisões da reunião viram pendência na agenda mesmo quando o vínculo foi
+    feito à mão.
+
+    Antes, `criar_atividade_proximos_passos` só era chamada no caminho
+    automático que anexava numa R1/R2/R3 existente. Quem atribuía manualmente
+    ficava sem a tarefa — e é justamente quem atribui à mão que já sabe que
+    aquela conversa tem desdobramento.
+    """
+    print("\n=== atribuicao manual cria PROXIMOS PASSOS ===")
+    resposta, erro, escritas, _ = _executar(criacao_funciona=True, com_decisoes=True)
+
+    checar("nenhum erro levantado", erro, None)
+    checar("criou a tactiq e a tarefa", escritas, ["tactiq", "task"])
+
+    pipe = ((resposta or {}).get("briefing_json") or {}).get("pipedrive") or {}
+    checar("id da tarefa guardado", pipe.get("proximos_passos_activity_id"), "4242")
+
+
+def teste_sem_decisoes_a_manual_nao_cria_tarefa():
+    print("\n=== atribuicao manual sem decisoes ===")
+    _, erro, escritas, _ = _executar(criacao_funciona=True, com_decisoes=False)
+
+    checar("nenhum erro levantado", erro, None)
+    checar("criou so a tactiq", escritas, ["tactiq"])
+
+
 if __name__ == "__main__":
     teste_falha_nao_pode_virar_sucesso()
     teste_sucesso_continua_sucesso()
+    teste_proximos_passos_tambem_na_atribuicao_manual()
+    teste_sem_decisoes_a_manual_nao_cria_tarefa()
     print(f"\n{'FALHOU' if falhas else 'TUDO OK'}")
     for f in falhas:
         print(f"   {f}")

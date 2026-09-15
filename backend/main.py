@@ -1101,13 +1101,23 @@ def gerar_nota_proximos_passos(briefing_json: Dict[str, Any]) -> str:
 
 
 async def criar_atividade_proximos_passos(
-    briefing_json: Dict[str, Any], atividade: Dict[str, Any], detalhe: Dict[str, Any]
+    briefing_json: Dict[str, Any],
+    due_date: Optional[str] = None,
+    deal_id: Optional[Any] = None,
+    person_id: Optional[Any] = None,
 ) -> Optional[str]:
     """
     Abre a tarefa "PRÓXIMOS PASSOS" com o que ficou combinado na reunião.
 
-    Só roda depois do vínculo confirmado: sem atividade vinculada não há negócio
-    de que se tenha certeza, e tarefa solta no CRM é pior que tarefa ausente.
+    Só roda depois do registro confirmado: sem saber em que negócio gravar, uma
+    tarefa solta no CRM é pior que tarefa ausente.
+
+    Recebe os campos soltos e não uma atividade inteira porque os três caminhos
+    que a chamam têm formatos diferentes — o automático tem a atividade do
+    Pipedrive, a `tactiq` recém-criada não, e a atribuição manual só tem o
+    negócio que você escolheu. Antes ela só existia no primeiro caminho, e as
+    decisões dos outros dois não viravam pendência nenhuma: medido em 8
+    transcrições vinculadas, apenas 3 tinham a tarefa.
 
     Reexecução **atualiza** a tarefa já criada em vez de abrir outra — o id fica
     guardado no briefing. Sem isso cada reavaliação deixaria mais uma "PRÓXIMOS
@@ -1126,10 +1136,10 @@ async def criar_atividade_proximos_passos(
     nova = await create_pipedrive_activity(
         subject="PRÓXIMOS PASSOS",
         activity_type="task",
-        due_date=atividade.get("due_date"),
+        due_date=due_date,
         note_content=corpo,
-        deal_id=str(detalhe["deal_id"]) if detalhe.get("deal_id") else None,
-        person_id=str(atividade["person_id"]) if atividade.get("person_id") else None,
+        deal_id=str(deal_id) if deal_id else None,
+        person_id=str(person_id) if person_id else None,
         done=False,  # é o que ainda falta fazer
     )
     if not nova:
@@ -1341,8 +1351,9 @@ async def vincular_briefing_na_atividade(
                 "detalhe": detalhe,
                 "avaliado_em": agora,
             }
+        data = _data_da_reuniao(briefing_json)
         criada = await criar_atividade_tactiq(
-            nota, meeting_title, _data_da_reuniao(briefing_json), detalhe["deal_id"]
+            nota, meeting_title, data, detalhe["deal_id"]
         )
         if not criada:
             return {
@@ -1351,6 +1362,19 @@ async def vincular_briefing_na_atividade(
                 "detalhe": {**detalhe, "erro": "falha ao criar a atividade tactiq"},
                 "avaliado_em": agora,
             }
+        # As decisões da reunião existem igual quando a reunião não estava na
+        # agenda. Uma falha aqui não desfaz o registro: a conversa documentada
+        # vale por si, e a tarefa pode ser recriada depois.
+        try:
+            proximos_id = await criar_atividade_proximos_passos(
+                briefing_json,
+                due_date=str(data) if data else None,
+                deal_id=detalhe.get("deal_id"),
+            )
+        except Exception as e:
+            logger.error(f"Falha ao criar PRÓXIMOS PASSOS de '{meeting_title}': {e}")
+            proximos_id = None
+
         return {
             "status": "vinculado",
             "motivo": "ATIVIDADE_CRIADA",
@@ -1359,7 +1383,7 @@ async def vincular_briefing_na_atividade(
             "activity_type": "tactiq",
             "activity_url": f"https://investimentosblue.pipedrive.com/activities/list#dialog/activity/{criada['activity_id']}",
             "ja_estava_concluida": False,
-            "proximos_passos_activity_id": None,
+            "proximos_passos_activity_id": proximos_id,
             "detalhe": detalhe,
             "avaliado_em": agora,
         }
@@ -1384,7 +1408,12 @@ async def vincular_briefing_na_atividade(
     # Só depois da atribuição confirmada. Uma falha aqui não desfaz o vínculo:
     # a reunião documentada vale por si, e a tarefa pode ser recriada depois.
     try:
-        proximos_id = await criar_atividade_proximos_passos(briefing_json, atividade, detalhe)
+        proximos_id = await criar_atividade_proximos_passos(
+            briefing_json,
+            due_date=atividade.get("due_date"),
+            deal_id=detalhe.get("deal_id"),
+            person_id=atividade.get("person_id"),
+        )
     except Exception as e:
         logger.error(f"Falha ao criar PRÓXIMOS PASSOS de '{meeting_title}': {e}")
         proximos_id = None
@@ -3868,6 +3897,20 @@ async def assign_transcription_to_crm(
         briefing_json["pipedrive"]["activity_id"] = anexo["activity_id"]
         briefing_json["pipedrive"]["activity_origem"] = anexo["activity_origem"]
         briefing_json["pipedrive"]["activity_type"] = anexo.get("activity_type")
+
+        # Também aqui: as decisões existem igual quando você atribui à mão, e
+        # antes nenhuma atribuição manual virava pendência na agenda.
+        data = _data_da_reuniao(briefing_json)
+        try:
+            await criar_atividade_proximos_passos(
+                briefing_json,
+                due_date=str(data) if data else None,
+                deal_id=deal_id,
+                person_id=person_id,
+            )
+        except Exception as e:
+            logger.error(f"Falha ao criar PRÓXIMOS PASSOS de '{meeting_title}': {e}")
+
         briefing_json["vinculo"] = {
             "status": "vinculado",
             "motivo": "OK",
