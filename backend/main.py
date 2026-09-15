@@ -6435,6 +6435,105 @@ async def base_exportar(user: dict = Depends(get_current_user)):
 
 
 # ============================================================================
+# SUSEP — Condições Gerais
+# ============================================================================
+#
+# A lógica vive no pacote `susep`; aqui ficam as rotas, porque é aqui que a
+# autenticação existe. Nada é gravado: o PDF é buscado na hora e entregue ao
+# navegador. Guardar exigiria decidir quando revalidar, e a SUSEP publica versão
+# nova sem avisar — o arquivo salvo envelheceria calado.
+
+import susep as _susep
+
+
+class ConsultaSusepRequest(BaseModel):
+    numero_processo: str
+
+
+def _resposta_susep(numero: str) -> Dict[str, Any]:
+    try:
+        versoes = _susep.consultar_processo(numero)
+    except _susep.SusepIndisponivel as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    if not versoes:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Nenhum produto encontrado na SUSEP para o processo {numero}.",
+        )
+    return {"numero_processo": numero, "versoes": versoes,
+            "vigente": _susep.versao_vigente(versoes)}
+
+
+@app.post("/api/susep/consultar")
+async def susep_consultar(
+    req: ConsultaSusepRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Lista as versões das Condições Gerais de um processo."""
+    numero = (req.numero_processo or "").strip()
+    if not numero:
+        raise HTTPException(status_code=400, detail="Informe o número do processo SUSEP.")
+    return _resposta_susep(numero)
+
+
+@app.post("/api/susep/da-apolice")
+async def susep_da_apolice(
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Lê a apólice em PDF, acha o número do processo e consulta a SUSEP.
+
+    O PDF da apólice não é guardado nem registrado: só é lido em memória para
+    extrair o número.
+    """
+    if not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Envie a apólice em PDF.")
+
+    conteudo = await file.read()
+    if not conteudo:
+        raise HTTPException(status_code=400, detail="Arquivo vazio.")
+
+    try:
+        doc = pymupdf.open(stream=conteudo, filetype="pdf")
+        texto = "".join(p.get_text() for p in doc)
+        doc.close()
+    except Exception as e:
+        logger.error(f"Falha ao ler a apólice '{file.filename}': {e}")
+        raise HTTPException(status_code=400, detail="Não consegui ler este PDF.")
+
+    numero = _susep.extrair_processo(texto)
+    if not numero:
+        # Apólice digitalizada não tem camada de texto, e é o caso provável.
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Não encontrei o número do processo SUSEP nesta apólice. "
+                + ("O arquivo não tem texto selecionável — se for digitalizado, "
+                   "digite o número à mão." if len(texto.strip()) < 200 else
+                   "Confira se é a apólice certa, ou digite o número à mão.")
+            ),
+        )
+    return {**_resposta_susep(numero), "origem": "apolice", "arquivo": file.filename}
+
+
+@app.get("/api/susep/baixar/{download_id}")
+async def susep_baixar(download_id: str, user: dict = Depends(get_current_user)):
+    """Entrega o PDF das Condições Gerais direto da SUSEP."""
+    if not download_id.isdigit():
+        raise HTTPException(status_code=400, detail="Identificador inválido.")
+    try:
+        conteudo, nome = _susep.baixar_versao(download_id)
+    except _susep.SusepIndisponivel as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return Response(
+        content=conteudo,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{nome}"'},
+    )
+
+
+# ============================================================================
 # MAIN
 # ============================================================================
 

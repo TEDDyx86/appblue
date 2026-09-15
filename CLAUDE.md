@@ -88,6 +88,37 @@ com planilhas montadas em memória.
 Carregam CPF, telefone, e-mail, endereço e renda de 209 pessoas reais. Elas são
 fixture de teste e ficam na máquina, nunca no histórico do git.
 
+### SUSEP: sem API, mas também sem navegador
+
+`backend/susep/consulta.py` busca Condições Gerais na base pública da SUSEP com
+duas requisições `httpx`. **Não use Playwright aqui** — foi medido:
+
+- a página de consulta é ASP.NET **MVC**, não WebForms: não há `__VIEWSTATE`
+  nem `__EVENTVALIDATION` para carregar entre requisições;
+- a busca é um POST `multipart` de campo único (`numeroProcesso`) e a tabela de
+  resultados já vem no HTML da resposta, sem JavaScript;
+- `GET .../DownloadConsultaPublica/{id}` devolve `application/pdf` e **não exige
+  sessão** — conferido em processo separado, sem cookie da busca.
+
+A automação anterior (`SUSEP/`, protótipo fora do git) subia um Chromium por
+consulta para obter o mesmo arquivo, byte a byte.
+
+**Vigente é a versão com data-fim vazia**, não a primeira linha da tabela. O
+protótipo usava `rows[0]`, supondo ordenação do servidor.
+
+**`Cód. SUSEP:` não é o número do processo.** A apólice traz o código da
+corretora (9 dígitos) com essa mesma palavra, e um CNPJ com pontuação parecida
+na mesma página. `extrair_processo()` casa só os quatro formatos de processo,
+com guarda à esquerda contra dígito e pontuação — e à direita **só contra
+dígito**, porque a apólice escreve `PROCESSO SUSEP Nº 15414.902186/2014-52.` e
+barrar o ponto final derrubaria o caso mais comum.
+
+Nada é gravado: o PDF é buscado na hora e entregue ao navegador. Guardar
+exigiria decidir quando revalidar, e a SUSEP publica versão nova sem avisar.
+
+`backend/test_susep.py` roda offline por padrão; `--online` exercita uma
+consulta e um download reais.
+
 ### `briefing_json` é o esquema de verdade
 
 A tabela `transcriptions` guarda quase todo o estado num JSONB. O comentário no `schema.sql:56` está desatualizado — cita três chaves e o código usa muito mais. As que importam:

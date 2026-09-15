@@ -108,8 +108,12 @@ def teste_invariantes_nos_reais():
     cometia, sem precisar escrever o dado de ninguém neste arquivo.
     """
     print("\n=== invariantes (PDFs reais, sem expor dado) ===")
+    # Filtra pelo nome em vez de varrer todo .xlsx/.pdf da pasta: `Treinamento/`
+    # é o depósito de amostras do projeto e já ganhou apólices, que não são
+    # fichas cadastrais e faziam estas asserções falharem sem nada estar errado.
     reais = [n for n in sorted(os.listdir(PASTA))
-             if n.lower().endswith(".pdf") and n != FICTICIO]
+             if n.lower().startswith("ficha-cadastral") and n.lower().endswith(".pdf")
+             and n != FICTICIO]
     checar("ha PDFs reais para conferir", len(reais) > 0, True)
 
     for nome in reais:
