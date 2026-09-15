@@ -659,6 +659,48 @@ CONDUTORES = (
 SEM_CLIENTE = {"reuniao interna", "reunioes internas"}
 
 
+def _nome_utilizavel(nome: Optional[str]) -> bool:
+    """Serve como nome de cliente para buscar no CRM?"""
+    n = (nome or "").strip()
+    if len(n) < 3 or "identificado" in n.lower():
+        return False
+    return not _e_reuniao_interna(n)
+
+
+def nome_do_cliente(briefing_json: Dict[str, Any], meeting_title: str) -> Tuple[str, str]:
+    """
+    Quem é o cliente desta reunião. Devolve `(nome, origem)`.
+
+    O corpo do briefing é a primeira fonte. Não servindo, vale o **primeiro
+    segmento do nome do arquivo**, que é a saída do passo do Tactiq cuja única
+    função é acertar o cliente e que carrega a regra "nunca quem conduz" na
+    própria instrução. Confere com o corpo em 18 de 20 transcrições medidas, e
+    nos dois que divergem é o arquivo que está certo: numa delas o corpo nomeou
+    o condutor e o arquivo trazia "Rafael Menegatto Rodrigues".
+
+    O fallback não inventa. Quando nem o corpo nem o arquivo trazem cliente
+    utilizável, devolve vazio — foi o caso de uma reunião cujo arquivo se
+    chamava "Tavernard De Oliveira | alteração forma de pagamento", em que
+    escolher qualquer coisa seria pior que admitir que não dá para saber.
+
+    A origem volta junto para a tela poder dizer de onde veio o nome. Sem isso,
+    quando o fallback errar, não haveria como descobrir por quê.
+    """
+    do_briefing = ((briefing_json.get("dados_cliente") or {}).get("nome") or "").strip()
+    if _nome_utilizavel(do_briefing):
+        return do_briefing, "briefing"
+
+    # O padrão do arquivo é "<cliente> | <título da reunião>". Sem o separador
+    # não há segmento de cliente, e o título inteiro não é nome de ninguém.
+    titulo = meeting_title or ""
+    if "|" in titulo:
+        do_arquivo = titulo.split("|")[0].strip()
+        if _nome_utilizavel(do_arquivo):
+            return do_arquivo, "nome_do_arquivo"
+
+    return "", "nenhum"
+
+
 def gravar_vinculo_no_briefing(briefing_json: Dict[str, Any], vinculo: Dict[str, Any]) -> None:
     """
     Transfere o resultado do vínculo para o bloco `pipedrive` do briefing.
@@ -1239,10 +1281,13 @@ async def vincular_briefing_na_atividade(
     Devolve o bloco `vinculo`, gravado no briefing para a tela poder explicar ao
     usuário por que não vinculou.
     """
-    nome = (briefing_json.get("dados_cliente") or {}).get("nome") or ""
+    nome, origem_do_nome = nome_do_cliente(briefing_json, meeting_title)
     atividade, motivo, detalhe = await encontrar_atividade_da_reuniao(
         nome, briefing_json.get("data_reuniao"), meeting_title
     )
+    # De onde veio o nome fica no detalhe: quando o fallback errar, é o que
+    # permite descobrir por quê sem reprocessar nada.
+    detalhe["origem_do_nome"] = origem_do_nome
     agora = datetime.utcnow().isoformat() + "Z"
     nota = gerar_nota_da_atividade(briefing_json, nome, google_doc_id)
 
@@ -1919,17 +1964,21 @@ async def process_new_transcription(user_id: Optional[str] = None) -> Dict[str, 
                         person_id = str(item_data.get("id"))
                         matching_confidence = 1.0 if len(person_results) == 1 else 0.75
                         
-                        # Gera link direto do cliente
-                        briefing_json["pipedrive"]["person_id"] = person_id
-                        briefing_json["pipedrive"]["person_url"] = f"https://investimentosblue.pipedrive.com/person/{person_id}"
-                        
-                        # Busca Deals abertos do cliente
-                        deals = await get_person_deals(person_id)
-                        if deals:
-                            deal_id = str(deals[0].get("id"))
-                            briefing_json["pipedrive"]["deal_id"] = deal_id
-                            briefing_json["pipedrive"]["deal_url"] = f"https://investimentosblue.pipedrive.com/deal/{deal_id}"
-                        
+                        # Daqui NÃO se grava person_id nem deal_id no briefing.
+                        #
+                        # Esta busca pega `person_results[0]` e o primeiro
+                        # negócio dele, sem limiar nem comparação por token — é
+                        # a mesma pergunta que `vincular_briefing_na_atividade`
+                        # responde com critério, e a tela lê `pipedrive.deal_id`
+                        # para dizer "Vinculado". Com as duas escrevendo no
+                        # mesmo campo, 3 de 20 transcrições NÃO vinculadas
+                        # apareciam como vinculadas, entre elas uma reunião
+                        # interna já recusada por REUNIAO_INTERNA.
+                        #
+                        # Quem grava é `gravar_vinculo_no_briefing`, e só
+                        # quando o vínculo deu certo. O `person_id` daqui ainda
+                        # serve de contexto para o passo seguinte.
+
                         # A busca acima serve para guardar pessoa e negócio no
                         # briefing. A nota solta na pessoa/negócio deixou de ser
                         # criada: o registro da reunião vive na atividade, e ter
