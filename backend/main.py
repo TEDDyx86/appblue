@@ -781,6 +781,37 @@ def compatibilidade_nome(nome: str, titulo: str) -> float:
     return SequenceMatcher(None, _normalizar_nome(nome), _normalizar_nome(titulo)).ratio()
 
 
+def nome_confiavel_para_criar(nome: str, titulo: Optional[str]) -> bool:
+    """
+    O nome basta para **criar** uma atividade no negócio, sem outra evidência?
+
+    Anexar a uma reunião existente tem duas evidências: o nome e a data da
+    atividade, que se confirmam. Criar tem só o nome — e o limiar de 0,90 foi
+    calibrado para o caso com confirmação.
+
+    Aqui a exigência é estrutural, não uma nota mais alta: **nenhum token pode
+    contradizer**. Um dos nomes precisa caber inteiro dentro do outro, e o menor
+    precisa ter ao menos dois tokens.
+
+    Foi "Carlos Eduardo Martins Fernandes" x "Carlos Eduardo Stevanato" que
+    motivou: dois primeiros nomes em comum davam 0,95 pelo ramo de proporção de
+    `compatibilidade_nome`, e a atividade nasceu no negócio de outra pessoa.
+    Subir o limiar não resolveria — a nota continua alta; o que separa os dois
+    casos é "Fernandes" contra "Stevanato", um token que se contradiz.
+
+    A regra não depende de o nome ser longo. Com dois tokens — "João Silva" —
+    caber inteiro significa que os dois batem, que é o mais forte possível ali.
+    Com um token só, nunca cria: "Sérgio" não autoriza escrever no negócio do
+    Sérgio Paulo Araújo.
+    """
+    a, b = _tokens_nome(nome), _tokens_nome(titulo or "")
+    if not a or not b:
+        return False
+    if min(len(a), len(b)) < 2:
+        return False
+    return _contido(a, b) or _contido(b, a)
+
+
 async def buscar_negocio_por_nome(client: httpx.AsyncClient, nome: str) -> List[Dict[str, Any]]:
     """
     Busca negócios pelo nome do cliente.
@@ -1224,6 +1255,15 @@ async def vincular_briefing_na_atividade(
     # também, porque ali existem atividades de verdade e escolher uma no chute
     # era exatamente o problema.
     if not atividade and motivo == "SEM_ATIVIDADE_NA_DATA" and detalhe.get("deal_id"):
+        # Sem reunião na data, o nome é a única evidência — e o limiar de 0,90
+        # foi calibrado para quando a data confirma. Aqui a exigência é outra.
+        if not nome_confiavel_para_criar(nome, detalhe.get("negocio")):
+            return {
+                "status": "nao_vinculado",
+                "motivo": "NOME_INSUFICIENTE_PARA_CRIAR",
+                "detalhe": detalhe,
+                "avaliado_em": agora,
+            }
         criada = await criar_atividade_tactiq(
             nota, meeting_title, _data_da_reuniao(briefing_json), detalhe["deal_id"]
         )

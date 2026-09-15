@@ -56,6 +56,11 @@ const EXPLICACAO: Record<string, { titulo: string; texto: string }> = {
     texto:
       'O registro foi removido do Pipedrive a pedido. A transcrição continua aqui e pode ser atribuída de novo a qualquer momento, à mão ou reavaliando o vínculo automático.',
   },
+  NOME_INSUFICIENTE_PARA_CRIAR: {
+    titulo: 'O nome não basta para criar a atividade aqui',
+    texto:
+      'Existe um negócio parecido, mas ele não tem reunião R1, R2 ou R3 na data — e sem essa reunião confirmando, o nome fica sozinho como evidência. Há sobrenome divergente entre os dois, ou só o primeiro nome foi identificado. Atribua à mão se souber qual é o negócio certo.',
+  },
   REUNIAO_INTERNA: {
     titulo: 'Reunião interna, sem cliente',
     texto:

@@ -62,7 +62,7 @@ def _atividade(aid, tipo="meeting", data="2026-09-02", done=False):
     return {"id": aid, "type": tipo, "due_date": data, "done": done}
 
 
-def _rodar(negocios, atividades_por_negocio, criacao_funciona=True):
+def _rodar(negocios, atividades_por_negocio, criacao_funciona=True, briefing=None):
     """Executa vincular_briefing_na_atividade com o Pipedrive dublado."""
     criadas, atualizadas = [], []
 
@@ -111,7 +111,7 @@ def _rodar(negocios, atividades_por_negocio, criacao_funciona=True):
     httpx.AsyncClient = lambda *a, **k: _Cliente()
     try:
         vinculo = asyncio.run(
-            main.vincular_briefing_na_atividade(dict(BRIEFING), "Iderval | R1", "doc-1")
+            main.vincular_briefing_na_atividade(dict(briefing or BRIEFING), "Iderval | R1", "doc-1")
         )
     finally:
         (
@@ -179,6 +179,29 @@ def teste_nome_incompativel_nao_cria_nada():
     checar("nao criou nada", len(criadas), 0)
 
 
+def teste_nao_cria_em_negocio_de_sobrenome_diferente():
+    """
+    O caso do Carlos Eduardo, no fluxo inteiro.
+
+    O negócio existe, o nome pontua alto, não há reunião na data — e mesmo
+    assim não se cria nada, porque o sobrenome contradiz. Antes desta guarda a
+    atividade nascia no negócio da pessoa errada.
+    """
+    print("\n=== negocio com sobrenome divergente, sem reuniao na data ===")
+    briefing = dict(BRIEFING)
+    briefing["dados_cliente"] = {"nome": "Carlos Eduardo Martins Fernandes"}
+    vinculo, criadas, atualizadas = _rodar(
+        [_negocio(184, "Carlos Eduardo Stevanato")], {184: []}, briefing=briefing
+    )
+
+    checar("nao vinculou", vinculo.get("status"), "nao_vinculado")
+    checar("motivo especifico", vinculo.get("motivo"), "NOME_INSUFICIENTE_PARA_CRIAR")
+    checar("NAO criou atividade nenhuma", len(criadas), 0)
+    checar("nao atualizou nada", len(atualizadas), 0)
+    checar("guardou o negocio avaliado para a tela explicar",
+           (vinculo.get("detalhe") or {}).get("negocio"), "Carlos Eduardo Stevanato")
+
+
 def teste_falha_na_criacao_nao_vira_sucesso():
     print("\n=== criacao falha: nao pode dizer que vinculou ===")
     vinculo, criadas, _ = _rodar([_negocio(639)], {639: []}, criacao_funciona=False)
@@ -193,6 +216,7 @@ if __name__ == "__main__":
     teste_cria_quando_negocio_existe_sem_atividade()
     teste_atividade_existente_continua_ganhando()
     teste_empate_vai_para_o_negocio_mais_novo()
+    teste_nao_cria_em_negocio_de_sobrenome_diferente()
     teste_sem_negocio_nao_cria_nada()
     teste_nome_incompativel_nao_cria_nada()
     teste_falha_na_criacao_nao_vira_sucesso()
