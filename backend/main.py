@@ -1172,8 +1172,25 @@ async def desanexar_transcricao_do_crm(briefing_json: Dict[str, Any]) -> Dict[st
 
     # Zera as referências: id de atividade apagada que sobrevive no briefing
     # vira PUT em atividade inexistente na próxima execução.
-    pipe["proximos_passos_activity_id"] = None
+    pipe["activity_id"] = None
+    pipe["activity_type"] = None
     pipe["activity_origem"] = None
+    pipe["proximos_passos_activity_id"] = None
+
+    # E o veredito, que é o que a tela exibe. Sem isto a transcrição continuava
+    # dizendo "vinculado" depois de o registro ter sido removido do CRM — foi o
+    # estado em que Pablo e Sérgio ficaram após a limpeza: sem atividade
+    # nenhuma e ainda marcados como vinculados.
+    briefing_json["vinculo"] = {
+        "status": "nao_vinculado",
+        "motivo": "DESVINCULADO_MANUALMENTE",
+        "detalhe": {
+            "activity_id_anterior": str(activity_id) if activity_id else None,
+            "atividade_apagada": r["atividade_apagada"],
+            "nota_limpa": r["nota_limpa"],
+        },
+        "avaliado_em": datetime.utcnow().isoformat() + "Z",
+    }
 
     return r
 

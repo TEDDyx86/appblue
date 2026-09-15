@@ -102,11 +102,92 @@ def teste_sem_deal_no_detalhe():
     checar("activity_id ainda gravado", (b["pipedrive"]).get("activity_id"), "1")
 
 
+def teste_desvincular_reseta_o_veredito():
+    """
+    Desvincular tem que apagar o veredito, não só os ids.
+
+    Antes, `desanexar_transcricao_do_crm` zerava `proximos_passos_activity_id` e
+    `activity_origem` e deixava o bloco `vinculo` dizendo "vinculado". A
+    transcrição do Pablo e a do Sérgio ficaram assim depois da limpeza no CRM:
+    sem atividade nenhuma e ainda marcadas como vinculadas.
+    """
+    print("\n=== desvincular reseta o bloco vinculo ===")
+    import asyncio
+
+    chamadas = []
+
+    async def _apagar(aid):
+        chamadas.append(("delete", aid))
+        return True
+
+    async def _atualizar(aid, campos):
+        chamadas.append(("update", aid))
+        return {"id": aid}
+
+    b = {
+        "pipedrive": {
+            "activity_id": "8196", "activity_origem": "criada", "activity_type": "tactiq",
+            "deal_id": "184", "proximos_passos_activity_id": "8217",
+        },
+        "vinculo": {"status": "vinculado", "motivo": "ATIVIDADE_CRIADA", "detalhe": {"deal_id": 184}},
+    }
+
+    originais = (main.delete_pipedrive_activity, main.update_pipedrive_activity)
+    main.delete_pipedrive_activity, main.update_pipedrive_activity = _apagar, _atualizar
+    try:
+        r = asyncio.run(main.desanexar_transcricao_do_crm(b))
+    finally:
+        main.delete_pipedrive_activity, main.update_pipedrive_activity = originais
+
+    checar("apagou a tactiq que era nossa", r["atividade_apagada"], True)
+    checar("apagou a tarefa de proximos passos", r["proximos_passos_apagada"], True)
+    checar("vinculo deixou de dizer vinculado", b["vinculo"]["status"], "nao_vinculado")
+    checar("motivo registra o desvinculo", b["vinculo"]["motivo"], "DESVINCULADO_MANUALMENTE")
+    checar("activity_id limpo", b["pipedrive"].get("activity_id"), None)
+    checar("origem limpa", b["pipedrive"].get("activity_origem"), None)
+    checar("proximos passos limpo", b["pipedrive"].get("proximos_passos_activity_id"), None)
+    checar("a TELA deixa de mostrar vinculado por atividade",
+           bool(b["pipedrive"].get("activity_id")), False)
+
+
+def teste_desvincular_atividade_do_cliente():
+    """Reunião do cliente não se apaga: limpa a nota e a atividade fica."""
+    print("\n=== desvincular atividade 'existente' ===")
+    import asyncio
+
+    apagadas, limpas = [], []
+
+    async def _apagar(aid):
+        apagadas.append(aid)
+        return True
+
+    async def _atualizar(aid, campos):
+        limpas.append((aid, campos))
+        return {"id": aid}
+
+    b = {
+        "pipedrive": {"activity_id": "7618", "activity_origem": "existente", "deal_id": "622"},
+        "vinculo": {"status": "vinculado", "motivo": "OK"},
+    }
+    originais = (main.delete_pipedrive_activity, main.update_pipedrive_activity)
+    main.delete_pipedrive_activity, main.update_pipedrive_activity = _apagar, _atualizar
+    try:
+        r = asyncio.run(main.desanexar_transcricao_do_crm(b))
+    finally:
+        main.delete_pipedrive_activity, main.update_pipedrive_activity = originais
+
+    checar("NAO apagou a reuniao do cliente", apagadas, [])
+    checar("limpou a nota", r["nota_limpa"], True)
+    checar("vinculo resetado tambem aqui", b["vinculo"]["status"], "nao_vinculado")
+
+
 if __name__ == "__main__":
     teste_atividade_existente()
     teste_atividade_criada()
     teste_nao_vinculado_nao_suja()
     teste_sem_deal_no_detalhe()
+    teste_desvincular_reseta_o_veredito()
+    teste_desvincular_atividade_do_cliente()
     print(f"\n{'FALHOU' if falhas else 'TUDO OK'}")
     for f in falhas:
         print(f"   {f}")

@@ -51,6 +51,11 @@ const EXPLICACAO: Record<string, { titulo: string; texto: string }> = {
     texto:
       'Há mais de uma atividade R1/R2/R3 na janela de datas — no mesmo negócio ou em clientes de nome parecido — e não dá para saber qual delas este briefing documenta.',
   },
+  DESVINCULADO_MANUALMENTE: {
+    titulo: 'Você desfez este vínculo',
+    texto:
+      'O registro foi removido do Pipedrive a pedido. A transcrição continua aqui e pode ser atribuída de novo a qualquer momento, à mão ou reavaliando o vínculo automático.',
+  },
   REUNIAO_INTERNA: {
     titulo: 'Reunião interna, sem cliente',
     texto:
