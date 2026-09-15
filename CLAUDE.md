@@ -147,6 +147,17 @@ Regras da vinculação, todas calibradas com dados reais e medidas:
 - Nome casa por **palavra inteira**, com prefixo a partir de 3 letras para apelido (`Ari`→`Ariovaldo`, `Fred`→`Frederico`). **Nunca volte a usar substring do texto corrido**: `"ari"` casava com "Livia **Ari**ane" e "Ferr**ari**", e 7 de 24 transcrições eram decididas pela ordem em que a API devolvia.
 - Empate no topo desempata pelo título da reunião (que costuma trazer o sobrenome que o campo `nome` não tem) e, persistindo, pela data. Se sobrar mais de uma atividade, **desiste** — vínculo errado é pior que vínculo ausente.
 - `LIMIAR_COMPATIBILIDADE = 0.90`, `TOLERANCIA_DIAS = 1`.
+- **Quem conduz nunca é cliente** (`CONDUTORES`, motivo `REUNIAO_INTERNA`). Numa
+  reunião interna o briefing nomeou como cliente alguém apenas *citado*, e o
+  vínculo casou com score 1,00 contra o negócio real dele. A guarda compara
+  **subconjunto de tokens com pelo menos dois** — recusar por primeiro nome
+  derrubaria "Roberto Carlos Menezes", e por sobrenome, "Ana Paula Vieira".
+  Note o alcance: ela pega o caso em que o *condutor* é extraído como cliente,
+  **não** o caso em que um terceiro citado é. Esse só se resolve no Tactiq, que
+  é onde a lista de participantes existe.
+- **Não use "cliente está entre os participantes" como filtro.** Medido contra
+  20 transcrições: bloquearia dois vínculos corretos, porque cliente presencial
+  não aparece na lista do Tactiq.
 - `done` só é reescrito quando está `false`; a nota é gravada com PUT, que **substitui** o conteúdo anterior.
 
 ## Pipedrive: armadilhas confirmadas na prática

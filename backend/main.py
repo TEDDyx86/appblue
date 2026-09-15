@@ -649,6 +649,39 @@ LIMIAR_COMPATIBILIDADE = 0.90
 TOLERANCIA_DIAS = 1
 
 
+# Quem conduz as reuniões. Nenhum deles é cliente em circunstância alguma.
+CONDUTORES = (
+    "Robson Vieira Tavernard de Oliveira",
+    "Roberto Righetti Neto",
+)
+
+# O que o Tactiq responde quando a reunião não tem cliente.
+SEM_CLIENTE = {"reuniao interna", "reunioes internas"}
+
+
+def _e_reuniao_interna(nome_cliente: str) -> bool:
+    """
+    O nome recebido é de quem conduz, ou a declaração de que não há cliente?
+
+    Exige que os tokens do nome sejam **subconjunto** dos de um condutor, e ao
+    menos dois. Sem isso, "Roberto Carlos Menezes" seria recusado por começar
+    com "Roberto", e "Ana Paula Vieira" por terminar com um sobrenome comum —
+    trocaríamos um erro raro por um frequente.
+
+    Existe porque o briefing já nomeou como cliente alguém apenas **citado** na
+    conversa: numa reunião interna entre Roberto e Robson, o campo veio com um
+    cliente real, e o vínculo casou com score 1,00 contra o negócio dele.
+    """
+    limpo = _normalizar_nome(nome_cliente)
+    if limpo in SEM_CLIENTE:
+        return True
+
+    tokens = set(_tokens_nome(nome_cliente))
+    if len(tokens) < 2:
+        return False
+    return any(tokens <= set(_tokens_nome(c)) for c in CONDUTORES)
+
+
 def _data_da_reuniao(briefing_json: Dict[str, Any]) -> Optional[date]:
     """Lê `data_reuniao` no formato dd/mm/aaaa que o parser do Tactiq grava."""
     m = re.match(r"(\d{2})/(\d{2})/(\d{4})", str(briefing_json.get("data_reuniao") or ""))
@@ -757,6 +790,9 @@ async def encontrar_atividade_da_reuniao(
     """
     if not nome_cliente or len(nome_cliente) < 3 or "identificado" in nome_cliente.lower():
         return None, "SEM_NOME_CLIENTE", {"nome_recebido": nome_cliente}
+
+    if _e_reuniao_interna(nome_cliente):
+        return None, "REUNIAO_INTERNA", {"nome_recebido": nome_cliente}
 
     alvo = None
     if data_reuniao:

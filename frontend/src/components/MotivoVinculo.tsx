@@ -51,6 +51,11 @@ const EXPLICACAO: Record<string, { titulo: string; texto: string }> = {
     texto:
       'Há mais de uma atividade R1/R2/R3 na janela de datas — no mesmo negócio ou em clientes de nome parecido — e não dá para saber qual delas este briefing documenta.',
   },
+  REUNIAO_INTERNA: {
+    titulo: 'Reunião interna, sem cliente',
+    texto:
+      'O nome identificado é de quem conduz a reunião, não de um cliente. Acontece em conversa interna, em que o briefing acaba nomeando alguém que foi apenas citado — e vincular isso escreveria a conversa no negócio de um cliente que não estava na sala.',
+  },
   ATIVIDADE_CRIADA: {
     titulo: 'Registrada numa atividade Tactiq',
     texto:
