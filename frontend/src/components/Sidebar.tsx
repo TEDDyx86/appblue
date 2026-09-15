@@ -41,7 +41,7 @@ export default function Sidebar({
     { href: '/transcriptions', label: 'Transcrições', icon: FileText },
     { href: '/cadastros', label: 'Ficha Cadastral', icon: UserCheck },
     { href: '/base-clientes', label: 'Base de Clientes', icon: Database },
-    { href: '/susep', label: 'Condições Gerais', icon: FileSearch },
+    { href: '/susep', label: 'Consulta SUSEP', icon: FileSearch },
     { href: '/agenda', label: 'Agenda', icon: Calendar },
     { href: '/logs', label: 'Logs & Auditoria', icon: Activity },
     { href: '/alerts', label: 'Alertas', icon: AlertTriangle },
